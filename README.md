@@ -3,6 +3,8 @@
 **Le logiciel DJ libre et gratuit — 4 decks, platines DDJ et tout matériel DJ
 USB-MIDI, manettes de jeu, téléphones.**
 
+![OpenMix — 4 decks, vagues 3 bandes, mixer 4 voies, bibliothèque](docs/screenshot-main.png)
+
 OpenMix remplace les logiciels DJ payants : analyse BPM/grille au niveau de
 Rekordbox (validée contre ses propres fichiers d'analyse), mix à 4 platines,
 et une idée que personne d'autre n'a : **jusqu'à 4 joueurs mixent ensemble à

@@ -332,6 +332,24 @@ function startRemoteServer() {
       res.end(JSON.stringify(remoteState));
       return;
     }
+    if (req.url === '/shot') {
+      // Capture de la fenêtre OpenMix (documentation/README) — UNIQUEMENT
+      // depuis ce PC : jamais exposé au réseau
+      const ip = req.socket.remoteAddress || '';
+      if (ip !== '127.0.0.1' && ip !== '::1' && ip !== '::ffff:127.0.0.1') {
+        res.writeHead(403);
+        res.end();
+        return;
+      }
+      win.webContents.capturePage().then((img) => {
+        res.writeHead(200, { 'Content-Type': 'image/png' });
+        res.end(img.toPNG());
+      }).catch(() => {
+        res.writeHead(500);
+        res.end();
+      });
+      return;
+    }
     if (req.url.startsWith('/wave')) {
       const m = /d=(\d)/.exec(req.url);
       const w = m ? remoteWaves[Number(m[1])] : null;
