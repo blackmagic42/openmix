@@ -1,0 +1,48 @@
+{
+  "name": "turbo-mix",
+  "productName": "OpenMix",
+  "version": "0.1.0",
+  "description": "OpenMix — logiciel DJ libre : 4 decks, platines MIDI (DDJ), manettes PS/Xbox, console téléphone",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win",
+    "dist:portable": "electron-builder --win portable"
+  },
+  "author": "David (blackmagic42)",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^43.1.0",
+    "electron-builder": "^26.15.3"
+  },
+  "build": {
+    "appId": "org.openmix.app",
+    "productName": "OpenMix",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "src/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "deleteAppDataOnUninstall": false,
+      "artifactName": "OpenMix-Setup-${version}.${ext}"
+    }
+  }
+}

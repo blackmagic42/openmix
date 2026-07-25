@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#0b0d12">
+<title>OpenMix — Demande ton son</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{background:#0b0d12;color:#d7dce8;font-family:system-ui,-apple-system,'Segoe UI',sans-serif}
+body{display:flex;flex-direction:column;height:100dvh}
+header{padding:12px 14px 8px;border-bottom:1px solid #232a3a}
+h1{font-size:17px;letter-spacing:2px}
+h1 b{color:#39c2ff}
+.sub{font-size:11px;color:#8a94ae;margin-top:2px}
+#msgrow{display:flex;gap:6px;padding:8px 12px}
+#msgrow input{flex:1;padding:10px;font-size:13px;background:#12151c;border:1px solid #2b3040;border-radius:4px;color:#d7dce8;outline:none}
+#msgrow button{padding:0 16px;font-size:12px;font-weight:900;background:#21252f;border:1px solid #2b3040;color:#ffd24a;border-radius:4px}
+#search{margin:0 12px 8px;padding:10px;font-size:13px;background:#12151c;border:1px solid #2b3040;border-radius:4px;color:#d7dce8;outline:none;width:calc(100% - 24px)}
+#list{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch}
+.row{display:flex;align-items:center;gap:8px;padding:11px 14px;border-bottom:1px solid #14171e}
+.row .t{flex:1;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.row .b{font-size:11px;font-weight:800;color:#39c2ff;font-variant-numeric:tabular-nums}
+.row .v{min-width:34px;text-align:center;font-size:12px;font-weight:900;color:#ffd24a}
+.row button{padding:9px 14px;font-size:11px;font-weight:900;background:#21252f;border:1px solid #2b3040;color:#d7dce8;border-radius:4px}
+.row button:disabled{background:#1a3d2a;border-color:#2fdf6e66;color:#2fdf6e;opacity:1}
+#toast{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);background:#2fdf6e;color:#0b0d12;font-weight:900;font-size:13px;padding:10px 18px;border-radius:6px;opacity:0;transition:opacity .2s;pointer-events:none;box-shadow:0 4px 20px rgba(0,0,0,.5)}
+#toast.show{opacity:1}
+</style>
+</head>
+<body>
+<header>
+  <h1>OPEN<b>MIX</b> · DEMANDE TON SON 🎧</h1>
+  <div class="sub">Vote un morceau, le DJ le voit direct — un vote par son, lâche-toi sur les votes</div>
+</header>
+<div id="msgrow">
+  <input id="msg" maxlength="140" placeholder="Message au DJ (optionnel)…">
+  <button id="send">📨</button>
+</div>
+<input id="search" placeholder="Chercher un morceau…">
+<div id="list"></div>
+<div id="toast">Envoyé ! 🔥</div>
+<script>
+const listEl = document.getElementById('list');
+const searchEl = document.getElementById('search');
+let items = [];
+let votes = {};
+const voted = new Set(JSON.parse(localStorage.getItem('tmVoted') || '[]'));
+
+function toast(t) {
+  const el = document.getElementById('toast');
+  el.textContent = t;
+  el.classList.add('show');
+  setTimeout(() => el.classList.remove('show'), 1600);
+}
+async function post(o) {
+  try { await fetch('/vote', { method: 'POST', body: JSON.stringify(o) }); } catch { /* hors ligne */ }
+}
+document.getElementById('send').addEventListener('click', () => {
+  const m = document.getElementById('msg').value.trim();
+  if (!m) return;
+  post({ msg: m });
+  document.getElementById('msg').value = '';
+  toast('Message envoyé ! 📨');
+});
+
+function render() {
+  const q = searchEl.value.trim().toLowerCase();
+  listEl.textContent = '';
+  items
+    .filter((it) => !it.pl && (!q || it.name.toLowerCase().includes(q)))
+    .slice(0, 300)
+    .forEach((it) => {
+      const r = document.createElement('div');
+      r.className = 'row';
+      const v = votes[it.name] || 0;
+      r.innerHTML = `<span class="t"></span><span class="b">${it.bpm ?? ''}</span>
+        <span class="v">${v ? '🔥' + v : ''}</span><button>VOTER</button>`;
+      r.querySelector('.t').textContent = it.name;
+      const btn = r.querySelector('button');
+      if (voted.has(it.name)) {
+        btn.disabled = true;
+        btn.textContent = 'VOTÉ ✓';
+      }
+      btn.addEventListener('click', () => {
+        post({ name: it.name, bpm: it.bpm });
+        voted.add(it.name);
+        localStorage.setItem('tmVoted', JSON.stringify([...voted]));
+        btn.disabled = true;
+        btn.textContent = 'VOTÉ ✓';
+        toast('Vote envoyé ! 🔥');
+      });
+      listEl.appendChild(r);
+    });
+}
+searchEl.addEventListener('input', render);
+
+async function loadLib() {
+  try {
+    const l = await (await fetch('/lib')).json();
+    items = l.items || [];
+    render();
+  } catch { /* retentera */ }
+}
+async function pollVotes() {
+  try {
+    const r = await (await fetch('/requests')).json();
+    votes = {};
+    (r.votes || []).forEach((v) => { votes[v.name] = v.votes; });
+    render();
+  } catch { /* hors ligne */ }
+  setTimeout(pollVotes, 4000);
+}
+loadLib();
+setInterval(loadLib, 15000);
+pollVotes();
+</script>
+</body>
+</html>

@@ -1,0 +1,33 @@
+const { contextBridge, ipcRenderer } = require('electron');
+
+contextBridge.exposeInMainWorld('api', {
+  pickFolder: () => ipcRenderer.invoke('pick-folder'),
+  pickSamples: () => ipcRenderer.invoke('pick-samples'),
+  pickXml: () => ipcRenderer.invoke('pick-xml'),
+  scanFolder: (dir) => ipcRenderer.invoke('scan-folder', dir),
+  readFile: (p) => ipcRenderer.invoke('read-file', p),
+  cacheLoad: () => ipcRenderer.invoke('cache-load'),
+  cacheSave: (o) => ipcRenderer.invoke('cache-save', o),
+  rbGrids: () => ipcRenderer.invoke('rb-grids'),
+  scResolve: (url) => ipcRenderer.invoke('sc-resolve', url),
+  scFetchTrack: (scId) => ipcRenderer.invoke('sc-fetch-track', scId),
+  scDownloadTo: (scId, name) => ipcRenderer.invoke('sc-download-to', scId, name),
+  stemsSeparate: (p) => ipcRenderer.invoke('stems-separate', p),
+  remoteStart: () => ipcRenderer.invoke('remote-start'),
+  remoteState: (s) => ipcRenderer.send('remote-state', s),
+  onRemoteCmd: (cb) => ipcRenderer.on('remote-cmd', (_e, d) => cb(d)),
+  fsRoots: () => ipcRenderer.invoke('fs-roots'),
+  fsList: (dir) => ipcRenderer.invoke('fs-list', dir),
+  saveRecording: (data, name) => ipcRenderer.invoke('save-recording', data, name),
+  exportPlaylist: (name, items) => ipcRenderer.invoke('export-playlist', name, items),
+  scLogin: () => ipcRenderer.invoke('sc-login'),
+  scStatus: () => ipcRenderer.invoke('sc-status'),
+  scMyPlaylists: () => ipcRenderer.invoke('sc-my-playlists'),
+  scMyLikes: () => ipcRenderer.invoke('sc-my-likes'),
+  scSearch: (q) => ipcRenderer.invoke('sc-search', q),
+  remoteWave: (d, payload) => ipcRenderer.send('remote-wave', d, payload),
+  remoteLib: (data) => ipcRenderer.send('remote-lib', data),
+  guestGet: () => ipcRenderer.invoke('guest-get'),
+  guestClear: () => ipcRenderer.invoke('guest-clear'),
+  onGuestReq: (cb) => ipcRenderer.on('guest-req', (_e, d) => cb(d))
+});

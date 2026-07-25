@@ -1,0 +1,722 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#0b0d12">
+<title>OpenMix — Console téléphone</title>
+<style>
+/* ==== Design system Turbo Mix : même langage que l'interface de base ==
+   panneaux sombres, liserés fins, néons discrets, typo serrée ==== */
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent;user-select:none;touch-action:manipulation}
+html,body{background:#0b0d12;color:#d7dce8;font-family:system-ui,-apple-system,'Segoe UI',sans-serif;overscroll-behavior:none;height:100%;overflow:hidden}
+#app{display:grid;grid-template-columns:1fr 206px 1fr;grid-template-rows:22px 37px 37px 1fr;gap:4px;height:100dvh;padding:4px}
+/* vagues EMPILÉES pleine largeur : les deux sons l'un sur l'autre,
+   playheads alignés — c'est LA vue pour caler deux morceaux */
+.wavefull{grid-column:1/-1;border-left:3px solid var(--c)}
+button{font-family:inherit}
+/* --- entêtes deck --- */
+.dhead{display:flex;align-items:center;gap:6px;font-size:10px;overflow:hidden;border-bottom:1px solid #171a21;padding:0 2px 2px}
+.dhead .num{font-weight:900;color:#0b0d12;background:var(--c);border-radius:2px;padding:0 6px;font-size:10px;line-height:16px}
+.dhead .title{flex:1;color:#aab2c6;font-weight:600;letter-spacing:.2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dhead .time{color:#8a94ae;font-size:9.5px;font-variant-numeric:tabular-nums}
+.dhead .mbadge{display:none;font-size:8px;font-weight:900;letter-spacing:.5px;color:#0b0d12;background:#ffd24a;border-radius:2px;padding:0 4px;line-height:13px}
+.deckcol.ismaster ~ .dhead .mbadge{display:inline}
+.dhead.ismaster .mbadge{display:inline}
+#topmid{display:flex;align-items:center;justify-content:center;gap:4px}
+#btn-lib{flex:1;height:100%;font-size:10px;font-weight:800;letter-spacing:1px;background:#12151c;color:#ffd24a;border:1px solid #2b3040;border-radius:3px}
+#btn-lib:active{background:#2a2f3c}
+#btn-fs{width:30px;height:100%;font-size:12px;background:#12151c;color:#8a94ae;border:1px solid #2b3040;border-radius:3px}
+/* --- vagues --- */
+.wave{width:100%;height:100%;display:block;background:#0e1117;border:1px solid #1c2230;border-radius:4px}
+#midbpm{display:flex;align-items:center;gap:4px;height:24px;flex-shrink:0;border-bottom:1px solid #171a21;padding-bottom:2px}
+#midbpm button{flex:1;height:100%;font-size:12px;font-weight:900;background:#21252f;border:1px solid #2b3040;color:#d7dce8;border-radius:3px}
+#midbpm button:active{background:#2a2f3c;border-color:#3a4258}
+#mbpm{flex:1.1;text-align:center;font-size:14px;font-weight:900;color:#4aa3ff;font-variant-numeric:tabular-nums}
+/* --- colonne deck --- */
+.deckcol{display:flex;flex-direction:column;gap:5px;min-height:0}
+.drow{flex:1;display:flex;gap:6px;align-items:center;min-height:0}
+.sidebtns{display:flex;flex-direction:column;gap:5px;width:56px}
+.rbtn{width:56px;height:56px;border-radius:50%;font-size:10px;font-weight:900;letter-spacing:.5px;background:#181c25;color:#8a94ae;border:2px solid #2b3040}
+.rbtn:active{background:#232936}
+.rbtn.play{border-color:#2fdf6e77;color:#2fdf6e;font-size:17px}
+.rbtn.play.on{background:#2fdf6e;color:#0b0d12;border-color:#2fdf6e;box-shadow:0 0 10px #2fdf6e88}
+.rbtn.cue{border-color:#ff9f4377;color:#ff9f43}
+.rbtn.cue:active{background:#ff9f43;color:#0b0d12}
+.sbtn{padding:7px 0;font-size:9px;font-weight:800;letter-spacing:1px;background:#21252f;border:1px solid #2b3040;color:#aab2c6;border-radius:3px}
+.sbtn:active{background:#2a2f3c;border-color:#3a4258}
+.sbtn.on{background:var(--c);color:#0b0d12;border-color:var(--c);box-shadow:0 0 7px color-mix(in srgb,var(--c) 60%,transparent)}
+.wheelwrap{flex:1;display:flex;align-items:center;justify-content:center;min-width:0}
+.wheel{width:min(100%,138px);aspect-ratio:1;touch-action:none}
+/* --- tempo + faders (poignées rectangulaires façon table de mix) --- */
+.tempo{display:flex;flex-direction:column;align-items:center;gap:3px;width:40px}
+.tempo span{font-size:7px;font-weight:900;letter-spacing:1px;color:#8a94ae}
+.vwrap{position:relative;width:36px;flex:1;min-height:70px}
+.vwrap input{position:absolute;left:50%;top:50%;height:34px;appearance:none;background:transparent}
+input[type=range]::-webkit-slider-runnable-track{height:4px;border-radius:2px;background:#232a3a;border:1px solid #1c2230}
+input[type=range]::-webkit-slider-thumb{appearance:none;width:15px;height:26px;border-radius:3px;background:linear-gradient(180deg,#3a4258,#232a3a);border:1px solid #4a5570;margin-top:-12px;box-shadow:inset 0 1px 0 rgba(255,255,255,.18),0 0 6px color-mix(in srgb,var(--c,#39c2ff) 45%,transparent)}
+.tempo .tr{width:34px;padding:3px 0;font-size:8.5px;font-weight:900;background:#21252f;border:1px solid #2b3040;color:#8a94ae;border-radius:3px}
+/* --- pads --- */
+.padtabs{display:flex;gap:4px}
+.padtabs button{flex:1;padding:5px 0;font-size:9px;font-weight:800;letter-spacing:1.5px;background:#12151c;border:1px solid #232a3a;color:#8a94ae;border-radius:2px}
+.padtabs button.on{background:var(--c);color:#0b0d12;border-color:var(--c);box-shadow:0 0 7px color-mix(in srgb,var(--c) 55%,transparent)}
+.pads{display:grid;grid-template-columns:repeat(4,1fr);grid-template-rows:1fr 1fr;gap:4px;height:78px}
+.pads button{font-size:11px;font-weight:900;letter-spacing:.5px;border-radius:2px;border:1px solid #262d3d;background:#161a22;color:#cfd6e4;box-shadow:inset 0 1px 0 rgba(255,255,255,.03)}
+.pads button:active{background:#232936}
+.pads button:disabled{opacity:.12}
+.pads button.set{border-color:var(--c);color:var(--c);box-shadow:inset 0 0 8px color-mix(in srgb,var(--c) 22%,transparent)}
+.pads button.act{background:var(--c);color:#0b0d12;border-color:var(--c);box-shadow:0 0 9px color-mix(in srgb,var(--c) 65%,transparent)}
+/* --- mixer central --- */
+#mixer{display:flex;flex-direction:column;gap:3px;min-height:0;background:#12151c;border:1px solid #232a3a;border-radius:5px;padding:5px 6px}
+.eqrow{display:flex;justify-content:space-between;align-items:center}
+.eqrow span{font-size:7px;font-weight:900;letter-spacing:1.5px;color:#8a94ae;width:28px;text-align:center}
+.knob{display:flex;flex-direction:column;align-items:center}
+.knob canvas{width:30px;height:30px;touch-action:none}
+#fadrow{flex:1;display:flex;justify-content:center;gap:30px;min-height:42px}
+#fadrow .vwrap{width:44px}
+#xfrow{display:flex;align-items:center;gap:6px;padding-top:2px;border-top:1px solid #171a21}
+#xfrow span{font-size:8px;font-weight:900;color:#8a94ae}
+#xfrow input{flex:1;height:24px;appearance:none;background:transparent;--c:#e8e8ec}
+#mvolrow{display:flex;align-items:center;gap:6px}
+#mvolrow span{font-size:7px;font-weight:900;letter-spacing:1px;color:#8a94ae}
+#mvolrow input{flex:1;height:22px;appearance:none;background:transparent;--c:#ffd24a}
+/* --- overlays --- */
+#offline{position:fixed;inset:0;display:none;align-items:center;justify-content:center;background:rgba(11,13,18,.93);font-size:14px;font-weight:800;color:#ff9f43;z-index:19}
+body.off #offline{display:flex}
+#rotate{position:fixed;inset:0;display:none;flex-direction:column;align-items:center;justify-content:center;gap:10px;background:#0b0d12;z-index:30;font-size:15px;font-weight:800}
+#rotate b{font-size:42px}
+@media (orientation:portrait){#rotate{display:flex}}
+#lib{position:fixed;inset:0;background:#0b0d12;z-index:22;display:none;flex-direction:column}
+body.libopen #lib{display:flex}
+#lib header{display:flex;align-items:center;gap:8px;padding:8px 10px;border-bottom:1px solid #232a3a}
+#lib h2{flex:1;font-size:12px;font-weight:800;letter-spacing:.5px;color:#ffd24a}
+#lib-close{padding:7px 14px;font-weight:800;font-size:11px;background:#21252f;border:1px solid #2b3040;color:#d7dce8;border-radius:3px}
+#lib-list{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch}
+.lrow{display:flex;align-items:center;gap:8px;padding:9px 12px;border-bottom:1px solid #14171e;font-size:12px}
+.lrow:active{background:#171b23}
+.lrow .n{width:24px;color:#586074;font-size:9.5px;font-variant-numeric:tabular-nums}
+.lrow .t{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#d7dce8}
+.lrow .b{color:#39c2ff;font-weight:800;font-size:11px;font-variant-numeric:tabular-nums}
+.lrow.pl .t{color:#8a94ae}
+#sheet{position:fixed;left:0;right:0;bottom:-100%;background:#14171e;border-top:1px solid #39c2ff;padding:12px;transition:bottom .15s;z-index:24;box-shadow:0 -8px 30px rgba(0,0,0,.5)}
+#sheet.open{bottom:0}
+#sheet .st{font-size:11px;color:#aab2c6;margin-bottom:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#sheet .row{display:flex;gap:6px}
+#sheet .row button{flex:1;padding:13px 0;font-size:13px;font-weight:900;border-radius:3px;border:1px solid var(--c,#2b3040);background:var(--c,#21252f);color:#0b0d12}
+#sheet .row #sheet-cancel{--c:none;background:#21252f;color:#d7dce8;border-color:#2b3040}
+</style>
+</head>
+<body>
+<div id="app">
+  <div class="dhead" id="headL" style="--c:#39c2ff"></div>
+  <div id="topmid"><button id="btn-lib">📚 BIBLIO</button><button id="btn-fs">⛶</button></div>
+  <div class="dhead" id="headR" style="--c:#ff9f43"></div>
+  <canvas class="wave wavefull" id="waveL" width="1560" height="74" style="--c:#39c2ff"></canvas>
+  <canvas class="wave wavefull" id="waveR" width="1560" height="74" style="--c:#ff9f43"></canvas>
+  <div class="deckcol" id="deckL" style="--c:#39c2ff"></div>
+  <div id="mixer"></div>
+  <div class="deckcol" id="deckR" style="--c:#ff9f43"></div>
+</div>
+<div id="offline">⚠️ Connexion au PC perdue…</div>
+<div id="rotate"><b>🔄</b>Tourne ton téléphone en PAYSAGE</div>
+<div id="lib">
+  <header><h2 id="lib-title">📚 Bibliothèque</h2><button id="lib-close">✕</button></header>
+  <div id="lib-list"></div>
+</div>
+<div id="sheet">
+  <div class="st" id="sheet-title">Charger sur…</div>
+  <div class="row" id="sheet-decks"></div>
+  <div class="row" style="margin-top:6px"><button id="sheet-cancel">Annuler</button></div>
+</div>
+<script>
+const COLORS = ['#39c2ff', '#ff9f43'];
+const DECKS = [0, 1]; // v1 : mode 2 pistes (le 4 pistes viendra ensuite)
+const held = new Map();
+const lastSend = new Map();
+let state = null;
+let lastPollAt = 0;
+
+function cmd(o) {
+  fetch('/cmd', { method: 'POST', body: JSON.stringify(o) }).catch(() => {});
+}
+function throttled(key, o) {
+  const t = Date.now();
+  if ((lastSend.get(key) || 0) > t - 80) return;
+  lastSend.set(key, t);
+  cmd(o);
+}
+const isHeld = (key) => (held.get(key) || 0) > Date.now() - 500;
+function fmtTime(s) {
+  if (s == null || !isFinite(s)) return '0:00';
+  const neg = s < 0;
+  s = Math.abs(s);
+  return `${neg ? '−' : ''}${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
+}
+
+// --- Knob façon interface de base : disque sombre, liseré, arc néon fin,
+// aiguille blanche — glisser vertical, double-tap = 0 ---
+function makeKnob(color, sendFn) {
+  const cv = document.createElement('canvas');
+  cv.width = 74;
+  cv.height = 74;
+  const g = cv.getContext('2d');
+  let val = 0;
+  const draw = () => {
+    g.clearRect(0, 0, 74, 74);
+    const a0 = Math.PI * 0.75;
+    const a1 = Math.PI * 2.25;
+    // disque
+    g.beginPath();
+    g.arc(37, 37, 26, 0, Math.PI * 2);
+    g.fillStyle = '#1b202b';
+    g.fill();
+    g.lineWidth = 2;
+    g.strokeStyle = '#2b3040';
+    g.stroke();
+    // piste de course
+    g.lineWidth = 4;
+    g.lineCap = 'round';
+    g.beginPath();
+    g.arc(37, 37, 32, a0, a1);
+    g.strokeStyle = 'rgba(255,255,255,0.07)';
+    g.stroke();
+    // arc de valeur (depuis le centre = 0)
+    const mid = (a0 + a1) / 2;
+    const at = mid + (a1 - a0) / 2 * val;
+    if (Math.abs(val) > 0.01) {
+      g.beginPath();
+      if (val >= 0) g.arc(37, 37, 32, mid, at);
+      else g.arc(37, 37, 32, at, mid);
+      g.strokeStyle = color;
+      g.shadowColor = color;
+      g.shadowBlur = 5;
+      g.stroke();
+      g.shadowBlur = 0;
+    }
+    // aiguille
+    g.beginPath();
+    g.moveTo(37 + Math.cos(at) * 9, 37 + Math.sin(at) * 9);
+    g.lineTo(37 + Math.cos(at) * 24, 37 + Math.sin(at) * 24);
+    g.lineWidth = 3;
+    g.strokeStyle = '#e8e8ec';
+    g.stroke();
+  };
+  let startY = null;
+  let startVal = 0;
+  cv.addEventListener('pointerdown', (e) => {
+    startY = e.clientY;
+    startVal = val;
+    cv.setPointerCapture(e.pointerId);
+  });
+  cv.addEventListener('pointermove', (e) => {
+    if (startY == null) return;
+    val = Math.max(-1, Math.min(1, startVal + (startY - e.clientY) / 80));
+    draw();
+    sendFn(val, true);
+  });
+  const up = () => {
+    if (startY == null) return;
+    startY = null;
+    sendFn(val, false);
+  };
+  cv.addEventListener('pointerup', up);
+  cv.addEventListener('pointercancel', up);
+  cv.addEventListener('dblclick', () => { val = 0; draw(); sendFn(0, false); });
+  draw();
+  return { el: cv, set: (v) => { val = v; draw(); } };
+}
+
+// --- Jog wheel : platine sobre, anneau fin, BPM au centre ---
+function makeWheel(color) {
+  const cv = document.createElement('canvas');
+  cv.className = 'wheel';
+  cv.width = 300;
+  cv.height = 300;
+  const g = cv.getContext('2d');
+  const draw = (t, playing, bpm) => {
+    g.clearRect(0, 0, 300, 300);
+    const c = 150;
+    // anneau extérieur fin
+    g.beginPath();
+    g.arc(c, c, 144, 0, Math.PI * 2);
+    g.lineWidth = 4;
+    g.strokeStyle = color;
+    g.shadowColor = color;
+    g.shadowBlur = playing ? 10 : 0;
+    g.globalAlpha = playing ? 1 : 0.45;
+    g.stroke();
+    g.shadowBlur = 0;
+    g.globalAlpha = 1;
+    // disque + sillons fins
+    g.beginPath();
+    g.arc(c, c, 137, 0, Math.PI * 2);
+    g.fillStyle = '#10131a';
+    g.fill();
+    g.strokeStyle = 'rgba(255,255,255,0.045)';
+    g.lineWidth = 1;
+    for (let r = 56; r < 132; r += 8) {
+      g.beginPath();
+      g.arc(c, c, r, 0, Math.PI * 2);
+      g.stroke();
+    }
+    // marqueur de rotation (33 tours/min)
+    const ang = (t || 0) * 3.49;
+    g.beginPath();
+    g.moveTo(c + Math.cos(ang) * 58, c + Math.sin(ang) * 58);
+    g.lineTo(c + Math.cos(ang) * 130, c + Math.sin(ang) * 130);
+    g.lineWidth = 3.5;
+    g.strokeStyle = playing ? color : '#3a4258';
+    g.stroke();
+    // moyeu : BPM
+    g.beginPath();
+    g.arc(c, c, 52, 0, Math.PI * 2);
+    g.fillStyle = '#0b0d12';
+    g.fill();
+    g.lineWidth = 1.5;
+    g.strokeStyle = '#232a3a';
+    g.stroke();
+    g.textAlign = 'center';
+    g.fillStyle = '#e8e8ec';
+    g.font = '800 27px system-ui';
+    g.fillText(bpm || '--', c, c + 5);
+    g.fillStyle = color;
+    g.font = '900 10px system-ui';
+    try { g.letterSpacing = '2px'; } catch (e) { /* vieux moteurs */ }
+    g.fillText('BPM', c, c + 25);
+    try { g.letterSpacing = '0px'; } catch (e) { /* rien */ }
+  };
+  draw(0, false, '--');
+  return { el: cv, draw };
+}
+
+// --- Vague défilante (bandes colorées, temps rouges, playhead) ---
+const waves = [null, null];
+function drawWave(cv, w, st) {
+  const g = cv.getContext('2d');
+  const W = cv.width;
+  const H = cv.height;
+  g.clearRect(0, 0, W, H);
+  if (!w || !st || !st.dur) {
+    g.fillStyle = '#3a4258';
+    g.font = '600 17px system-ui';
+    g.textAlign = 'center';
+    g.fillText('— vide — (📚 pour charger)', W / 2, H / 2 + 6);
+    return;
+  }
+  const dt = (performance.now() - lastPollAt) / 1000;
+  const t = st.t + (st.playing ? dt * st.tempo : 0);
+  const windowSec = 8 * (st.tempo || 1);
+  const pps = W / windowSec;
+  const n = w.low.length;
+  for (let x = 0; x < W; x += 2) {
+    const tt = t + (x - W / 2) / pps;
+    if (tt < 0 || tt >= w.duration) continue;
+    const idx = Math.min(n - 1, Math.floor(tt * w.rate));
+    const lo = w.low[idx] / 255;
+    const mi = w.mid[idx] / 255;
+    const hi = w.high[idx] / 255;
+    const amp = Math.max(lo, mi, hi);
+    if (amp < 0.01) continue;
+    const h = Math.max(2, amp * (H - 6));
+    g.fillStyle = `rgb(${40 + hi * 215 | 0},${40 + mi * 180 | 0},${90 + lo * 165 | 0})`;
+    g.fillRect(x, (H - h) / 2, 2, h);
+  }
+  if (st.bpmRaw > 0) {
+    const spb = 60 / st.bpmRaw;
+    let k = Math.ceil((t - windowSec / 2 - st.beatOffset) / spb);
+    for (; ; k++) {
+      const bt = st.beatOffset + k * spb;
+      if (bt > t + windowSec / 2) break;
+      const x = W / 2 + (bt - t) * pps;
+      const isBar = ((k % 4) + 4) % 4 === 0;
+      g.fillStyle = isBar ? 'rgba(255,23,68,0.95)' : 'rgba(255,23,68,0.4)';
+      g.fillRect(x, 0, isBar ? 3 : 1.5, H);
+    }
+  }
+  g.fillStyle = '#fff';
+  g.fillRect(W / 2 - 1.5, 0, 3, H);
+}
+
+// --- Pads : 3 modes, mêmes valeurs que le PC ---
+const PAD_SETS = {
+  hotcue: 'ABCDEFGH'.split('').map((l, k) => ({ label: l, mode: 'hotcue', idx: k })),
+  loop: [
+    { label: '1', mode: 'loop', idx: 5, beats: 1 },
+    { label: '2', mode: 'loop', idx: 6, beats: 2 },
+    { label: '4', mode: 'loop', idx: 7, beats: 4 },
+    { label: '8', mode: 'loop', idx: 8, beats: 8 },
+    { label: '16', mode: 'loop', idx: 9, beats: 16 },
+    { label: 'IN', act: 'loopin' },
+    { label: 'OUT', act: 'loopout' },
+    { label: '✕', mode: 'loop', idx: 0 }
+  ],
+  jump: [
+    { label: '−2', j: -2 }, { label: '−1', j: -1 }, { label: '−½', j: -0.5 }, { label: '−¼', j: -0.25 },
+    { label: '+¼', j: 0.25 }, { label: '+½', j: 0.5 }, { label: '+1', j: 1 }, { label: '+2', j: 2 }
+  ]
+};
+const MODES = [['hotcue', 'CUE'], ['loop', 'LOOP'], ['jump', 'JUMP']];
+
+// --- Construction d'un deck ---
+const deckUI = [];
+function buildDeck(side, d) {
+  const col = document.getElementById(side === 0 ? 'deckL' : 'deckR');
+  const color = COLORS[side];
+  const ui = { mode: 'hotcue', pads: [], knobs: {} };
+  const row = document.createElement('div');
+  row.className = 'drow';
+  const left = document.createElement('div');
+  left.className = 'sidebtns';
+  ui.play = document.createElement('button');
+  ui.play.className = 'rbtn play';
+  ui.play.textContent = '▶';
+  ui.play.addEventListener('click', () => cmd({ action: 'play', deck: d }));
+  const cue = document.createElement('button');
+  cue.className = 'rbtn cue';
+  cue.textContent = 'CUE';
+  cue.addEventListener('click', () => cmd({ action: 'cue', deck: d }));
+  left.appendChild(side === 0 ? ui.play : cue);
+  left.appendChild(side === 0 ? cue : ui.play);
+  const wheelwrap = document.createElement('div');
+  wheelwrap.className = 'wheelwrap';
+  ui.wheel = makeWheel(color);
+  wheelwrap.appendChild(ui.wheel.el);
+  const right = document.createElement('div');
+  right.className = 'sidebtns';
+  ui.sync = document.createElement('button');
+  ui.sync.className = 'sbtn';
+  ui.sync.textContent = 'SYNC';
+  ui.sync.addEventListener('click', () => cmd({ action: 'sync', deck: d }));
+  ui.bass = document.createElement('button');
+  ui.bass.className = 'sbtn';
+  ui.bass.textContent = '🔊';
+  ui.bass.addEventListener('click', () => cmd({ action: 'bass', deck: d }));
+  ui.load = document.createElement('button');
+  ui.load.className = 'sbtn';
+  ui.load.textContent = '📂';
+  ui.load.addEventListener('click', () => openLib(d));
+  right.append(ui.sync, ui.bass, ui.load);
+  const tempo = document.createElement('div');
+  tempo.className = 'tempo';
+  tempo.innerHTML = '<span>TEMPO</span>';
+  const tw = document.createElement('div');
+  tw.className = 'vwrap';
+  ui.tempo = document.createElement('input');
+  ui.tempo.type = 'range';
+  ui.tempo.min = '0.92';
+  ui.tempo.max = '1.08';
+  ui.tempo.step = '0.001';
+  ui.tempo.value = '1';
+  ui.tempo.style.setProperty('--c', color);
+  tw.appendChild(ui.tempo);
+  const tr = document.createElement('button');
+  tr.className = 'tr';
+  tr.textContent = '×1';
+  tr.addEventListener('click', () => {
+    ui.tempo.value = '1';
+    cmd({ action: 'tempo', deck: d, value: 1 });
+  });
+  tempo.append(tw, tr);
+  ui.tempo.addEventListener('input', () => throttled(`tp${d}`, { action: 'tempo', deck: d, value: Number(ui.tempo.value) }));
+  ui.tempo.addEventListener('change', () => cmd({ action: 'tempo', deck: d, value: Number(ui.tempo.value) }));
+  ['input', 'touchstart', 'touchend'].forEach((ev) =>
+    ui.tempo.addEventListener(ev, () => held.set(`tp${d}`, Date.now())));
+  if (side === 0) row.append(left, wheelwrap, right, tempo);
+  else row.append(tempo, left, wheelwrap, right);
+  col.appendChild(row);
+  const tabs = document.createElement('div');
+  tabs.className = 'padtabs';
+  MODES.forEach(([key, lbl]) => {
+    const b = document.createElement('button');
+    b.textContent = lbl;
+    b.classList.toggle('on', key === ui.mode);
+    b.addEventListener('click', () => {
+      ui.mode = key;
+      [...tabs.children].forEach((x, i2) => x.classList.toggle('on', MODES[i2][0] === key));
+      renderPads();
+    });
+    tabs.appendChild(b);
+  });
+  col.appendChild(tabs);
+  const pads = document.createElement('div');
+  pads.className = 'pads';
+  col.appendChild(pads);
+  const renderPads = () => {
+    pads.textContent = '';
+    ui.pads = [];
+    PAD_SETS[ui.mode].forEach((p) => {
+      const b = document.createElement('button');
+      if (!p) {
+        b.disabled = true;
+      } else {
+        b.textContent = p.label;
+        b.addEventListener('click', () => {
+          if (p.act) cmd({ action: p.act, deck: d });
+          else if (ui.mode === 'jump') cmd({ action: 'jump', deck: d, value: p.j });
+          else cmd({ action: 'pad', deck: d, mode: p.mode, value: p.idx });
+        });
+      }
+      pads.appendChild(b);
+      ui.pads.push({ el: b, def: p });
+    });
+  };
+  renderPads();
+  ui.renderPads = renderPads;
+  deckUI.push(ui);
+}
+buildDeck(0, 0);
+buildDeck(1, 1);
+
+// --- Mixer central (BPM master en tête) ---
+const mixer = document.getElementById('mixer');
+const midbpm = document.createElement('div');
+midbpm.id = 'midbpm';
+midbpm.innerHTML = '<button id="bpm-minus">♩−</button><span id="mbpm">—</span><button id="bpm-plus">♩+</button>';
+mixer.appendChild(midbpm);
+const EQ_ROWS = [['trim', 'GAIN'], ['high', 'HI'], ['mid', 'MID'], ['low', 'LOW'], ['filter', 'FILT']];
+EQ_ROWS.forEach(([key, lbl]) => {
+  const row = document.createElement('div');
+  row.className = 'eqrow';
+  DECKS.forEach((d, side) => {
+    const send = (v, moving) => {
+      const o = key === 'trim' ? { action: 'trim', deck: d, value: v }
+        : key === 'filter' ? { action: 'filter', deck: d, value: v }
+          : { action: 'eq', deck: d, band: key, value: v };
+      held.set(`${key}${d}`, Date.now());
+      if (moving) throttled(`${key}${d}`, o);
+      else cmd(o);
+    };
+    const kn = makeKnob(COLORS[side], send);
+    deckUI[side].knobs[key] = kn;
+    const wrap = document.createElement('div');
+    wrap.className = 'knob';
+    wrap.appendChild(kn.el);
+    if (side === 0) {
+      row.appendChild(wrap);
+      const s = document.createElement('span');
+      s.textContent = lbl;
+      row.appendChild(s);
+    } else {
+      row.appendChild(wrap);
+    }
+  });
+  mixer.appendChild(row);
+});
+const fadrow = document.createElement('div');
+fadrow.id = 'fadrow';
+DECKS.forEach((d, side) => {
+  const w = document.createElement('div');
+  w.className = 'vwrap';
+  const inp = document.createElement('input');
+  inp.type = 'range';
+  inp.min = '0';
+  inp.max = '1';
+  inp.step = '0.01';
+  inp.value = '1';
+  inp.style.setProperty('--c', COLORS[side]);
+  w.appendChild(inp);
+  deckUI[side].vol = inp;
+  inp.addEventListener('input', () => throttled(`v${d}`, { action: 'vol', deck: d, value: Number(inp.value) }));
+  inp.addEventListener('change', () => cmd({ action: 'vol', deck: d, value: Number(inp.value) }));
+  ['input', 'touchstart', 'touchend'].forEach((ev) =>
+    inp.addEventListener(ev, () => held.set(`v${d}`, Date.now())));
+  fadrow.appendChild(w);
+});
+mixer.appendChild(fadrow);
+const mvolrow = document.createElement('div');
+mvolrow.id = 'mvolrow';
+mvolrow.innerHTML = '<span>MASTER</span>';
+const mvol = document.createElement('input');
+mvol.type = 'range';
+mvol.min = '0';
+mvol.max = '1';
+mvol.step = '0.01';
+mvol.value = '1';
+mvolrow.appendChild(mvol);
+mixer.appendChild(mvolrow);
+mvol.addEventListener('input', () => throttled('mv', { action: 'mvol', value: Number(mvol.value) }));
+['input', 'touchstart', 'touchend'].forEach((ev) => mvol.addEventListener(ev, () => held.set('mv', Date.now())));
+const xfrow = document.createElement('div');
+xfrow.id = 'xfrow';
+xfrow.innerHTML = '<span>A</span>';
+const xf = document.createElement('input');
+xf.type = 'range';
+xf.min = '0';
+xf.max = '1';
+xf.step = '0.01';
+xf.value = '0.5';
+xfrow.appendChild(xf);
+const bl = document.createElement('span');
+bl.textContent = 'B';
+xfrow.appendChild(bl);
+mixer.appendChild(xfrow);
+xf.addEventListener('input', () => throttled('xf', { action: 'xf', value: Number(xf.value) }));
+['input', 'touchstart', 'touchend'].forEach((ev) => xf.addEventListener(ev, () => held.set('xf', Date.now())));
+
+// dimensionnement des faders verticaux (input tourné -90°)
+function sizeVerticals() {
+  document.querySelectorAll('.vwrap').forEach((w) => {
+    const h = w.clientHeight;
+    const inp = w.querySelector('input');
+    inp.style.width = `${h}px`;
+    inp.style.transform = 'translate(-50%,-50%) rotate(-90deg)';
+  });
+}
+window.addEventListener('resize', () => setTimeout(sizeVerticals, 60));
+
+// --- BPM master + plein écran ---
+document.getElementById('bpm-minus').addEventListener('click', () => cmd({ action: 'mbpm', value: -1 }));
+document.getElementById('bpm-plus').addEventListener('click', () => cmd({ action: 'mbpm', value: 1 }));
+document.getElementById('btn-fs').addEventListener('click', () => {
+  if (document.fullscreenElement) document.exitFullscreen();
+  else document.documentElement.requestFullscreen().catch(() => {});
+  setTimeout(sizeVerticals, 400);
+});
+
+// --- Entêtes ---
+function buildHead(el, num) {
+  el.innerHTML = `<span class="num">${num}</span><span class="title">—</span>
+    <span class="mbadge">MASTER</span><span class="time">0:00</span>`;
+}
+buildHead(document.getElementById('headL'), 1);
+buildHead(document.getElementById('headR'), 2);
+
+// --- Bibliothèque ---
+let libStamp = -1;
+let libTarget = null;
+let pendingIdx = null;
+const sheet = document.getElementById('sheet');
+const sheetDecks = document.getElementById('sheet-decks');
+DECKS.forEach((d, side) => {
+  const b = document.createElement('button');
+  b.textContent = `Deck ${d + 1}`;
+  b.style.setProperty('--c', COLORS[side]);
+  b.addEventListener('click', () => {
+    if (pendingIdx != null) cmd({ action: 'load', deck: d, value: pendingIdx });
+    sheet.classList.remove('open');
+    document.body.classList.remove('libopen');
+  });
+  sheetDecks.appendChild(b);
+});
+document.getElementById('sheet-cancel').addEventListener('click', () => sheet.classList.remove('open'));
+function openLib(target) {
+  libTarget = target;
+  document.body.classList.add('libopen');
+  fetchLib(true);
+}
+document.getElementById('btn-lib').addEventListener('click', () => openLib(null));
+document.getElementById('lib-close').addEventListener('click', () => {
+  document.body.classList.remove('libopen');
+  sheet.classList.remove('open');
+});
+async function fetchLib(force) {
+  try {
+    const l = await (await fetch('/lib')).json();
+    if (!force && l.stamp === libStamp) return;
+    libStamp = l.stamp;
+    document.getElementById('lib-title').textContent = `📚 ${l.title || 'Bibliothèque'} (${(l.items || []).length})${libTarget != null ? ` → Deck ${libTarget + 1}` : ''}`;
+    const list = document.getElementById('lib-list');
+    list.textContent = '';
+    (l.items || []).forEach((it, idx) => {
+      const r = document.createElement('div');
+      r.className = 'lrow' + (it.pl ? ' pl' : '');
+      r.innerHTML = `<span class="n">${idx + 1}</span><span class="t"></span><span class="b">${it.bpm ?? ''}</span>`;
+      r.querySelector('.t').textContent = (it.pl ? '📂 ' : '') + it.name;
+      if (!it.pl) {
+        r.addEventListener('click', () => {
+          if (libTarget != null) {
+            cmd({ action: 'load', deck: libTarget, value: idx });
+            document.body.classList.remove('libopen');
+          } else {
+            pendingIdx = idx;
+            document.getElementById('sheet-title').textContent = `Charger « ${it.name} » sur…`;
+            sheet.classList.add('open');
+          }
+        });
+      }
+      list.appendChild(r);
+    });
+  } catch { /* hors ligne */ }
+}
+
+// --- Synchronisation d'état ---
+let misses = 0;
+async function poll() {
+  try {
+    const s = await (await fetch('/state')).json();
+    state = s;
+    lastPollAt = performance.now();
+    misses = 0;
+    document.body.classList.remove('off');
+    document.getElementById('mbpm').textContent = s.mbpm || '—';
+    if (!isHeld('mv') && s.mvol != null) mvol.value = s.mvol;
+    if (!isHeld('xf') && s.xf != null) xf.value = s.xf;
+    DECKS.forEach((d, side) => {
+      const st = (s.decks || [])[d];
+      const ui = deckUI[side];
+      if (!st || !ui) return;
+      const head = document.getElementById(side === 0 ? 'headL' : 'headR');
+      const tEl = head.querySelector('.title');
+      if (tEl.textContent !== st.title) tEl.textContent = st.title;
+      head.classList.toggle('ismaster', !!st.master);
+      ui.play.textContent = st.playing ? '❚❚' : '▶';
+      ui.play.classList.toggle('on', !!st.playing);
+      ui.sync.classList.toggle('on', !!st.synced);
+      ui.bass.classList.toggle('on', !!st.bassKilled);
+      ui.bass.textContent = st.bassKilled ? '🔇' : '🔊';
+      if (!isHeld(`v${d}`) && st.vol != null) ui.vol.value = st.vol;
+      if (!isHeld(`tp${d}`) && st.tempo != null) ui.tempo.value = st.tempo;
+      const kv = { trim: st.trim, high: st.eqh, mid: st.eqm, low: st.eql, filter: st.filter };
+      Object.entries(kv).forEach(([k, v]) => {
+        if (v != null && !isHeld(`${k}${d}`) && ui.knobs[k]) ui.knobs[k].set(v);
+      });
+      ui.pads.forEach((p) => {
+        if (!p.def) return;
+        if (ui.mode === 'hotcue') p.el.classList.toggle('set', !!(st.cues || [])[p.def.idx]);
+        if (ui.mode === 'loop') p.el.classList.toggle('act', !!st.loopOn && st.loopBeats === p.def.beats);
+      });
+      if (st.wstamp && (!waves[side] || waves[side].stamp !== st.wstamp)) fetchWave(side, d);
+    });
+    if (s.libStamp !== libStamp && document.body.classList.contains('libopen')) fetchLib();
+  } catch {
+    if (++misses > 3) document.body.classList.add('off');
+  }
+  setTimeout(poll, 400);
+}
+const fetching = new Set();
+async function fetchWave(side, d) {
+  if (fetching.has(side)) return;
+  fetching.add(side);
+  try {
+    const w = await (await fetch(`/wave?d=${d}`)).json();
+    if (w && w.rate) waves[side] = w;
+  } catch { /* retentera */ }
+  fetching.delete(side);
+}
+
+// --- Boucle de rendu ---
+const waveCvs = [document.getElementById('waveL'), document.getElementById('waveR')];
+function render() {
+  if (state && state.decks) {
+    DECKS.forEach((d, side) => {
+      const st = state.decks[d];
+      if (!st) return;
+      drawWave(waveCvs[side], waves[side], st);
+      const dt = (performance.now() - lastPollAt) / 1000;
+      const t = st.t + (st.playing ? dt * st.tempo : 0);
+      deckUI[side].wheel.draw(t, st.playing, st.bpm);
+      const head = document.getElementById(side === 0 ? 'headL' : 'headR');
+      const timeEl = head.querySelector('.time');
+      const txt = st.dur ? `${fmtTime(t)} · −${fmtTime(Math.max(0, st.dur - t))}` : '0:00';
+      if (timeEl.textContent !== txt) timeEl.textContent = txt;
+    });
+  }
+  requestAnimationFrame(render);
+}
+sizeVerticals();
+setTimeout(sizeVerticals, 200);
+poll();
+render();
+</script>
+</body>
+</html>

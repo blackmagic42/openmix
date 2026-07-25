@@ -1,0 +1,10 @@
+# Dépendances
+node_modules/
+
+# Builds (l'installeur se télécharge dans les Releases GitHub)
+dist/
+
+# Caches et divers
+*.log
+.DS_Store
+Thumbs.db

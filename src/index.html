@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:">
+  <title>OpenMix</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div id="app">
+    <header id="topbar">
+      <div id="logo">OPEN<span>MIX</span></div>
+      <button id="btn-deckcount" title="Basculer entre 2 et 4 decks">4 DECKS</button>
+      <button id="btn-rec" title="Enregistrer le mix dans un fichier">● REC</button>
+      <span id="rec-time" class="hidden">0:00</span>
+      <div id="midi-status" class="pad-off">🎹 Aucun contrôleur</div>
+      <div id="pad-status" class="pad-off">Aucune manette</div>
+      <button id="btn-settings" title="Paramètres">⚙</button>
+      <button id="btn-help" title="Aide manette">? Aide manette</button>
+    </header>
+
+    <section id="fxbar"></section>
+
+    <section id="waves">
+      <div id="wave-playhead"></div>
+      <div id="wave-zoom-ctl">
+        <button id="wz-scratch" title="Scratch sonore : 🔊 on entend le son en déplaçant la piste, 🔇 silencieux jusqu'au lâcher">🔊</button>
+        <button id="wz-out" title="Dézoomer (molette)">−</button>
+        <button id="wz-in" title="Zoomer (molette)">+</button>
+      </div>
+    </section>
+
+    <main id="decks-area">
+      <div class="deck-slot" id="deck-slot-0"></div>
+      <div id="mixer"></div>
+      <div class="deck-slot" id="deck-slot-1"></div>
+      <div class="deck-slot" id="deck-slot-2"></div>
+      <div class="deck-slot" id="deck-slot-3"></div>
+    </main>
+
+    <section id="library">
+      <div id="lib-toolbar">
+        <div id="lib-tabs">
+          <button id="tab-local" class="tab on">💻 Fichiers</button>
+          <button id="tab-sc" class="tab">☁️ SoundCloud</button>
+          <button id="tab-hist" class="tab">🕘 Historique</button>
+          <button id="tab-pl" class="tab">Playlists</button>
+        </div>
+        <div id="pl-bar" class="hidden">
+          <button id="btn-pl-back" class="hidden" title="Retour aux playlists">⬅</button>
+          <button id="btn-pl-new">➕ Nouvelle</button>
+          <button id="btn-pl-import" title="Importer les playlists d'un export Rekordbox (Fichier → Exporter la collection au format xml)">⬇ Rekordbox XML</button>
+          <button id="btn-pl-play" class="hidden" title="Premier titre sur le deck actif, le reste dans la file d'attente">▶ Jouer sur deck actif</button>
+        </div>
+        <button id="btn-folder">📁 Dossier musiques</button>
+        <div id="sc-bar" class="hidden">
+          <button id="btn-sc-back" class="hidden" title="Revenir à la liste des playlists">⬅</button>
+          <button id="btn-sc-login">Se connecter</button>
+          <button id="btn-sc-mine" class="hidden">Mes playlists</button>
+          <input id="sc-url" type="text" placeholder="…ou colle un lien playlist / profil" spellcheck="false">
+          <button id="btn-sc-load">Charger</button>
+        </div>
+        <input id="lib-search" type="text" placeholder="Rechercher…" spellcheck="false">
+        <span id="lib-status">Choisis ton dossier de musiques pour commencer</span>
+      </div>
+      <div id="lib-content">
+        <div id="lib-tree"></div>
+        <div id="lib-list-wrap">
+          <table id="lib-table">
+            <thead>
+              <tr><th class="col-num">#</th><th class="col-prev">Aperçu</th><th>Titre</th><th class="col-artist">Artiste</th><th class="col-bpm">BPM</th><th class="col-dur">Durée</th></tr>
+            </thead>
+            <tbody id="lib-body"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <div id="ctx-menu" class="hidden"></div>
+
+    <div id="prompt-overlay" class="hidden">
+      <div id="prompt-panel">
+        <h3 id="prompt-title">Nom</h3>
+        <input id="prompt-input" type="text" spellcheck="false">
+        <div class="prompt-actions">
+          <button id="prompt-ok">OK</button>
+          <button id="prompt-cancel">Annuler</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="settings-overlay" class="hidden">
+      <div id="settings-panel">
+        <h2>Paramètres</h2>
+        <div class="set-row">
+          <label>Analyse — plage BPM (comme Rekordbox)</label>
+          <div class="set-inline">
+            <select id="set-bpmrange">
+              <option value="68-135">68 – 135 (house, hip-hop)</option>
+              <option value="85-170" selected>85 – 170 (défaut — octave intelligent inclus)</option>
+              <option value="100-200">100 – 200 (hard techno, hardcore)</option>
+            </select>
+            <button id="set-reanalyze" title="Ré-analyse tous les morceaux avec la plage choisie">🔄 Tout ré-analyser</button>
+            <button id="set-rbimport" title="Récupère les grilles de battements calculées par Rekordbox sur ce PC (correspondance par nom de fichier)">🎚 Grilles Rekordbox</button>
+          </div>
+          <div class="set-inline" style="margin-top:6px">
+            <span class="set-info">Décalage global de grille (ms) :</span>
+            <input type="number" id="set-gridoffset" min="-60" max="60" step="1" value="0" style="width:64px">
+            <span class="set-info">— si les traits sont toujours un poil avant/après les kicks</span>
+          </div>
+        </div>
+        <div class="set-row">
+          <label>Comportement</label>
+          <div class="set-inline"><input type="checkbox" id="set-autostems" checked> <span class="set-info">Préparer les stems automatiquement au chargement</span></div>
+          <div class="set-inline"><input type="checkbox" id="set-snaprelease" checked> <span class="set-info">Recaler sur la grille au lâcher du scratch</span></div>
+          <div class="set-inline"><span class="set-info">Taille des vagues :</span>
+            <select id="set-wavesize">
+              <option value="normal">Normale</option>
+              <option value="grand">Grande</option>
+            </select>
+          </div>
+        </div>
+        <div class="set-row">
+          <label>Couleurs de la forme d'onde</label>
+          <select id="set-palette">
+            <option value="rgb">RGB (graves rouges, médiums verts, aigus bleus)</option>
+            <option value="blueorange">Bleu / Orange (style Rekordbox)</option>
+            <option value="neon">Néon (rose / vert / bleu)</option>
+            <option value="mono">Mono (gris clair)</option>
+          </select>
+        </div>
+        <div class="set-row">
+          <label>Sortie audio du mix</label>
+          <select id="set-output"><option value="">Sortie par défaut</option></select>
+        </div>
+        <div class="set-row">
+          <label>Micros détectés</label>
+          <div id="set-mics" class="set-info">—</div>
+        </div>
+        <div class="set-row">
+          <label>Contrôleur MIDI (DDJ et toute platine USB)</label>
+          <div id="midi-device" class="set-info">Aucun contrôleur détecté — branche ta platine, elle apparaîtra ici</div>
+          <div class="set-inline" style="margin-top:6px">
+            <select id="midi-deck-sel">
+              <option value="0">Deck 1</option>
+              <option value="1">Deck 2</option>
+              <option value="2">Deck 3</option>
+              <option value="3">Deck 4</option>
+              <option value="g">Global</option>
+            </select>
+            <span class="set-info">Clique 🎯 puis bouge le contrôle physique à associer</span>
+          </div>
+          <div id="midi-learn-table"></div>
+        </div>
+        <div class="set-row">
+          <label>Télécommande téléphone (même WiFi)</label>
+          <div class="set-inline">
+            <button id="set-remote">Activer</button>
+            <span id="set-remote-url" class="set-info"></span>
+          </div>
+        </div>
+        <button id="btn-close-settings">Fermer</button>
+      </div>
+    </div>
+
+    <div id="help-overlay" class="hidden">
+      <div id="help-panel">
+        <h2>Commandes manette</h2>
+        <table id="help-table"></table>
+        <p class="help-note">Croix / Rond / Carré / Triangle sur PlayStation — A / B / X / Y sur Xbox (détection automatique).</p>
+        <button id="btn-close-help">Fermer</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

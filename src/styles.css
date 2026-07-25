@@ -1,0 +1,2450 @@
+/* ==========================================================================
+   TURBO MIX — Design system
+   Refonte complète de l'interface : thème sombre « matériel club »,
+   typographie technique (Bahnschrift), contrôles façon DJM/CDJ.
+   Toutes les classes/ids sont pilotées par src/js/*.js — ne pas renommer.
+   ========================================================================== */
+
+* { margin: 0; padding: 0; box-sizing: border-box; user-select: none; }
+
+:root {
+  /* Fonds */
+  --bg: #07080b;
+  --bg-2: #0a0c10;
+  --panel: #10131a;
+  --panel-2: #141822;
+  --panel-3: #1a1f2b;
+  --inset: #08090d;
+
+  /* Lignes */
+  --border: rgba(255, 255, 255, 0.065);
+  --border-2: rgba(255, 255, 255, 0.12);
+  --hairline: rgba(255, 255, 255, 0.045);
+
+  /* Texte */
+  --text: #dde2ee;
+  --text-dim: #8b94ab;
+  --text-faint: #59627a;
+
+  /* Accent global + couleurs fonctionnelles */
+  --accent: #2fb9f5;
+  --danger: #ff4d5e;
+  --rec: #ff3b4e;
+  --sc: #ff5500;
+  --stems: #a06bff;
+  --tutor: #ffd24a;
+
+  /* Géométrie */
+  --r-lg: 10px;
+  --r-md: 7px;
+  --r-sm: 5px;
+
+  /* Typo */
+  --font: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  --font-tech: 'Bahnschrift', 'Segoe UI', system-ui, sans-serif;
+
+  --shadow-pop: 0 10px 34px rgba(0, 0, 0, 0.55), 0 2px 8px rgba(0, 0, 0, 0.4);
+}
+
+html, body { height: 100%; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 13px;
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection { background: rgba(47, 185, 245, 0.35); }
+
+/* ---------- Cadre général ----------
+   4 rangées : barre du haut / vagues / decks+mixer / bibliothèque.
+   minmax(0, 1fr) : rien ne peut dépasser la fenêtre, même si un canvas gonfle. */
+#app {
+  height: 100vh;
+  width: 100vw;
+  display: grid;
+  grid-template-rows: 46px auto minmax(0, 1fr) 238px;
+  grid-template-columns: minmax(0, 1fr);
+  overflow: hidden;
+}
+#topbar, #waves, #decks-area, #library { min-width: 0; }
+
+/* ==========================================================================
+   BOUTONS & CHAMPS — base
+   ========================================================================== */
+
+button {
+  font-family: var(--font);
+  background: linear-gradient(180deg, #232936 0%, #1b2029 100%);
+  color: var(--text);
+  border: 1px solid var(--border-2);
+  border-radius: var(--r-sm);
+  padding: 5px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.12s, border-color 0.12s, box-shadow 0.12s, color 0.12s, transform 0.05s;
+}
+button:hover {
+  background: linear-gradient(180deg, #2a3140 0%, #202634 100%);
+  border-color: rgba(255, 255, 255, 0.22);
+}
+button:active { transform: translateY(1px); }
+button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+select {
+  font-family: var(--font);
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--border-2);
+  border-radius: var(--r-sm);
+  padding: 4px 6px;
+  font-size: 11.5px;
+  outline: none;
+  cursor: pointer;
+}
+select:focus, select:hover { border-color: var(--accent); }
+
+input[type="text"], input[type="number"] {
+  font-family: var(--font);
+  background: var(--inset);
+  border: 1px solid var(--border-2);
+  border-radius: var(--r-sm);
+  color: var(--text);
+  padding: 5px 10px;
+  font-size: 12px;
+  outline: none;
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.45);
+  transition: border-color 0.12s, box-shadow 0.12s;
+}
+input[type="text"]:focus, input[type="number"]:focus {
+  border-color: var(--accent);
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.45), 0 0 0 2px rgba(47, 185, 245, 0.18);
+}
+input[type="checkbox"] { accent-color: var(--accent); width: 14px; height: 14px; }
+
+/* ==========================================================================
+   BARRE DU HAUT
+   ========================================================================== */
+
+#topbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 14px;
+  background: linear-gradient(180deg, #161a24 0%, #10131b 100%);
+  border-bottom: 1px solid var(--border);
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.5);
+  z-index: 5;
+}
+
+#logo {
+  font-family: var(--font-tech);
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: 3px;
+  color: #fff;
+  margin-right: 6px;
+  text-shadow: 0 0 16px rgba(47, 185, 245, 0.4);
+}
+#logo span { color: var(--accent); }
+
+#active-deck-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+#topbar > button { padding: 5px 11px; font-size: 11.5px; }
+
+/* Pastilles d'état (manette / MIDI) */
+#pad-status, #midi-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  padding: 4px 10px;
+  border-radius: 20px;
+  border: 1px solid var(--border);
+  background: var(--bg-2);
+  color: var(--text-dim);
+}
+#pad-status { margin-left: auto; }
+.pad-on { color: #5fe08a; border-color: rgba(95, 224, 138, 0.35); }
+.pad-off { color: var(--text-faint); }
+
+#btn-tutor { color: var(--tutor); border-color: rgba(255, 210, 74, 0.35); }
+#btn-tutor:hover { border-color: var(--tutor); box-shadow: 0 0 10px -2px rgba(255, 210, 74, 0.5); }
+
+/* Enregistrement */
+#btn-rec { color: var(--rec); font-weight: 800; letter-spacing: 0.5px; }
+#btn-rec.on {
+  background: linear-gradient(180deg, #e03244, #b81f30);
+  color: #fff;
+  border-color: #ff5b6a;
+  animation: rec-pulse 1.2s ease-in-out infinite;
+}
+@keyframes rec-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(255, 59, 78, 0.5); }
+  50% { box-shadow: 0 0 12px 2px rgba(255, 59, 78, 0.55); }
+}
+#rec-time {
+  font-family: var(--font-tech);
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  font-size: 13px;
+  color: var(--rec);
+}
+
+#btn-settings { font-size: 14px; padding: 4px 9px; }
+#btn-help { font-weight: 700; }
+
+/* ==========================================================================
+   FORMES D'ONDE EMPILÉES
+   ========================================================================== */
+
+#waves {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 8px 0;
+  overflow: hidden;
+}
+
+.wave-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 58px;
+  background: linear-gradient(180deg, #111420, #0e1119);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--deck-color, var(--border));
+  border-radius: var(--r-md);
+  padding: 3px 6px;
+  cursor: pointer;
+  min-width: 0;
+  transition: border-color 0.15s, box-shadow 0.15s, background 0.15s;
+}
+.wave-row.active {
+  border-color: var(--deck-color);
+  box-shadow: 0 0 14px -4px var(--deck-color), inset 0 0 18px -12px var(--deck-color);
+}
+
+.wave-row .deck-badge { flex-shrink: 0; }
+
+.wave-row canvas {
+  flex: 1;
+  height: 48px;
+  min-width: 0;
+  background: var(--inset);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-sm);
+  cursor: grab;
+}
+.wave-row canvas:active { cursor: grabbing; }
+
+.wave-bpm {
+  font-family: var(--font-tech);
+  font-size: 14px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--deck-color);
+  min-width: 48px;
+  text-align: right;
+  flex-shrink: 0;
+}
+
+/* Trait de lecture unique traversant les 4 pistes */
+#wave-playhead {
+  position: absolute;
+  top: 6px;
+  bottom: 0;
+  width: 2px;
+  background: #fff;
+  box-shadow: 0 0 8px rgba(255, 255, 255, 0.8);
+  z-index: 3;
+  pointer-events: none;
+}
+
+#wave-zoom-ctl {
+  position: absolute;
+  top: 10px;
+  right: 14px;
+  z-index: 4;
+  display: flex;
+  gap: 3px;
+}
+#wave-zoom-ctl button {
+  width: 26px;
+  padding: 2px 0;
+  font-size: 14px;
+  font-weight: 800;
+  opacity: 0.7;
+  background: rgba(20, 24, 34, 0.9);
+}
+#wave-zoom-ctl button:hover { opacity: 1; }
+#wave-zoom-ctl #wz-scratch { width: 34px; }
+#wave-zoom-ctl #wz-scratch.on { border-color: var(--accent); color: var(--accent); opacity: 1; }
+
+/* Cible de drag & drop survolée */
+.drop-hover {
+  border-color: #fff !important;
+  box-shadow: 0 0 14px -2px rgba(255, 255, 255, 0.55) !important;
+}
+
+/* Taille des vagues « Grande » (paramètres) */
+body.waves-lg .wave-row { height: 80px; }
+body.waves-lg .wave-row canvas { height: 70px; }
+
+/* ==========================================================================
+   ZONE DECKS
+   ========================================================================== */
+
+#decks-area {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 316px minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 6px;
+  padding: 6px 8px;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+
+/* Panneaux : 1 et 2 en haut, 3 et 4 en dessous (mixer au centre).
+   C'est le MIXER qui suit l'ordre club 3 1 2 4 (voir .strip order inline). */
+#deck-slot-0 { grid-area: 1 / 1; }
+#deck-slot-1 { grid-area: 1 / 3; }
+#deck-slot-2 { grid-area: 2 / 1; }
+#deck-slot-3 { grid-area: 2 / 3; }
+#mixer       { grid-area: 1 / 2 / 3 / 3; }
+
+.deck-slot { min-height: 0; min-width: 0; }
+
+.deck {
+  position: relative;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  background: linear-gradient(180deg, #141824 0%, #10131b 100%);
+  border: 1px solid var(--border-2);
+  border-radius: var(--r-lg);
+  padding: 6px 8px;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.deck.active {
+  border-color: var(--deck-color);
+  box-shadow: 0 0 18px -4px var(--deck-color), inset 0 0 24px -16px var(--deck-color);
+}
+
+/* Refus de chargement : ce son joue déjà ailleurs — secousse + flash rouge */
+.deck.refused { animation: deck-refuse 0.5s ease-out; }
+@keyframes deck-refuse {
+  0%, 100% { transform: translateX(0); }
+  15% { transform: translateX(-6px); }
+  30% { transform: translateX(5px); }
+  45% { transform: translateX(-4px); }
+  60% { transform: translateX(3px); }
+  20%, 80% {
+    box-shadow: 0 0 18px var(--danger), inset 0 0 24px rgba(255, 23, 68, 0.35);
+    border-color: var(--danger);
+  }
+}
+
+/* --- En-tête du deck --- */
+.deck-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 24px;
+  min-width: 0;
+}
+
+.deck-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 24px;
+  height: 20px;
+  padding: 0 6px;
+  background: var(--deck-color);
+  color: #0b0d12;
+  font-family: var(--font-tech);
+  font-weight: 700;
+  font-size: 13px;
+  border-radius: var(--r-sm);
+  box-shadow: 0 0 10px -3px var(--deck-color);
+  flex-shrink: 0;
+}
+
+/* Badge « quel joueur contrôle ce deck » */
+.pad-chip {
+  font-size: 9px;
+  font-weight: 800;
+  color: #5fe08a;
+  background: rgba(95, 224, 138, 0.1);
+  border: 1px solid rgba(95, 224, 138, 0.35);
+  border-radius: 3px;
+  padding: 1px 5px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.deck-title {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 600;
+  font-size: 12.5px;
+}
+
+.deck-master {
+  background: #e97f16;
+  color: #0b0d12;
+  font-weight: 800;
+  font-size: 9px;
+  letter-spacing: 0.8px;
+  border-radius: 3px;
+  padding: 2px 6px;
+  box-shadow: 0 0 8px -2px #e97f16;
+  flex-shrink: 0;
+}
+
+.deck-key {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  flex-shrink: 0;
+  background: var(--inset);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  padding: 1px 4px;
+}
+.deck-key b {
+  font-size: 8px;
+  letter-spacing: 0.5px;
+  color: var(--text-faint);
+  margin-right: 3px;
+}
+.deck-key button {
+  padding: 0 5px;
+  font-size: 11px;
+  font-weight: 800;
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  min-width: 0;
+  box-shadow: none;
+}
+.deck-key button:hover { background: var(--panel-3); color: #fff; }
+.key-val {
+  min-width: 22px;
+  text-align: center;
+  font-size: 10.5px;
+  font-weight: 800;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+.key-val.shifted { color: #ffd166; }
+
+.deck-bpm {
+  font-family: var(--font-tech);
+  font-size: 20px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--deck-color);
+  min-width: 76px;
+  text-align: right;
+  flex-shrink: 0;
+  text-shadow: 0 0 12px color-mix(in srgb, var(--deck-color) 45%, transparent);
+}
+.deck-bpm small { font-size: 9.5px; color: var(--text-faint); font-weight: 600; letter-spacing: 0.5px; }
+
+/* Vue d'ensemble cliquable */
+.wave-over {
+  width: 100%;
+  height: 20px;
+  background: var(--inset);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+/* File d'attente du deck */
+.queue-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 6px;
+  background: var(--bg-2);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-sm);
+  min-height: 15px;
+  flex-shrink: 0;
+}
+.queue-chip {
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: 0.6px;
+  color: var(--text-faint);
+  flex-shrink: 0;
+}
+.queue-info {
+  flex: 1;
+  min-width: 0;
+  font-size: 8.5px;
+  color: var(--text-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.queue-info.filled { color: var(--deck-color); font-weight: 700; }
+.queue-clear {
+  padding: 0 5px;
+  font-size: 9px;
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  min-width: 0;
+  box-shadow: none;
+}
+.queue-clear:hover { color: #fff; background: var(--panel-3); }
+
+/* ==========================================================================
+   PADS DE PERFORMANCE & STEMS
+   ========================================================================== */
+
+.pads-bar {
+  display: flex;
+  align-items: stretch;
+  gap: 5px;
+  min-height: 0;
+}
+
+/* Modes des pads : LISTE verticale (demande David), ½/×2 en bas */
+.pad-modes {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex-shrink: 0;
+}
+.pad-modes button {
+  font-size: 8px;
+  font-weight: 800;
+  padding: 1px 6px;
+  letter-spacing: 0.6px;
+  flex: 1;
+  min-height: 0;
+  opacity: 0.55;
+}
+.pad-modes button.on {
+  opacity: 1;
+  background: var(--deck-color);
+  color: #0b0d12;
+  border-color: var(--deck-color);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--deck-color) 60%, transparent);
+}
+
+.jump-scale { display: flex; gap: 2px; }
+.jump-scale button { flex: 1; }
+.jump-scale button {
+  flex: 1;
+  font-size: 8.5px;
+  font-weight: 800;
+  padding: 1px 0;
+  opacity: 0.7;
+}
+
+.pads {
+  flex: 1;
+  display: grid;
+  grid-template-columns: repeat(10, 1fr); /* 5 rangées × L2/R2 */
+  gap: 3px;
+  min-width: 0;
+}
+/* Séparation visuelle moitié L2 | moitié R2 */
+.pads .pad:nth-child(5) { margin-right: 4px; }
+.pads .pad {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: center;
+  padding: 0;
+  min-height: 24px;
+  font-size: 9.5px;
+  font-weight: 800;
+  background: linear-gradient(180deg, #1d222e, #171b25);
+  border: 1px solid #282e3d;
+  border-radius: 4px;
+  color: var(--text-dim);
+  overflow: hidden;
+}
+.pads .pad:hover { border-color: #3a4256; background: linear-gradient(180deg, #232936, #1b202c); }
+
+/* Vignette PAD FX : quel effet joue, en grand sur le deck tant qu'on tient */
+.padfx-chip {
+  position: absolute;
+  top: 6px;
+  right: 10px;
+  z-index: 6;
+  padding: 3px 10px;
+  background: var(--accent);
+  color: #04070d;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 1px;
+  display: none;
+  pointer-events: none;
+}
+.padfx-chip.live { display: block; }
+
+/* Modes PAD FX / SAMPLER : les pads portent des NOMS — police compacte */
+.pads.pads-text .pad {
+  font-size: 7.5px;
+  letter-spacing: 0;
+  white-space: nowrap;
+  text-align: center;
+}
+
+/* Cue posé à la souris / session passée : repère neutre */
+.pads .pad.set {
+  background: #1c212c !important;
+  border-color: #8a94ae !important;
+  color: var(--text) !important;
+  box-shadow: inset 0 0 6px rgba(138, 148, 174, 0.25);
+}
+/* Cue posé par un JOUEUR : rempli de SA couleur */
+.pads .pad.set.set-owned {
+  background: var(--own-color) !important;
+  border-color: var(--own-color) !important;
+  color: #0b0d12 !important;
+  box-shadow: 0 0 8px var(--own-color),
+    inset 0 0 4px color-mix(in srgb, var(--own-color) 55%, transparent);
+}
+.pads .pad.on {
+  background: var(--own-color, #5fe08a) !important;
+  border-color: var(--own-color, #5fe08a) !important;
+  color: #0b0d12 !important;
+  box-shadow: 0 0 9px var(--own-color, #5fe08a),
+    inset 0 0 5px color-mix(in srgb, var(--own-color, #5fe08a) 40%, transparent);
+}
+/* Posé à la souris / ancien sur un pad divisé : simple liseré neutre */
+.pads .pad.set-any { outline: 1px solid #8a94ae; }
+/* Un seul joueur sur le deck : ses pads prennent une teinte de SA couleur */
+.pads .pad.pad-tinted {
+  background: color-mix(in srgb, var(--pt) 16%, #1c212c);
+  border-color: color-mix(in srgb, var(--pt) 50%, #282e3d);
+}
+
+/* Flash bref de la couleur du joueur à l'appui d'un pad */
+.pad-flash { animation: pad-flash-anim 0.35s ease-out; }
+@keyframes pad-flash-anim {
+  0% { box-shadow: inset 0 0 0 30px var(--flash-color), 0 0 12px var(--flash-color); }
+  100% { box-shadow: inset 0 0 0 0 transparent, 0 0 0 transparent; }
+}
+
+/* Pads divisés par joueur : chaque segment = l'action d'UN joueur */
+.pad-seg {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 9px;
+  font-weight: 900;
+  color: var(--pc);
+  background: color-mix(in srgb, var(--pc) 22%, transparent);
+  border-left: 3px solid var(--pc);
+  text-shadow: 0 0 7px var(--pc);
+  animation: pad-seg-in 0.22s ease-out;
+  min-height: 0;
+  overflow: hidden;
+}
+.pad-seg + .pad-seg { border-top: 1px solid var(--bg); }
+@keyframes pad-seg-in {
+  0% { transform: translateX(-6px) skewX(-8deg); opacity: 0; filter: brightness(2); }
+  60% { transform: translateX(2px) skewX(3deg); opacity: 1; }
+  100% { transform: translateX(0) skewX(0); }
+}
+.pad-seg.seg-active {
+  background: var(--pc);
+  color: #0b0d12;
+  text-shadow: none;
+  box-shadow: 0 0 9px var(--pc);
+}
+
+/* Vue fusionnée (tous les joueurs dans le même mode) */
+.pad-owners {
+  display: flex;
+  gap: 2px;
+  height: 3px;
+  margin: 1px 2px 0;
+}
+.pad-owners i { flex: 1; border-radius: 1px; transition: transform 0.15s; }
+.pad-owners i.bar-active { transform: scaleY(2.4); box-shadow: 0 0 8px currentColor; }
+.pad-single {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: 800;
+  min-height: 0;
+}
+.pad-band {
+  flex: 1;
+  min-height: 0;
+  background: color-mix(in srgb, var(--pc) 32%, transparent);
+  border-left: 3px solid var(--pc);
+}
+.pad-band.seg-active { background: var(--pc); box-shadow: 0 0 9px var(--pc); }
+.pad-single-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  text-shadow: 0 1px 3px #0b0d12;
+}
+
+/* --- Stems --- */
+.stems-col {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  width: 48px;
+  flex-shrink: 0;
+}
+.stems-title {
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: 1px;
+  color: var(--stems);
+  text-align: center;
+}
+.stem-btn {
+  flex: 1;
+  padding: 0;
+  font-size: 8.5px;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+  color: var(--text-dim);
+  background: linear-gradient(180deg, #1d222e, #171b25);
+}
+.stem-btn.ready { color: var(--stems); border-color: rgba(160, 107, 255, 0.4); }
+.stem-btn.on {
+  background: linear-gradient(180deg, #8b5ce0, #6f45c2);
+  color: #fff;
+  border-color: #a06bff;
+  box-shadow: 0 0 8px rgba(160, 107, 255, 0.5);
+}
+.stem-btn.loading { animation: stem-pulse 1s ease-in-out infinite; }
+@keyframes stem-pulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 1; }
+}
+
+/* ==========================================================================
+   CONTRÔLES DU DECK (transport + tempo)
+   ========================================================================== */
+
+.deck-controls {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: auto;
+}
+
+.deck-controls button {
+  min-width: 52px;
+  padding: 7px 0;
+  font-size: 12px;
+  font-weight: 700;
+}
+.btn-play.on  { background: var(--deck-color); color: #0b0d12; border-color: var(--deck-color); box-shadow: 0 0 10px color-mix(in srgb, var(--deck-color) 65%, transparent); }
+.btn-sync.on  { background: #5fe08a; color: #0b0d12; border-color: #5fe08a; box-shadow: 0 0 9px rgba(95, 224, 138, 0.5); }
+.btn-master.on { background: #e97f16; color: #0b0d12; border-color: #e97f16; }
+.btn-cue:active { background: #e97f16; color: #0b0d12; }
+.btn-grid { min-width: 44px !important; color: #ff6b6b; }
+.btn-grid:active { background: #ff5a5a; color: #0b0d12; }
+.btn-grid-left, .btn-grid-right {
+  min-width: 24px !important;
+  padding: 7px 0;
+  font-size: 9px;
+  color: #ff8a8a;
+}
+.btn-grid-half, .btn-grid-dbl {
+  min-width: 26px !important;
+  padding: 7px 0;
+  font-size: 10px;
+  color: #ff8a8a;
+}
+
+.deck-time {
+  font-family: var(--font-tech);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
+  font-weight: 600;
+  font-size: 12px;
+  min-width: 96px;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+/* Curseur de tempo */
+.tempo-wrap {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex: 1;
+  min-width: 0;
+  font-size: 10px;
+  color: var(--text-dim);
+  font-weight: 700;
+}
+.tempo-slider {
+  position: relative;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  min-width: 40px;
+}
+.tempo {
+  width: 100%;
+  height: 16px;
+  appearance: none;
+  -webkit-appearance: none;
+  background: transparent;
+  cursor: ew-resize;
+}
+.tempo::-webkit-slider-runnable-track {
+  height: 4px;
+  background: linear-gradient(90deg, color-mix(in srgb, var(--deck-color) 40%, #14181f), #14181f);
+  border-radius: 2px;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.6);
+}
+.tempo::-webkit-slider-thumb {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 10px;
+  height: 16px;
+  margin-top: -6px;
+  background: linear-gradient(#e7ebf3, #b9c2d4);
+  border-radius: 2px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
+}
+/* Repère du zéro : trait au centre + zéro aimanté (double-clic = reset) */
+.tempo-zero {
+  position: absolute;
+  left: 50%;
+  top: -2px;
+  bottom: -2px;
+  width: 2px;
+  margin-left: -1px;
+  background: rgba(255, 255, 255, 0.55);
+  border-radius: 1px;
+  pointer-events: none;
+}
+.tempo-val {
+  min-width: 44px;
+  font-family: var(--font-tech);
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  color: var(--deck-color);
+  font-weight: 700;
+}
+.tempo-min, .tempo-max {
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-faint);
+}
+/* Marqueur BPM d'un autre deck sur l'échelle */
+.tempo-mark {
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  width: 3px;
+  margin-left: -1.5px;
+  border-radius: 0;
+  pointer-events: none;
+  z-index: 2;
+}
+
+/* ==========================================================================
+   MIXER
+   ========================================================================== */
+
+#mixer {
+  background: linear-gradient(180deg, #12151d, #0e1117);
+  border: 1px solid var(--border-2);
+  border-radius: var(--r-lg);
+  display: flex;
+  flex-direction: column;
+  padding: 6px 6px 8px;
+  min-height: 0;
+  min-width: 0;
+  overflow: visible; /* les anneaux de loop / étiquettes cue dépassent des tranches */
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
+}
+
+/* --- Color FX (effet du knob FILTER de chaque tranche) --- */
+#color-row {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  padding: 0 4px 5px;
+  font-size: 9.5px;
+  font-weight: 800;
+  color: var(--text-faint);
+  letter-spacing: 1.2px;
+  flex-shrink: 0;
+}
+#color-row select { flex: 0 1 auto; min-width: 0; max-width: 110px; font-size: 10.5px; padding: 2px 4px; }
+#color-on { min-width: 38px; font-weight: 800; font-size: 10px; padding: 3px 0; }
+#color-on.on {
+  background: var(--accent);
+  color: #0b0d12;
+  border-color: var(--accent);
+  box-shadow: 0 0 8px rgba(47, 185, 245, 0.5);
+}
+
+/* --- Rangée MASTER : filtre global, volume du mix, VU-mètre master --- */
+#master-row {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  padding: 2px 4px 5px;
+  border-bottom: 1px solid var(--hairline);
+  margin-bottom: 3px;
+  flex-shrink: 0;
+}
+#master-label {
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 1.2px;
+  color: var(--text-dim);
+}
+#master-row .knob-wrap span { font-size: 7px; }
+.master-filter-knob .knob {
+  width: 26px !important;
+  height: 26px !important;
+}
+.master-filter-knob .knob-ind { height: 10px; transform-origin: 1px 12px; }
+.master-filter-knob span { display: block !important; font-size: 7.5px; }
+
+#master-meter {
+  position: relative;
+  flex: 1;
+  height: 9px;
+  background: var(--inset);
+  border: 1px solid var(--hairline);
+  border-radius: 2px;
+  overflow: hidden;
+}
+#master-meter-fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 100%;
+  /* animé par transform (compositeur seul) : zéro reflow par frame */
+  transform: scaleX(0);
+  transform-origin: left center;
+  background: linear-gradient(to right, #2ecc71, #a3d94e 55%, #f1c40f 75%, #e67e22 88%, #e74c3c 97%);
+}
+#master-meter-clip {
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  background: #3a1114;
+}
+#master-meter-clip.on { background: #ff2222; box-shadow: 0 0 7px #ff2222; }
+
+/* BPM MASTER : ± 0,5 — dirige tous les sons en SYNC */
+#master-bpm { display: inline-flex; align-items: center; gap: 3px; margin-left: 4px; }
+#master-bpm button {
+  width: 18px;
+  height: 18px;
+  line-height: 1;
+  font-size: 12px;
+  font-weight: 900;
+  padding: 0;
+  min-width: 0;
+}
+#master-bpm button:hover { border-color: var(--accent); color: var(--accent); }
+#master-bpm b {
+  font-family: var(--font-tech);
+  font-size: 12px;
+  font-weight: 700;
+  min-width: 38px;
+  text-align: center;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- Corps du mixer : 4 tranches + rack FX --- */
+#mix-body {
+  flex: 1;
+  display: flex;
+  gap: 4px;
+  min-height: 0;
+}
+#mix-body #strips { flex: 1; min-width: 0; }
+
+#strips {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0;
+  min-height: 0;
+  overflow: visible;
+}
+
+.strip {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 0 0;
+  min-height: 0;
+  border-right: 1px solid var(--hairline);
+  overflow: visible;
+  transition: box-shadow 0.15s, background 0.15s;
+}
+.strip:last-child { border-right: none; }
+.strip.active { box-shadow: inset 0 2px 0 var(--deck-color); background: rgba(255, 255, 255, 0.015); }
+/* Tranche sélectionnée à la manette : couleur du joueur (fond posé en inline) */
+.strip.gp-sel {
+  border-radius: 6px;
+  box-shadow:
+    inset 0 0 0 1.5px var(--psel, #ffd24a),
+    0 0 12px color-mix(in srgb, var(--psel, #ffd24a) 55%, transparent);
+}
+
+.strip-label {
+  font-family: var(--font-tech);
+  font-weight: 700;
+  color: var(--deck-color);
+  font-size: 11px;
+  letter-spacing: 0.5px;
+  line-height: 1;
+}
+
+/* Ligne SELECT au-dessus de chaque tranche */
+.strip-sel {
+  width: calc(100% - 8px);
+  padding: 2px 0;
+  font-size: 8px;
+  font-weight: 900;
+  letter-spacing: 1px;
+  color: var(--text-faint);
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+}
+.strip-sel.on {
+  color: #0b0d12;
+  background: var(--psel, var(--deck-color));
+  border-color: var(--psel, var(--deck-color));
+  box-shadow: 0 0 8px var(--psel, var(--deck-color));
+}
+
+/* Corps de tranche : knobs + VU-mètre vertical le long des knobs (Serato) */
+.strip-body {
+  display: flex;
+  align-items: stretch;
+  justify-content: center;
+  gap: 5px;
+  overflow: visible;
+}
+.knob-col {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+}
+
+/* --- Knobs --- */
+.knob-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  position: relative;
+}
+.knob-wrap span {
+  font-size: 7px;
+  font-weight: 700;
+  color: var(--text-faint);
+  letter-spacing: 0.6px;
+}
+
+.knob {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 34% 28%, #3a4358, #171c26 72%);
+  border: 1px solid #2c3444;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  position: relative;
+  cursor: ns-resize;
+}
+.knob-ind {
+  position: absolute;
+  left: 50%;
+  top: 2px;
+  width: 2px;
+  height: 7px;
+  margin-left: -1px;
+  background: var(--deck-color, var(--accent));
+  border-radius: 1px;
+  transform-origin: 1px 9px;
+  box-shadow: 0 0 4px var(--deck-color, var(--accent));
+}
+.strip .knob-wrap { gap: 1px; }
+.strip .knob-wrap span { font-size: 7px; }
+
+/* VU-mètre vertical de tranche */
+.meter {
+  position: relative;
+  width: 5px;
+  margin: 3px 0;
+  align-self: stretch;
+  background: var(--inset);
+  border: 1px solid var(--hairline);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.meter-fill {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 100%;
+  /* animé par transform (compositeur seul) : zéro reflow par frame */
+  transform: scaleY(0);
+  transform-origin: bottom center;
+  background: linear-gradient(to top, #2ecc71, #a3d94e 55%, #f1c40f 75%, #e67e22 88%, #e74c3c 97%);
+}
+.meter-clip {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 4px;
+  background: #3a1114;
+  z-index: 2;
+}
+.meter-clip.on { background: #ff2222; box-shadow: 0 0 7px #ff2222; }
+
+/* --- Faders --- */
+.fader-row {
+  flex: 1;
+  display: flex;
+  align-items: stretch;
+  justify-content: center;
+  gap: 4px;
+  width: 100%;
+  min-height: 62px;
+  padding: 3px 0 2px;
+}
+.fader-row .vfader { flex: 0 0 auto; }
+
+.vfader {
+  width: 30px;
+  min-height: 60px;
+  position: relative;
+  cursor: ns-resize;
+}
+.vfader::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 4px;
+  bottom: 4px;
+  width: 3px;
+  margin-left: -1.5px;
+  background: linear-gradient(to top, color-mix(in srgb, var(--deck-color) 55%, #12151c), #10131a);
+  border-radius: 2px;
+  opacity: 0.8;
+}
+.vfader-thumb {
+  position: absolute;
+  left: 3px;
+  right: 3px;
+  height: 13px;
+  background: linear-gradient(#eef1f7, #b7c0d2);
+  border: none;
+  border-radius: 2px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.65);
+  pointer-events: none;
+}
+.vfader-thumb::after {
+  content: '';
+  position: absolute;
+  left: 2px; right: 2px; top: 50%;
+  height: 2px;
+  margin-top: -1px;
+  background: #232833;
+}
+
+/* --- Crossfader --- */
+#xf-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px 0;
+  font-family: var(--font-tech);
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-dim);
+  flex-shrink: 0;
+}
+#crossfader {
+  flex: 1;
+  height: 26px;
+  position: relative;
+  cursor: ew-resize;
+}
+#crossfader::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 4px; right: 4px;
+  height: 3px;
+  margin-top: -1.5px;
+  background: var(--inset);
+  border-radius: 2px;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.7);
+}
+/* Repère du centre (0) — aimanté comme les knobs */
+#crossfader::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 3px;
+  bottom: 3px;
+  width: 2px;
+  margin-left: -1px;
+  background: rgba(255, 255, 255, 0.4);
+}
+#xf-thumb {
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  width: 22px;
+  background: linear-gradient(#eef1f7, #b7c0d2);
+  border: none;
+  border-radius: 2px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.65);
+  pointer-events: none;
+  z-index: 2;
+}
+
+/* ==========================================================================
+   RACK FX (dans le mixer, à droite des tranches)
+   ========================================================================== */
+
+#fxbar {
+  display: flex;
+  flex-direction: column;
+  width: 94px;
+  flex-shrink: 0;
+  gap: 3px;
+  padding: 0;
+  min-height: 0;
+}
+
+/* Onglets = les 4 JOUEURS */
+.fx-tabs { display: flex; gap: 2px; flex-shrink: 0; }
+.fx-tab {
+  position: relative;
+  overflow: hidden;
+  flex: 1;
+  padding: 3px 0;
+  font-size: 10.5px;
+  font-weight: 800;
+  color: var(--deck-color);
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  opacity: 0.55;
+}
+.fx-tab.on {
+  opacity: 1;
+  background: var(--deck-color);
+  color: #0b0d12;
+  border-color: var(--deck-color);
+  box-shadow: 0 0 8px var(--deck-color);
+}
+.fx-tab.fx-live {
+  background: color-mix(in srgb, var(--deck-color) 30%, var(--bg-2));
+  border-color: var(--deck-color);
+  opacity: 1;
+  box-shadow: 0 0 7px var(--deck-color);
+}
+.fx-tab.mine {
+  opacity: 1;
+  background: color-mix(in srgb, var(--pc, var(--deck-color)) 32%, var(--bg-2));
+  border-color: var(--pc, var(--deck-color));
+  box-shadow: 0 0 8px var(--pc, var(--deck-color));
+}
+/* bandeau « couleur des sons » en haut de l'onglet */
+.fx-tab::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: var(--sons, transparent);
+}
+/* barre de niveau en bas */
+.fx-tab::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 2px;
+  width: var(--lvl, 0%);
+  background: var(--deck-color);
+}
+.fx-tab-pct {
+  font-style: normal;
+  font-size: 7.5px;
+  font-weight: 700;
+  margin-left: 3px;
+  opacity: 0.45;
+  letter-spacing: 0;
+}
+.fx-tab.fx-live .fx-tab-pct { opacity: 1; text-shadow: 0 0 5px currentColor; }
+.fx-tab-beats {
+  font-style: normal;
+  font-size: 7.5px;
+  font-weight: 700;
+  margin-left: 3px;
+  padding: 0 2px;
+  border: 1px solid currentColor;
+  border-radius: 2px;
+  opacity: 0.5;
+  letter-spacing: 0;
+}
+.fx-tab.on .fx-tab-beats,
+.fx-tab.fx-live .fx-tab-beats { opacity: 1; }
+
+/* Les 4 unités « cerveau » restent en DOM mais sont CACHÉES */
+.fx-logic { display: none !important; }
+.fx-unit.fx-hidden { display: none !important; }
+.fx-unit { min-width: 0; }
+.fx-unit select {
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--border-2);
+  border-radius: var(--r-sm);
+  padding: 3px 4px;
+  font-size: 11px;
+  outline: none;
+  min-width: 0;
+}
+.fxu-assign { display: flex; gap: 2px; }
+.fxu-assign-btn {
+  width: 17px;
+  padding: 2px 0;
+  font-size: 9px;
+  font-weight: 800;
+  line-height: 1;
+  color: var(--adc);
+  opacity: 0.55;
+}
+.fxu-assign-btn.on { background: var(--adc); color: #0b0d12; border-color: var(--adc); opacity: 1; }
+.fxu-on { min-width: 40px; font-weight: 800; }
+.fxu-on.on { background: var(--deck-color); color: #0b0d12; border-color: var(--deck-color); }
+
+/* Vue MATRICE : une cellule par rangée, alignée sur les knobs */
+.fx-cells {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-height: 0;
+}
+.fx-cell {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: row;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0 5px;
+  gap: 4px;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-left: 2px solid var(--deck-color);
+  border-radius: 3px;
+  overflow: hidden;
+  cursor: pointer;
+  transition: border-color 0.12s, background 0.12s;
+}
+.fx-cell:hover { border-color: var(--border-2); background: var(--panel-2); }
+.fx-cell .fx-cell-lbl {
+  font-size: 7px;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+  color: var(--text-faint);
+  flex-shrink: 0;
+  line-height: 1.1;
+}
+.fx-cell .fx-cell-val {
+  font-size: 10px;
+  font-weight: 800;
+  color: #fff;
+  display: flex;
+  gap: 2px;
+  align-items: center;
+  justify-content: flex-end;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.1;
+}
+.fx-cell-onoff { justify-content: center; flex-direction: column; gap: 1px; padding: 0 2px; }
+.fx-cell-onoff .fx-cell-lbl { display: none; }
+.fx-cell-onoff .fx-cell-val { justify-content: center; gap: 2px; width: 100%; font-size: 11px; }
+.fx-cell-onoff.on {
+  background: var(--deck-color);
+  border-color: var(--deck-color);
+  box-shadow: 0 0 8px var(--deck-color);
+}
+.fx-cell-onoff.on .fx-cell-lbl,
+.fx-cell-onoff.on .fx-cell-val { color: #0b0d12; }
+
+/* Cellules EFFET + DURÉE : valeur de CHAQUE joueur en badges alignés */
+.fx-cell-beats,
+.fx-cell-type {
+  flex-direction: column;
+  justify-content: center;
+  gap: 1px;
+  padding: 0 2px;
+}
+.fx-cell-beats .fx-cell-val,
+.fx-cell-type .fx-cell-val { justify-content: center; gap: 2px; width: 100%; }
+.fx-badge {
+  position: relative;
+  font-style: normal;
+  font-size: 7.5px;
+  font-weight: 900;
+  flex: 1;
+  min-width: 0;
+  text-align: center;
+  padding: 1px 0;
+  border: 1px solid var(--dc);
+  border-radius: 2px;
+  color: var(--dc);
+  opacity: 0.4;
+  overflow: hidden;
+  cursor: pointer;
+}
+.fx-badge.live { opacity: 1; }
+.fx-badge.mine {
+  opacity: 1;
+  background: var(--pc);
+  color: #0b0d12;
+  border-width: 1.5px;
+  box-shadow: 0 0 6px var(--pc);
+}
+.fx-badge.sel { outline: 1px solid #fff; outline-offset: 1px; }
+/* bandeau « couleur des sons » sous chaque badge */
+.fx-badge::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  background: var(--sons, transparent);
+}
+.fx-asg {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 13px;
+  height: 13px;
+  font-size: 7.5px;
+  font-weight: 900;
+  border: 1px solid;
+  border-radius: 2px;
+}
+.fx-asg.sel { outline: 2px solid #fff; outline-offset: 1px; }
+
+/* Knob NIVEAU : canvas ×2 pour la netteté (jauges des 4 joueurs) */
+.fx-cell-level { flex: 2.4; }
+.fx-lvl-cv { width: 48px; height: 48px; flex-shrink: 0; }
+
+/* Liste des effets affichée quand Carré est maintenu à la manette */
+.fx-type-list {
+  position: fixed;
+  z-index: 95;
+  background: rgba(16, 19, 26, 0.97);
+  border: 1px solid var(--border-2);
+  border-radius: var(--r-md);
+  max-height: 260px;
+  overflow-y: auto;
+  min-width: 130px;
+  box-shadow: var(--shadow-pop);
+}
+.fx-type-list div {
+  padding: 4px 12px;
+  font-size: 11px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+.fx-type-list div.on {
+  background: var(--accent, #ff2d78);
+  color: #0b0d12;
+  font-weight: 800;
+}
+
+/* ==========================================================================
+   BIBLIOTHÈQUE
+   ========================================================================== */
+
+#library {
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--border);
+  background: var(--panel);
+  min-height: 0;
+  padding-top: 2px;
+}
+
+#lib-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px;
+}
+
+/* Onglets façon contrôle segmenté */
+#lib-tabs {
+  display: flex;
+  gap: 2px;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  padding: 2px;
+}
+.tab {
+  border: 1px solid transparent;
+  background: transparent;
+  box-shadow: none;
+  border-radius: var(--r-sm);
+  padding: 4px 12px;
+  font-size: 11.5px;
+  opacity: 0.6;
+}
+.tab:hover { background: var(--panel-3); box-shadow: none; border-color: transparent; opacity: 1; }
+.tab.on {
+  opacity: 1;
+  background: var(--panel-3);
+  border-color: var(--border-2);
+  color: #fff;
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+#pl-bar { display: flex; gap: 6px; }
+#sc-bar { display: flex; gap: 6px; flex: 0 1 460px; align-items: center; }
+#sc-url { flex: 1; }
+#sc-url:focus { border-color: var(--sc); box-shadow: inset 0 1px 3px rgba(0,0,0,0.45), 0 0 0 2px rgba(255, 85, 0, 0.18); }
+#btn-sc-login { border-color: rgba(255, 85, 0, 0.4); color: var(--sc); }
+#btn-sc-login:hover { border-color: var(--sc); }
+
+#lib-search { width: 240px; margin-left: auto; }
+#lib-status {
+  color: var(--text-dim);
+  font-size: 11.5px;
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#lib-search + #lib-status { flex: 0 1 auto; }
+
+#lib-content {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+  border-top: 1px solid var(--hairline);
+}
+
+/* --- Arborescence --- */
+#lib-tree {
+  width: 210px;
+  flex-shrink: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  background: var(--bg-2);
+  border-right: 1px solid var(--border);
+  padding: 4px 0;
+  font-size: 12px;
+}
+.tree-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  border-left: 2px solid transparent;
+}
+.tree-row:hover { background: var(--panel-2); }
+.tree-row.selected {
+  background: rgba(47, 185, 245, 0.14);
+  border-left-color: var(--accent);
+  color: #fff;
+}
+.tree-arrow {
+  width: 14px;
+  text-align: center;
+  color: var(--text-faint);
+  cursor: pointer;
+  flex-shrink: 0;
+  font-size: 9px;
+}
+.tree-arrow:hover { color: #fff; }
+.tree-name { overflow: hidden; text-overflow: ellipsis; }
+
+/* --- Table des morceaux --- */
+#lib-list-wrap { flex: 1; overflow-y: auto; min-width: 0; }
+
+#lib-table { width: 100%; border-collapse: collapse; }
+#lib-table th {
+  text-align: left;
+  position: sticky;
+  top: 0;
+  background: var(--panel-2);
+  color: var(--text-faint);
+  font-size: 9.5px;
+  font-weight: 800;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  padding: 5px 10px;
+  border-bottom: 1px solid var(--border);
+  z-index: 1;
+}
+#lib-table td {
+  padding: 3px 10px;
+  border-bottom: 1px solid var(--hairline);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 0;
+  font-size: 12px;
+}
+#lib-table tbody tr:nth-child(even) { background: rgba(255, 255, 255, 0.012); }
+.col-num { width: 46px; }
+#lib-table td.col-num { color: var(--text-faint); font-variant-numeric: tabular-nums; font-size: 10.5px; }
+.col-bpm { width: 70px; }
+.col-dur { width: 70px; }
+#lib-table td.col-bpm, #lib-table td.col-dur {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
+  font-family: var(--font-tech);
+}
+/* Aperçu waveform */
+.col-prev { width: 156px; }
+#lib-table td.col-prev { padding: 2px 4px; }
+#lib-table td.col-prev img {
+  display: block;
+  width: 150px;
+  height: 22px;
+  background: var(--inset);
+  border-radius: 3px;
+}
+.col-artist { width: 220px; }
+#lib-table td.col-artist { color: var(--text-dim); }
+
+#lib-table tbody tr { cursor: pointer; }
+#lib-table tbody tr:hover { background: var(--panel-2); }
+#lib-table tbody tr[draggable="true"] { cursor: grab; }
+/* Sélection : couleur du JOUEUR qui navigue (--sel-color), sinon accent */
+#lib-table tbody tr.selected {
+  background: color-mix(in srgb, var(--sel-color, #2b4a7a) 26%, transparent);
+  box-shadow: inset 3px 0 0 var(--sel-color, var(--accent)),
+    0 0 10px color-mix(in srgb, var(--sel-color, transparent) 25%, transparent);
+}
+#lib-table tbody tr.selected td { color: #fff; }
+/* Ligne choisie par un joueur */
+#lib-table tbody tr.psel td { color: #fff; }
+/* Badge « J1 » sur le son CHARGÉ par ce joueur */
+.psel-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 5px;
+  font-size: 9px;
+  font-weight: 900;
+  color: #0b0d12;
+  border-radius: 2px;
+  box-shadow: 0 0 6px currentColor;
+  vertical-align: middle;
+}
+/* Réordonnancement dans une playlist */
+tr.reorder-target td { border-top: 2px solid var(--accent) !important; }
+
+/* ==========================================================================
+   MENU CONTEXTUEL & MINI-MODAL
+   ========================================================================== */
+
+#ctx-menu {
+  position: fixed;
+  z-index: 100;
+  background: rgba(20, 24, 34, 0.98);
+  border: 1px solid var(--border-2);
+  border-radius: var(--r-md);
+  min-width: 230px;
+  padding: 4px;
+  box-shadow: var(--shadow-pop);
+}
+.ctx-item {
+  padding: 7px 12px;
+  font-size: 12px;
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ctx-item:hover { background: rgba(47, 185, 245, 0.18); color: #fff; }
+
+#prompt-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(4, 6, 10, 0.72);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 90;
+}
+#prompt-panel {
+  background: var(--panel-2);
+  border: 1px solid var(--border-2);
+  border-radius: var(--r-lg);
+  padding: 18px 22px;
+  width: 340px;
+  box-shadow: var(--shadow-pop);
+}
+#prompt-panel h3 { font-size: 13px; margin-bottom: 10px; letter-spacing: 0.3px; }
+#prompt-input { width: 100%; margin-bottom: 12px; }
+.prompt-actions { display: flex; gap: 8px; justify-content: flex-end; }
+#prompt-ok { border-color: var(--accent); color: var(--accent); }
+#prompt-ok:hover { background: var(--accent); color: #0b0d12; }
+
+/* ==========================================================================
+   PARAMÈTRES & AIDE
+   ========================================================================== */
+
+#settings-overlay, #help-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(4, 6, 10, 0.72);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+#settings-overlay { z-index: 60; }
+#help-overlay { z-index: 50; }
+
+#settings-panel, #help-panel {
+  background: var(--panel);
+  border: 1px solid var(--border-2);
+  border-radius: 12px;
+  padding: 22px 28px;
+  width: 90%;
+  box-shadow: var(--shadow-pop);
+  max-height: 88vh;
+  overflow-y: auto;
+}
+#settings-panel { max-width: 560px; }
+#help-panel { max-width: 580px; }
+#settings-panel h2, #help-panel h2 {
+  margin-bottom: 16px;
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.set-row {
+  margin-bottom: 14px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--hairline);
+}
+.set-row > label {
+  display: block;
+  font-size: 10px;
+  font-weight: 800;
+  color: var(--text-dim);
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  margin-bottom: 6px;
+}
+.set-row select { width: 100%; padding: 6px 8px; }
+.set-inline { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.set-info { font-size: 12px; color: var(--text-dim); }
+#btn-close-settings, #btn-close-help { margin-top: 8px; }
+
+#midi-learn-table {
+  max-height: 190px;
+  overflow-y: auto;
+  margin-top: 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+}
+.midi-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  border-bottom: 1px solid var(--hairline);
+  font-size: 11.5px;
+}
+.midi-row:last-child { border-bottom: none; }
+.midi-label { flex: 1; min-width: 0; }
+.midi-bind {
+  font-family: 'Cascadia Mono', 'Consolas', monospace;
+  font-size: 10px;
+  color: var(--accent);
+  min-width: 76px;
+}
+.midi-row button { padding: 2px 7px; font-size: 11px; min-width: 0; }
+
+#help-table { width: 100%; border-collapse: collapse; margin-bottom: 12px; }
+#help-table td { padding: 5px 8px; border-bottom: 1px solid var(--hairline); font-size: 12px; }
+#help-table td:first-child {
+  font-weight: 800;
+  color: var(--accent);
+  white-space: nowrap;
+  width: 170px;
+}
+.help-note { color: var(--text-dim); font-size: 11px; margin-bottom: 14px; }
+
+/* ==========================================================================
+   OVERLAYS MANETTE (curseurs joueurs, prévisualisations, flashes)
+   ========================================================================== */
+
+/* Curseur manette : cadre coloré autour du contrôle survolé par chaque joueur */
+.gp-cursor {
+  position: fixed;
+  border: 2px solid #fff;
+  border-radius: 4px;
+  z-index: 80;
+  pointer-events: none;
+  transition: left 0.06s, top 0.06s, width 0.06s, height 0.06s;
+}
+.gp-cursor-tag {
+  position: absolute;
+  top: -15px;
+  left: -2px;
+  font-size: 9px;
+  font-weight: 800;
+  color: #0b0d12;
+  padding: 0 5px;
+  border-radius: 2px;
+  white-space: nowrap;
+}
+/* Étiquettes L / R : ce que L2 et R2 vont faire sur la rangée survolée */
+.gp-side {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 9px;
+  font-weight: 800;
+  color: #0b0d12;
+  padding: 1px 4px;
+  white-space: nowrap;
+  border-radius: 2px;
+}
+.gp-side-l { right: 100%; margin-right: 3px; }
+.gp-side-r { left: 100%; margin-left: 3px; }
+/* Cadres L2/R2 posés sur les VRAIS pads qui vont être déclenchés */
+.gp-cursor.gp-target {
+  border-width: 2px;
+  border-style: dashed;
+  z-index: 81;
+}
+.gp-cursor.gp-target .gp-cursor-tag { top: auto; bottom: -13px; font-size: 8px; }
+
+/* Effet GLITCH quand un curseur joueur se déplace */
+.gp-cursor.gp-glitch { animation: gp-glitch-anim 0.16s steps(2) 2; }
+@keyframes gp-glitch-anim {
+  0%   { transform: translate(0, 0); }
+  25%  { transform: translate(-2px, 1px) skewX(3deg); }
+  50%  { transform: translate(2px, -1px); }
+  75%  { transform: translate(-1px, -2px) skewX(-3deg); }
+  100% { transform: translate(0, 0); }
+}
+
+/* Prévisualisation jump/loop du joueur sur la vague (couleur néon) */
+.gp-preview {
+  position: fixed;
+  z-index: 70;
+  pointer-events: none;
+}
+.gp-prev-line { width: 2px; opacity: 0.9; }
+.gp-prev-band {
+  border-left: 2px solid;
+  border-right: 2px solid;
+  opacity: 0.85;
+}
+
+/* Flash néon à l'endroit où L2/R2 frappe */
+.gp-burst {
+  position: fixed;
+  z-index: 85;
+  pointer-events: none;
+  background: var(--burst-color);
+  box-shadow: 0 0 14px var(--burst-color), 0 0 30px var(--burst-color);
+  animation: gp-burst-anim 0.5s ease-out forwards;
+}
+@keyframes gp-burst-anim {
+  0%   { opacity: 0.85; transform: scaleX(1); }
+  60%  { opacity: 0.45; transform: scaleX(1.35); }
+  100% { opacity: 0;    transform: scaleX(1.9); }
+}
+
+/* Lettres de cue à gauche (L2) / droite (R2) des knobs de la matrice */
+.cue-tag {
+  position: absolute;
+  top: 32%;
+  transform: translateY(-50%);
+  font-size: 11px;
+  font-weight: 900;
+  color: #0b0d12;
+  padding: 0 4px;
+  border-radius: 3px;
+  line-height: 15px;
+  pointer-events: none;
+  z-index: 90;
+}
+.cue-tag-l { left: -6px; }
+.cue-tag-r { right: -6px; }
+
+/* Anneau de LOOP autour du knob : tourne quand la boucle joue */
+.loop-ring {
+  position: absolute;
+  top: -5px;
+  left: 50%;
+  width: 34px;
+  height: 34px;
+  border: 2px dashed currentColor;
+  border-radius: 50%;
+  box-shadow: 0 0 8px currentColor;
+  pointer-events: none;
+  z-index: 4;
+  transform: translateX(-50%) rotate(0deg);
+  animation: loop-ring-spin 1.1s linear infinite;
+}
+@keyframes loop-ring-spin {
+  from { transform: translateX(-50%) rotate(0deg); }
+  to   { transform: translateX(-50%) rotate(360deg); }
+}
+/* Boucle posée mais deck en PAUSE : anneau statique, en préparation */
+.loop-ring.prepared { animation: none; opacity: 0.55; border-style: dotted; }
+
+/* ==========================================================================
+   ÉCOLE DE MIX (façon Guitar Hero)
+   ========================================================================== */
+
+#tutor-bar {
+  position: fixed;
+  top: 48px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(860px, 92vw);
+  z-index: 60;
+  background: rgba(13, 16, 22, 0.96);
+  backdrop-filter: blur(6px);
+  border: 1px solid rgba(255, 210, 74, 0.4);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-pop), 0 0 16px rgba(255, 210, 74, 0.2);
+  padding: 8px 12px 10px;
+  pointer-events: none;
+}
+#tutor-bar.hidden { display: none; }
+#tutor-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 11px;
+}
+#tutor-head b { color: var(--tutor); letter-spacing: 0.5px; }
+#tutor-score { font-weight: 900; color: #fff; margin-left: auto; font-variant-numeric: tabular-nums; }
+#tutor-combo { color: #5fe08a; font-weight: 900; }
+#tutor-close {
+  pointer-events: auto;
+  width: 20px;
+  height: 20px;
+  line-height: 1;
+  padding: 0;
+  min-width: 0;
+  border-radius: 3px;
+}
+#tutor-text {
+  font-size: 14px;
+  font-weight: 800;
+  color: #fff;
+  padding: 4px 0 6px;
+  min-height: 22px;
+  text-shadow: 0 0 12px rgba(255, 210, 74, 0.35);
+}
+#tutor-lane {
+  position: relative;
+  height: 34px;
+  background: var(--inset);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  overflow: hidden;
+}
+#tutor-now {
+  position: absolute;
+  left: 90px;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--tutor);
+  box-shadow: 0 0 10px var(--tutor);
+  z-index: 2;
+}
+.tutor-chip {
+  position: absolute;
+  top: 4px;
+  left: 0;
+  height: 24px;
+  min-width: 34px;
+  padding: 0 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: 900;
+  color: var(--tutor);
+  border: 1.5px solid var(--tutor);
+  border-radius: 4px;
+  background: var(--panel-2);
+  will-change: transform;
+}
+.tutor-chip.active { background: var(--tutor); color: #0b0d12; box-shadow: 0 0 12px var(--tutor); }
+.tutor-chip.done { opacity: 0.25; border-color: #5fe08a; color: #5fe08a; }
+.tutor-chip.done.active { background: transparent; }
+.tutor-chip.missed { opacity: 0.25; border-color: var(--danger); color: var(--danger); }
+#tutor-fb {
+  position: absolute;
+  right: 10px;
+  top: 6px;
+  font-size: 15px;
+  font-weight: 900;
+  opacity: 0;
+  z-index: 3;
+}
+#tutor-fb.fb-perfect { color: #5fe08a; }
+#tutor-fb.fb-good { color: var(--tutor); }
+#tutor-fb.fb-miss { color: var(--danger); }
+#tutor-fb.pop { animation: tutor-pop 0.9s ease-out; }
+@keyframes tutor-pop {
+  0% { opacity: 0; transform: scale(0.6); }
+  20% { opacity: 1; transform: scale(1.25); }
+  70% { opacity: 1; transform: scale(1); }
+  100% { opacity: 0; }
+}
+
+/* ==========================================================================
+   UTILITAIRES & VARIANTES
+   ========================================================================== */
+
+.hidden { display: none !important; }
+
+/* Scrollbars fines */
+::-webkit-scrollbar { width: 9px; height: 9px; }
+::-webkit-scrollbar-thumb {
+  background: #2a3145;
+  border-radius: 5px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover { background: #3a4358; background-clip: content-box; }
+::-webkit-scrollbar-track { background: transparent; }
+
+/* ============ Mode 2 decks ============ */
+body.two-decks .wave-row[data-deck="2"],
+body.two-decks .wave-row[data-deck="3"],
+body.two-decks .strip[data-deck="2"],
+body.two-decks .strip[data-deck="3"],
+body.two-decks .fx-unit[data-deck="2"],
+body.two-decks .fx-unit[data-deck="3"],
+body.two-decks #deck-slot-2,
+body.two-decks #deck-slot-3 {
+  display: none !important;
+}
+body.two-decks #app { grid-template-rows: 46px auto minmax(0, 1fr) 300px; }
+body.two-decks #decks-area { grid-template-rows: minmax(0, 1fr); }
+body.two-decks #mixer { grid-area: 1 / 2 / 2 / 3; }
+body.two-decks #strips { grid-template-columns: repeat(2, 1fr); }
+body.two-decks .fxu-assign-btn:nth-child(3),
+body.two-decks .fxu-assign-btn:nth-child(4) { display: none; }
+
+/* Avec 2 decks : on utilise TOUT l'espace */
+body.two-decks .wave-row { height: 74px; }
+body.two-decks .wave-row canvas { height: 64px; }
+body.two-decks .deck { gap: 6px; padding: 8px 10px; }
+body.two-decks .deck-head { min-height: 26px; }
+body.two-decks .deck-bpm { font-size: 24px; min-width: 92px; }
+body.two-decks .deck-title { font-size: 14px; }
+body.two-decks .wave-over { flex: 1; height: auto; min-height: 48px; }
+body.two-decks .queue-line { min-height: 18px; }
+body.two-decks .queue-info { font-size: 10px; }
+body.two-decks .queue-chip { font-size: 9px; }
+body.two-decks .pads .pad { min-height: 46px; font-size: 12px; }
+body.two-decks .pad-modes button { font-size: 9.5px; padding: 3px 9px; }
+body.two-decks .stems-col { width: 54px; }
+body.two-decks .stem-btn { font-size: 9.5px; }
+body.two-decks .stems-title { font-size: 9px; }
+body.two-decks .deck-controls button { padding: 12px 0; font-size: 14px; min-width: 62px; }
+body.two-decks .btn-grid-left, body.two-decks .btn-grid-right,
+body.two-decks .btn-grid-half, body.two-decks .btn-grid-dbl { min-width: 30px !important; font-size: 11px; }
+body.two-decks .deck-time { font-size: 14px; min-width: 110px; }
+body.two-decks .tempo-val { font-size: 14px; }
+body.two-decks .fader-row { min-height: 120px; }
+body.two-decks .strip .knob { width: 28px; height: 28px; }
+body.two-decks .strip .knob-ind { height: 10px; transform-origin: 1px 12px; }
+body.two-decks .strip .knob-wrap span { font-size: 8.5px; }
+body.two-decks .knob-col { gap: 6px; }
+body.two-decks .vfader { width: 36px; }
+
+/* ===== DEMANDES DU PUBLIC (CoBeat maison, gratuit) ===== */
+#btn-guests { color: #ffd24a; }
+#btn-guests b {
+  display: inline-block;
+  min-width: 16px;
+  padding: 0 4px;
+  background: #ffd24a;
+  color: #0b0d12;
+  border-radius: 8px;
+  font-size: 10px;
+}
+#guest-panel {
+  position: fixed;
+  top: 48px;
+  right: 8px;
+  width: 360px;
+  max-height: 70vh;
+  overflow-y: auto;
+  z-index: 80;
+  background: #12151c;
+  border: 1px solid #ffd24a66;
+  border-radius: 6px;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.6);
+  padding: 8px;
+}
+#guest-panel.hidden { display: none; }
+.gp-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid #232a3a;
+  margin-bottom: 6px;
+  font-size: 11px;
+}
+.gp-head b { color: #ffd24a; letter-spacing: 0.5px; }
+.gp-head span { flex: 1; color: #8a94ae; font-size: 10px; }
+.gp-head button { padding: 3px 8px; font-size: 10px; border-radius: 3px; }
+.gp-empty { color: #8a94ae; font-size: 11px; padding: 10px 4px; }
+.gp-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 6px;
+  border-bottom: 1px solid #171b23;
+  font-size: 12px;
+  cursor: pointer;
+  border-radius: 3px;
+}
+.gp-row:hover { background: #1b2029; }
+.gp-votes { color: #ffd24a; font-weight: 900; min-width: 44px; }
+.gp-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gp-bpm { color: #39c2ff; font-weight: 800; font-size: 11px; }
+.gp-msg {
+  padding: 6px;
+  font-size: 11px;
+  color: #aab2c6;
+  border-bottom: 1px solid #171b23;
+  font-style: italic;
+}
+
+/* ===== Barre de titre integree : le topbar EST la barre de fenetre =====
+   (fenetre frameless, boutons systeme en overlay a droite) */
+#topbar { -webkit-app-region: drag; padding-right: 145px; }
+#topbar button, #topbar select, #topbar input, #topbar a {
+  -webkit-app-region: no-drag;
+}
+
+/* ===== OPENMIX : passe de finitions pro ===== */
+/* Compteur de temps 1-2-3-4 dans l'entete de deck */
+.beat-dots { display: inline-flex; gap: 3px; align-items: center; padding: 0 3px; }
+.beat-dots i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #232a3a;
+  border: 1px solid #2b3040;
+  transition: background 0.05s, box-shadow 0.05s;
+}
+.beat-dots i:first-child { width: 7px; height: 7px; }
+.beat-dots i.on {
+  background: var(--deck-color);
+  border-color: var(--deck-color);
+  box-shadow: 0 0 6px var(--deck-color);
+}
+/* Etats de survol/appui unifies sur tous les boutons */
+button:hover { border-color: #3a4258; }
+button:active { transform: translateY(0.5px); }
+button:focus-visible { outline: 1px solid #4aa3ff; outline-offset: 1px; }
+/* Logo : point d'accent + respiration */
+#logo { letter-spacing: 2.5px; }
+#logo::after {
+  content: '';
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #39c2ff;
+  margin-left: 5px;
+  vertical-align: super;
+  box-shadow: 0 0 6px #39c2ff;
+}
+/* REC : pulse quand ca enregistre */
+@keyframes rec-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
+#btn-rec.on { animation: rec-pulse 1.2s ease-in-out infinite; }
+
+/* ============================================================ */
+/* ===== THEME PRO SOBRE (ref Rekordbox) : noir, UN accent ==== */
+/* ===== bleu, plat, net. La couleur ne reste que la ou elle == */
+/* ===== INFORME (decks, cues, joueurs). ====================== */
+/* ============================================================ */
+:root { --accent: #2d7df1; }
+
+/* Boutons : plats, angles nets, monochromes */
+button {
+  background: #15171c;
+  border: 1px solid #262a31;
+  color: #b8c0cc;
+  border-radius: 2px;
+  box-shadow: none;
+}
+button:hover { background: #1b1e25; border-color: #363c47; }
+button:active { background: #22262e; transform: none; }
+
+/* Etats actifs : LE bleu, pas l'arc-en-ciel */
+.deck-controls button.on,
+#color-on.on,
+.pad-modes button.on,
+.stems-col button.on,
+#btn-rec.on {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  box-shadow: none;
+}
+.deck-controls .btn-grid { color: #b8c0cc; }
+.deck-controls .btn-grid.on { background: var(--accent); color: #fff; }
+
+/* Pads : flats au repos — la couleur n'apparait QUE posee/active */
+.pads .pad {
+  background: #14161b;
+  border: 1px solid #23262d;
+  color: #aeb6c2;
+  border-radius: 2px;
+  box-shadow: none;
+}
+.pads .pad:hover { border-color: #363c47; }
+
+/* Onglets modes (JUMP/LOOP/CUE/KEY) : sobres, actif = bleu */
+.pad-modes button {
+  background: #15171c;
+  border-color: #262a31;
+  color: #8a94ae;
+}
+
+/* Knobs : corps neutre, l'identite deck reste sur le badge numero */
+.strip .knob, .knob {
+  background: #17191f;
+  border-color: #2a2e37;
+  box-shadow: none;
+}
+
+/* SEL : sobre au repos (la couleur joueur arrive a la selection) */
+.strip-sel {
+  background: #15171c;
+  border-color: #262a31;
+  color: #8a94ae;
+}
+
+/* Rangees de vagues : liseres fins, pas de cadre epais */
+.wave-row { border-width: 1px; }
+
+/* Panneau FX : cellules discretes */
+.fx-cell { background: #101216; border-color: #23262d; }
+.fx-tab { box-shadow: none; }
+.fx-tab.fx-live { box-shadow: none; }
+
+/* Demandes du public : bouton neutre, badge accent */
+#btn-guests { color: #b8c0cc; }
+#btn-guests b { background: var(--accent); color: #fff; }
+#guest-panel { border-color: #363c47; }
+.gp-head b { color: var(--accent); }
+.gp-votes { color: var(--accent); }
+
+/* Topbar : logo bicolore sobre */
+#logo span { color: var(--accent); }
+#logo::after { background: var(--accent); box-shadow: none; }
+#btn-rec { color: #ff5252; }
+#btn-rec.on { background: #c62828; border-color: #c62828; }
+
+/* Neons calmes : plus de halos permanents sur les boutons de transport */
+.deck-controls button { box-shadow: none !important; }
+#master-bpm b { color: var(--accent); }
+#master-bpm button:hover { border-color: var(--accent); color: var(--accent); }
+
+/* Bibliotheque : rangee active discrete */
+#lib-table tr.selected td { background: rgba(45, 125, 241, 0.14); }
+.lib-tabs button.on, #lib-tabs button.on { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+/* ===== CARRE ET SEC (ref Rekordbox) : angles droits partout, ===== */
+/* ===== seuls les knobs et indicateurs ronds le restent ============ */
+button, input, select, textarea,
+.pads .pad, .pad-modes button, .stems-col button,
+.deck, .wave-row, .strip-sel, .fader-wrap,
+.fx-cell, .fx-tab, .fx-badge, .fx-beat-badge, .fx-asg,
+.deck-badge, .pad-chip, .queue-chip, .queue-line,
+.deck-key, .deck-bpm, .deck-master,
+#guest-panel, .gp-row, .gp-head button,
+#lib-search, .lib-tabs button, #btn-guests b,
+#master-bpm button, #master-meter, .ctx-item, #ctx-menu,
+.overlay-box, #help-table, .gp-cursor, .gp-cursor-tag {
+  border-radius: 0 !important;
+}
+/* le materiel rond reste rond */
+.knob, .knob-ind, .beat-dots i { border-radius: 50% !important; }
+/* plus aucun halo decoratif sur le chrome */
+#logo::after { display: none; }
+.deck-badge, .pad-chip { box-shadow: none; }
+
+/* ===== NOIR TOTAL (ref Rekordbox) : fond #000, panneaux presque ===== */
+/* ===== noirs, indicateurs BLEUS uniformes, zero halo ================ */
+body, #app { background: #000; }
+#topbar { background: #000; }
+.deck {
+  background: #0a0b0e;
+  border: 1px solid #17191e;
+  box-shadow: none;
+}
+.deck.active { border-color: var(--accent); box-shadow: none; }
+.wave-row {
+  background: #050608;
+  border: 1px solid #15171c;
+  border-left: 3px solid var(--deck-color, #15171c);
+}
+#mixer, #mix-body { background: #0a0b0e; }
+#mixer { border-color: #17191e; }
+/* BPM : chiffres blancs nets, plus de couleur par deck ni de glow */
+.deck-bpm { color: #d7dce8; text-shadow: none; }
+/* Tous les indicateurs de knobs : LE bleu, comme leur rendu */
+.knob-ind {
+  background: var(--accent) !important;
+  box-shadow: none !important;
+}
+/* VU-metres : degrade bleu uniforme */
+.meter-fill { background: linear-gradient(to top, #1d5fd0, #2d7df1 70%, #9cc4ff); }
+#master-meter-fill { background: linear-gradient(to right, #1d5fd0, #2d7df1 70%, #9cc4ff); }
+/* Numeros de strip mixer : gris sobre */
+.strip-label { color: #8a94ae !important; }
+/* Badges deck : contour fin colore, fond noir (identite discrete) */
+.deck-badge {
+  background: transparent;
+  color: var(--deck-color);
+  border: 1px solid var(--deck-color);
+}
+
+/* ===== Platines par deck + crossfader sous les tranches ===== */
+.deck-wheel {
+  width: 48px;
+  height: 48px;
+  align-self: center;
+  flex-shrink: 0;
+  margin-bottom: 2px;
+}
+#strips #xf-wrap { grid-column: 1 / -1; margin-top: 2px; }
+
+/* ===== FIX RESPONSIVE MIXER : les tranches utilisent `order` (3-1-2-4),
+   le crossfader doit se placer APRES elles dans la grille — et les
+   colonnes ne doivent jamais s'ecraser ni se re-empiler ===== */
+#strips { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+#strips .strip { min-width: 0; }
+#strips #xf-wrap {
+  grid-column: 1 / -1;
+  order: 99;
+  margin-top: 2px;
+}
+
+/* ===== PARAMETRES PLEIN ECRAN : tout l'espace, table MIDI a l'aise ===== */
+#settings-panel {
+  width: 100vw;
+  max-width: 100vw;
+  height: 100vh;
+  max-height: 100vh;
+  border: none;
+  border-radius: 0;
+  padding: 24px 6vw;
+}
+#settings-panel .midi-table { max-height: none; }
+
+/* ===== FX ACTIVE = BLEU VISIBLE (badge ON rempli, onglet allume) ===== */
+.fx-badge.live {
+  color: var(--accent);
+  border-color: var(--accent);
+  opacity: 1;
+}
+.fx-cell-onoff .fx-badge.live {
+  background: var(--accent);
+  color: #fff;
+}
+.fx-tab.fx-live {
+  border-color: var(--accent);
+  color: var(--accent);
+  opacity: 1;
+  background: color-mix(in srgb, var(--accent) 22%, #0a0b0e);
+}
