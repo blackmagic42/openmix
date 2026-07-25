@@ -113,6 +113,58 @@ Branche une manette (jusqu'à 4). Appui long sur Share/View = aide complète
 des commandes à l'écran. Chaque joueur a sa couleur, son mode de pads, ses
 sélections et son unité FX personnelle.
 
+### Les boutons
+
+La croix directionnelle déplace ton curseur sur la **matrice de contrôle** :
+les colonnes sont les decks (+ le rack FX à droite), les rangées sont les
+knobs (TRIM → HI → MID → LOW → FILTER), la rangée du haut est le MASTER, et
+sous FILTER on passe en **navigation bibliothèque**.
+
+| Bouton | Action |
+|---|---|
+| **Croix ◀▶▲▼** | Se déplacer sur la matrice (decks × knobs, MASTER en haut, rack FX à droite, bibliothèque en bas) |
+| **Croix / A** | Play/Pause · en navigation : ouvrir une playlist ou **charger et lancer** le morceau (re-appui = pause) |
+| **Rond / B** (court) | FX + FILTRE à 0 (la sélection est conservée) + knob survolé remis au neutre · en navigation : retour |
+| **Rond / B** (long) | Sélection **CUT** (voir plus bas) |
+| **Carré / X** (court) | Durée du FX : 1/2 → 3/4 → 1 → 2 temps |
+| **Carré / X** (enfoncé) | La liste des effets s'affiche et défile — relâche sur celui que tu veux |
+| **Triangle / Y** | **CUT** : coupe d'un coup les decks sélectionnés — re-appui, tout revient d'un coup |
+| **L1 / R1** | Volume de la piste − / + (maintenir) · rangée MASTER : le knob master survolé · **R1 avec une sélection : TOUT à 0 + désélection** |
+| **L2 / R2** | Les **pads** : moitié gauche / droite, la rangée donne la force (TRIM = fort → FILTER = fin) · colonne FX : durée ÷2 / ×2 · rangée MASTER : BPM − / + (les decks syncés suivent) |
+| **Share/View** (court) | Changer TON mode de pads : JUMP → LOOP → CUE → KEY → PAD FX → SAMPLER (chaque joueur garde le sien) |
+| **Share/View** (long) | L'aide complète à l'écran |
+| **Options/Menu** | BEAT SYNC du deck ON/OFF |
+| **Stick gauche ▲▼** | Le knob survolé · **avec une sélection : les FILTRES de toutes tes tracks sélectionnées** |
+| **Stick gauche ◀▶** (maintenu ½ s) | Décaler le son façon jog CDJ (au relâcher, le calage auto garde ton alignement) · **boucle active : régler la boucle** (▶ +1 segment, ◀ réduire) |
+| **Stick droit ▲▼** | **Niveau du FX** de la track (rangée MASTER = tous) |
+| **Stick droit ◀▶** (maintenu ½ s) | Zoom / dézoom des vagues |
+| **L3** (clic stick gauche) | FILTRE général ON/OFF (COLOR) |
+| **R3** (clic stick droit) | **Sélectionner la track** (voir plus bas) · colonne FX : unité ON/OFF |
+| **Bouton PS/Xbox** | Couper / remettre le knob survolé · sur LOW : les **basses passent à ce deck** (jamais deux basses en même temps) |
+
+### Le mode SÉLECTION (le cœur du jeu à plusieurs)
+
+Appuie sur **R3** sur un deck : la track est **sélectionnée** dans ta couleur
+— son FX et son filtre sont armés d'un coup. Re-appuie pour la retirer, et tu
+peux en sélectionner plusieurs (elles réagissent alors toutes ensemble).
+
+Tant que tu as une sélection :
+
+- **Stick gauche ▲▼ = le FILTRE** de toutes tes tracks sélectionnées en même
+  temps (le stick droit reste le FX — jamais l'inverse) ;
+- **Stick droit ▲▼ = le niveau du FX** appliqué à ta sélection, avec TON
+  unité FX personnelle (chaque joueur a la sienne) ;
+- **L2 / R2 = la durée du FX** (÷2 / ×2) au lieu des pads — sauf en mode
+  LOOP, où les pads de boucle gardent la priorité ;
+- **Rond court = tout à zéro** (FX coupé, filtre au neutre) mais la sélection
+  et l'armement RESTENT : tu peux relancer un effet aussitôt ;
+- **R1 = le grand reset** : FX à zéro, filtres au neutre ET désélection —
+  retour immédiat à un mix propre ;
+- **Triangle = CUT** : les decks sélectionnés se coupent net, re-appui et
+  tout revient — l'effet « drop » classique ;
+- Deux joueurs peuvent sélectionner **le même deck** : leurs effets se
+  combinent, l'affichage montre la couleur de chacun.
+
 ## L'API HTTP (le « SDK » d'OpenMix)
 
 Tout OpenMix se pilote par HTTP sur le port 8722 — de quoi construire tes
