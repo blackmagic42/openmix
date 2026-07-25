@@ -1,6 +1,7 @@
 # OpenMix
 
-**Le logiciel DJ libre et gratuit — 4 decks, manettes de jeu, téléphones.**
+**Le logiciel DJ libre et gratuit — 4 decks, platines DDJ et tout matériel DJ
+USB-MIDI, manettes de jeu, téléphones.**
 
 OpenMix remplace les logiciels DJ payants : analyse BPM/grille au niveau de
 Rekordbox (validée contre ses propres fichiers d'analyse), mix à 4 platines,
@@ -28,8 +29,27 @@ demandes du public — le tout 100 % local, sans cloud, sans abonnement.
   et t'envoient des messages — l'équivalent de CoBeat, gratuit et local
 - **Grilles Rekordbox** : importe les analyses de ton ancien Rekordbox
   (fichiers ANLZ) pour une transition sans douleur
-- **MIDI** : mapping par apprentissage de n'importe quel contrôleur
-  (notes + CC), enregistrement du mix, mode 2 ou 4 decks
+- **Platines & contrôleurs DJ** : compatible avec les DDJ Pioneer et tout
+  matériel DJ USB-MIDI — chaque bouton est mappable (voir ci-dessous)
+- Enregistrement du mix, mode 2 ou 4 decks
+
+## Platines & contrôleurs DJ (MIDI)
+
+OpenMix fonctionne avec **n'importe quel contrôleur DJ USB-MIDI** — aucun
+driver à installer, branche et c'est parti :
+
+- **Pioneer DDJ reconnues automatiquement** : préréglage 4 voies complet,
+  relevé sur une vraie DDJ-FLX6 — jogs à deux surfaces (dessus = scratch,
+  côté = calage fin), volumes, trim, EQ 3 bandes, filtres, tempo, play/cue/
+  sync, boucles IN/OUT/reloop, pads performance, section FX, channel select,
+  crossfader, et navigation complète de la bibliothèque à l'encodeur
+  (entrer/sortir des dossiers et playlists, bouton VIEW)
+- **Tout autre matériel** (Numark, Hercules, Traktor, Denon, claviers MIDI…) :
+  **chaque bouton, fader, knob ou jog est mappable par apprentissage** —
+  ouvre ⚙ Paramètres, clique l'action voulue, touche le contrôle physique,
+  c'est lié. Le mapping est mémorisé PAR appareil et survit aux redémarrages
+- Notes, CC (absolus et relatifs) et pitch bend 14 bits sont gérés — les
+  faders tempo haute résolution marchent aussi
 
 ## Installation (PC)
 
