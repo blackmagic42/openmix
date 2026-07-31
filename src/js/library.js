@@ -47,6 +47,13 @@ export class Library {
     this.playlists = []; // playlists créées par l'utilisateur
     this.plOpen = null;  // playlist actuellement ouverte
     this.scTitle = null;
+    // Multi-comptes SoundCloud (b2b) : la vue courante appartient toujours à
+    // UN compte (scAcctIdx) et chaque compte garde sa liste de playlists en
+    // cache pour que ⬅ retombe sur LES SIENNES, pas celles du pote
+    this.scAcctIdx = 0;
+    this.scPlaylistsByAcct = {};
+    this.scAccountsView = false; // la vue « liste des comptes » est affichée
+    this.scAccountCount = 0;     // rafraîchi par refreshScStatus (app.js)
     this.filtered = [];
     this.selection = 0;
     this.search = '';
@@ -121,6 +128,14 @@ export class Library {
         barAnchorAuto: g.anchor,
         duration: prev.duration || null
       };
+      // La grille Rekordbox REMPLACE beats : les calages manuels relatifs à
+      // l'ANCIEN tableau n'ont plus de sens — on les efface (invariant :
+      // gridShift/barAnchor sont toujours relatifs au beats sauvegardé)
+      delete this.cache[key].gridShift;
+      delete this.cache[key].barAnchor;
+      delete this.cache[key].manual;
+      delete this.cache[key].manualBpm;
+      delete this.cache[key].manualOffset;
       t.bpm = g.bpm;
       t.beatOffset = g.beats[0];
       t.analyzed = true;
@@ -200,6 +215,9 @@ export class Library {
       path: track.path || null,
       sc: !!track.sc,
       scId: track.scId || null,
+      // Compte SoundCloud d'origine : le téléchargement en dur d'une piste
+      // privée/Go+ doit repartir avec LE MÊME jeton
+      acctIdx: track.acctIdx != null ? track.acctIdx : null,
       bpm: track.bpm || null,
       beatOffset: track.beatOffset != null ? track.beatOffset : null,
       duration: track.duration || null,
@@ -334,21 +352,32 @@ export class Library {
   // SoundCloud
   // ---------------------------------------------------------------------
 
-  async loadScUrl(url) {
+  async loadScUrl(url, acctIdx = this.scAcctIdx ?? 0) {
     this.cb.onStatus('Connexion à SoundCloud…');
-    const res = await window.api.scResolve(url);
+    const res = await window.api.scResolve(url, acctIdx);
     if (!res.ok) {
       this.cb.onStatus(`SoundCloud : ${res.error}`);
       return false;
     }
+    // La vue appartient désormais à ce compte : ⬅ et les téléchargements
+    // repartiront avec SON jeton. Si on change de compte sans connaître ses
+    // playlists, on oublie celles de l'ancien — ⬅ ne doit jamais afficher
+    // les playlists du pote sous le mauvais nom
+    const switching = this.scAcctIdx !== acctIdx;
+    this.scAcctIdx = acctIdx;
+    this.scAccountsView = false;
+    if (this.scPlaylistsByAcct[acctIdx]) this.scPlaylists = this.scPlaylistsByAcct[acctIdx];
+    else if (switching) this.scPlaylists = null;
     if (res.kind === 'user') {
-      this.scTracks = res.playlists;
-      this.scPlaylists = res.playlists;
+      const rows = res.playlists.map(p => ({ ...p, acctIdx }));
+      this.scTracks = rows;
+      this.scPlaylists = rows;
       this.scTitle = `Playlists de ${res.title}`;
     } else {
       this.scTracks = res.tracks.map(t => ({
         ...t,
         sc: true,
+        acctIdx,
         bpm: null,
         beatOffset: null,
         analyzed: false,
@@ -378,14 +407,19 @@ export class Library {
   // Les résultats se chargent/streament comme n'importe quelle piste SC.
   async searchSc(query) {
     this.cb.onStatus(`SoundCloud : recherche « ${query} »…`);
-    const res = await window.api.scSearch(query);
+    // La recherche part avec le jeton du compte COURANT : un résultat Go+
+    // doit se télécharger avec le bon compte, pas en anonyme
+    const acctIdx = this.scAcctIdx ?? 0;
+    const res = await window.api.scSearch(query, acctIdx);
     if (!res.ok) {
       this.cb.onStatus(`SoundCloud : ${res.error}`);
       return false;
     }
+    this.scAccountsView = false;
     this.scTracks = res.tracks.map(t => ({
       ...t,
       sc: true,
+      acctIdx,
       bpm: null,
       beatOffset: null,
       analyzed: false,
@@ -433,47 +467,89 @@ export class Library {
     this.cb.onSelectionChanged();
   }
 
-  // Retour à la liste des playlists (quand on est entré dans une playlist)
+  // Retour ⬅ dans l'onglet SoundCloud — 3 niveaux en b2b : pistes d'une
+  // playlist → playlists du compte courant → liste des comptes (et seulement
+  // 2 niveaux comme avant quand il n'y a qu'un compte)
   scBack() {
-    if (!this.scPlaylists || !this.scPlaylists.length) return false;
-    this.scTracks = this.scPlaylists;
-    this.scTitle = 'Playlists';
+    if (this.scAccountsView) return false; // déjà tout en haut
+    if (this.scPlaylists && this.scPlaylists.length && this.scTracks !== this.scPlaylists) {
+      this.scTracks = this.scPlaylists;
+      this.scTitle = 'Playlists';
+      this.setMode('sc');
+      this.selection = 0;
+      this.applyFilter();
+      this.cb.onStatus(`${this.scPlaylists.length} playlists`);
+      return true;
+    }
+    if ((this.scAccountCount || 0) >= 2) {
+      this.loadScAccounts();
+      return true;
+    }
+    return false;
+  }
+
+  // Liste des comptes SoundCloud connectés — le niveau RACINE de l'onglet
+  // quand on mixe en b2b (≥ 2 comptes) : chacun retrouve SES sons chez lui
+  async loadScAccounts() {
+    const s = await window.api.scStatus();
+    const accounts = (s && s.accounts) || [];
+    this.scAccountCount = accounts.length;
+    this.scTracks = accounts.map((a, i) => ({
+      scAccountRow: true,
+      acctIdx: i,
+      name: `👤 ${a.name || `Compte ${i + 1}`}${a.expired ? ' (reconnecter)' : ''}`
+    }));
+    this.scAccountsView = true;
+    this.scTitle = 'Comptes SoundCloud';
     this.setMode('sc');
     this.selection = 0;
     this.applyFilter();
-    this.cb.onStatus(`${this.scPlaylists.length} playlists`);
+    this.cb.onStatus(`${accounts.length} comptes SoundCloud — double-clic (ou Rond/B) pour entrer, clic droit pour retirer`);
     return true;
   }
 
-  // Playlists du compte SoundCloud connecté
-  async loadScMine() {
+  // Playlists du compte SoundCloud demandé (défaut : compte 0 = comme avant)
+  async loadScMine(acctIdx = 0) {
     this.cb.onStatus('Récupération de tes playlists SoundCloud…');
-    const res = await window.api.scMyPlaylists();
+    const res = await window.api.scMyPlaylists(acctIdx);
     if (!res.ok) {
       this.cb.onStatus(`SoundCloud : ${res.error}`);
       return res;
     }
-    this.scTracks = res.playlists;
-    this.scPlaylists = res.playlists;
+    // Chaque ligne (❤️ Likes comprise) est taguée avec SON compte : le bon
+    // jeton suivra la playlist jusqu'au téléchargement des pistes
+    const rows = res.playlists.map(p => ({ ...p, acctIdx }));
+    this.scAcctIdx = acctIdx;
+    this.scAccountsView = false;
+    this.scPlaylistsByAcct[acctIdx] = rows;
+    this.scTracks = rows;
+    this.scPlaylists = rows;
     this.scTitle = `Playlists de ${res.username}`;
     this.setMode('sc');
     this.selection = 0;
     this.applyFilter();
-    this.cb.onStatus(`${res.playlists.length} playlists de ${res.username} — double-clic (ou Rond/B) pour en ouvrir une`);
+    this.cb.onStatus(`${rows.length} playlists de ${res.username} — double-clic (ou Rond/B) pour en ouvrir une`);
     return res;
   }
 
-  // Les sons LIKÉS du compte SoundCloud, présentés comme une playlist
-  async loadScLikes() {
+  // Les sons LIKÉS du compte demandé, présentés comme une playlist
+  async loadScLikes(acctIdx = 0) {
     this.cb.onStatus('Récupération de tes likes SoundCloud…');
-    const res = await window.api.scMyLikes();
+    const res = await window.api.scMyLikes(acctIdx);
     if (!res.ok) {
       this.cb.onStatus(`SoundCloud : ${res.error}`);
       return false;
     }
+    const switching = this.scAcctIdx !== acctIdx;
+    this.scAcctIdx = acctIdx;
+    this.scAccountsView = false;
+    // ⬅ doit retomber sur les playlists de CE compte (ou rien si inconnues)
+    if (this.scPlaylistsByAcct[acctIdx]) this.scPlaylists = this.scPlaylistsByAcct[acctIdx];
+    else if (switching) this.scPlaylists = null;
     this.scTracks = res.tracks.map(t => ({
       ...t,
       sc: true,
+      acctIdx,
       bpm: null,
       beatOffset: null,
       analyzed: false,
@@ -487,7 +563,10 @@ export class Library {
         t.analyzed = cached.v >= ANALYSIS_V;
       }
     }
-    this.scTitle = '❤️ Likes';
+    // En b2b on précise À QUI sont ces likes — en solo, libellé historique
+    this.scTitle = (this.scAccountCount >= 2 && res.username)
+      ? `❤️ Likes de ${res.username}`
+      : '❤️ Likes';
     this.setMode('sc');
     this.selection = 0;
     this.applyFilter();
@@ -497,6 +576,48 @@ export class Library {
 
   selectedTrack() {
     return this.filtered[this.selection] || null;
+  }
+
+  // POCHETTE d'un morceau : lue une fois (tags du fichier ou jaquette
+  // SoundCloud), réduite en 64 px et mémorisée dans le cache — null aussi
+  // mémorisé (on ne relit pas un fichier sans pochette à chaque chargement)
+  async coverFor(track) {
+    const key = trackKey(track);
+    const c = this.cache[key];
+    // On ne fait confiance qu'au cache POSITIF : un null mémorisé se
+    // re-tente (une jaquette peut apparaître après coup, ex. artwork SC)
+    if (c && c.cover) return c.cover;
+    // SoundCloud : la JAQUETTE en ligne d'abord — le mp3 téléchargé du
+    // cache n'a pas de tags, il masquait la pochette
+    const src = (track.sc && track.artwork) ? track.artwork : (track.path || track.artwork || null);
+    let url = null;
+    if (src) {
+      try {
+        const pic = await window.api.readCover(src);
+        if (pic) {
+          url = await new Promise((resolve) => {
+            const im = new Image();
+            im.onload = () => {
+              const cv = document.createElement('canvas');
+              cv.width = 64;
+              cv.height = 64;
+              const g = cv.getContext('2d');
+              const s = Math.max(64 / im.width, 64 / im.height);
+              g.drawImage(im, (64 - im.width * s) / 2, (64 - im.height * s) / 2,
+                im.width * s, im.height * s);
+              resolve(cv.toDataURL('image/jpeg', 0.78));
+            };
+            im.onerror = () => resolve(null);
+            im.src = `data:${pic.format};base64,${pic.data}`;
+          });
+        }
+      } catch { /* pas de pochette */ }
+    }
+    const entry = this.cache[key] || { v: 2 };
+    entry.cover = url;
+    this.cache[key] = entry;
+    this._scheduleSave();
+    return url;
   }
 
   async _analyzeQueue(scanId) {
@@ -522,7 +643,8 @@ export class Library {
           const res = await detectBPM(buffer, this._range());
           // Les corrections manuelles (÷2×2) et les grilles Rekordbox
           // importées sont préservées, le reste profite de la grille fraîche
-          const keepBpm = (prev.manualBpm || prev.manual || prev.rb) && prev.bpm != null;
+          const keepBpm = (prev.manualBpm || prev.manual || prev.manualOffset ||
+        prev.gridShift != null || prev.barAnchor != null || prev.rb) && prev.bpm != null;
           t.bpm = keepBpm ? prev.bpm : (res ? res.bpm : null);
           t.beatOffset = keepBpm && prev.beatOffset != null ? prev.beatOffset : (res ? res.beatOffset : null);
           newBeats = keepBpm && prev.beats ? prev.beats : (res ? res.beats : null);
@@ -560,7 +682,8 @@ export class Library {
   async loadForDeck(track, onProgress) {
     if (track.sc && !track.path) {
       if (onProgress) onProgress('Téléchargement SoundCloud…');
-      const res = await window.api.scFetchTrack(track.scId);
+      // Le compte tagué sur la piste part avec elle : ses Go+/privées à lui
+      const res = await window.api.scFetchTrack(track.scId, track.acctIdx);
       if (!res.ok) throw new Error(res.error);
       track.path = res.path;
     }
@@ -582,7 +705,8 @@ export class Library {
       if (onProgress) onProgress('Analyse BPM…');
       const res = await detectBPM(buffer, this._range());
       const prev = this.cache[trackKey(track)] || {};
-      const keepBpm = (prev.manualBpm || prev.manual || prev.rb) && prev.bpm != null;
+      const keepBpm = (prev.manualBpm || prev.manual || prev.manualOffset ||
+        prev.gridShift != null || prev.barAnchor != null || prev.rb) && prev.bpm != null;
       bpm = keepBpm ? prev.bpm : (res ? res.bpm : null);
       beatOffset = keepBpm && prev.beatOffset != null ? prev.beatOffset : (res ? res.beatOffset : null);
       const newBeats = keepBpm && prev.beats ? prev.beats : (res ? res.beats : null);
@@ -642,6 +766,7 @@ export class Library {
     const c = this.cache[key] || { v: ANALYSIS_V };
     if (gridShift != null) c.gridShift = gridShift;
     if (barAnchor != null) c.barAnchor = barAnchor;
+    c.manual = true; // calage manuel : la ré-analyse ne doit plus l'écraser
     this.cache[key] = c;
     this._scheduleSave();
   }
@@ -726,6 +851,18 @@ export class Library {
 
   _scheduleSave() {
     clearTimeout(this._saveTimer);
-    this._saveTimer = setTimeout(() => window.api.cacheSave(this.cache), 800);
+    this._saveTimer = setTimeout(() => {
+      this._saveTimer = null;
+      window.api.cacheSave(this.cache);
+    }, 800);
+  }
+
+  // À la FERMETURE : si une sauvegarde débouncée est en attente, on l'écrit
+  // en SYNCHRONE — sinon un calage fait < 800 ms avant de quitter était perdu
+  flushSave() {
+    if (!this._saveTimer) return;
+    clearTimeout(this._saveTimer);
+    this._saveTimer = null;
+    if (window.api.cacheSaveSync) window.api.cacheSaveSync(this.cache);
   }
 }

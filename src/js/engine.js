@@ -265,6 +265,14 @@ export class Deck {
     this.cuePoint = 0;
     this.tempo = 1;
     this.synced = false;
+    // Un NOUVEAU morceau repart d'un état de sync VIERGE : l'ancien ratio
+    // (_syncBase) n'a aucun sens pour lui et provoquait des sauts de tempo
+    this._syncBase = null;
+    this._pllCorr = 0;
+    this._syncPhaseOff = 0;
+    this._phaseFree = false;
+    this._ratioCal = false;
+    this._ratioMeas = null;
     this.looping = false;
     this._loopBeats = null;
     this.stems = null;
@@ -508,27 +516,40 @@ export class Deck {
     const dt = Math.max(0.005, now - this._scrubLastTime);
 
     if (dist > 0.0008) {
-      // Grain joué à la vitesse du geste, BORNÉ à ~80 ms réels : balayer une
+      // Grain joué à la vitesse du geste, BORNÉ à ~50 ms réels : balayer une
       // grande distance ne crée plus une pile de son « en file d'attente »
-      const rate = clamp(dist / dt, 0.05, 8);
-      const bufDur = Math.min(dist, rate * 0.08);
+      const rate = clamp(dist / dt, 0.05, 6);
+      const bufDur = Math.min(dist, rate * 0.05);
       const startPos = t >= from ? Math.max(0, gTo - bufDur) : gFrom;
       const realDur = bufDur / rate;
 
+      // GRAINS EN FILE, BOUT À BOUT : chaque grain démarre quand le
+      // précédent finit — ZÉRO chevauchement, donc zéro addition de
+      // volumes, donc plus de saturation ; le scrub sonne au niveau du
+      // morceau. Si la file prend trop de retard (> 90 ms), on saute le
+      // grain : le suivant rattrape la position.
+      const at = Math.max(now, this._scrubNextAt || 0);
+      if (at - now > 0.09) {
+        this._scrubLastPos = t;
+        this._scrubLastTime = now;
+        this.offset = t;
+        return;
+      }
       const src = this.ctx.createBufferSource();
       src.buffer = this.buffer;
       src.playbackRate.value = rate;
 
       const g = this.ctx.createGain();
       const fade = Math.min(0.004, realDur / 3);
-      g.gain.setValueAtTime(0, now);
-      g.gain.linearRampToValueAtTime(1, now + fade);
-      g.gain.setValueAtTime(1, Math.max(now + fade, now + realDur - fade));
-      g.gain.linearRampToValueAtTime(0, now + realDur);
+      g.gain.setValueAtTime(0, at);
+      g.gain.linearRampToValueAtTime(1, at + fade);
+      g.gain.setValueAtTime(1, Math.max(at + fade, at + realDur - fade));
+      g.gain.linearRampToValueAtTime(0, at + realDur);
+      this._scrubNextAt = at + realDur;
 
       src.connect(g);
       g.connect(this.preIn);
-      src.start(now, startPos, bufDur + 0.002);
+      src.start(at, startPos, bufDur + 0.002);
       src.onended = () => {
         try { src.disconnect(); g.disconnect(); } catch { /* rien */ }
       };
@@ -1026,6 +1047,20 @@ export class AudioEngine {
     this.applyCrossfader();
   }
 
+  // FX MASTER : une unité sur le MIX ENTIER (position MASTER du channel
+  // select des platines). Créée à la demande, branchée en parallèle comme
+  // les FX de deck : masterGain → send → unité → postBus (wet par-dessus)
+  ensureMasterFx() {
+    if (!this.masterFx) {
+      this.masterFx = new FxUnit(this.ctx, this.postBus);
+      const g = this.ctx.createGain();
+      g.gain.value = 1;
+      this.masterGain.connect(g);
+      g.connect(this.masterFx.input);
+    }
+    return this.masterFx;
+  }
+
   // PAD FX : preset {type, beats, level} = effet actif sur le deck, null = coupé
   setPadFx(i, preset) {
     const d = this.decks[i];
@@ -1191,7 +1226,24 @@ export class AudioEngine {
   // qui joue. Appelée à chaque frame.
   _updateAutoMaster() {
     const am = this.autoMasterIdx != null ? this.decks[this.autoMasterIdx] : null;
-    if (am && am.playing) return; // le master reste le master tant qu'il joue
+    if (am && am.playing) {
+      this._amStopAt = 0;
+      return; // le master reste le master tant qu'il joue
+    }
+    // TOLÉRANCE DE CUT : un master arrêté un court instant (cut rapide au
+    // play/pause) GARDE sa couronne 1,2 s — le master ne doit JAMAIS
+    // basculer sur un simple cut (la bascule re-syncait les autres decks
+    // et « foutait en l'air » leur BPM). Une vraie fin de son dépasse la
+    // grâce et la passation se fait — désormais sans aucun saut (syncLock).
+    if (am) {
+      const nowS = performance.now() / 1000;
+      if (!this._amStopAt) {
+        this._amStopAt = nowS;
+        return;
+      }
+      if (nowS - this._amStopAt < 1.2) return;
+      this._amStopAt = 0;
+    }
     const playing = [];
     this.decks.forEach((d, j) => {
       if (d.playing && d.bpm) playing.push({ d, j });
@@ -1252,11 +1304,17 @@ export class AudioEngine {
     if (!d.bpm) return false;
     const m = this.getMasterDeck(i);
     if (!m || !m.bpm) return false;
+    // Un son syncé vise TOUJOURS le BPM effectif du master — jamais son
+    // double (David : « un 3e son que je sync se met à 2× le BPM ! »).
+    // L'octave ne saute que si le tempo sortirait des limites physiques
+    // du moteur [0.5 ; 1.6].
     let ratio = (m.bpm * m.tempo) / d.bpm;
-    while (ratio > 1.5) ratio /= 2;
-    while (ratio < 0.68) ratio *= 2;
+    while (ratio > 1.6) ratio /= 2;
+    while (ratio < 0.5) ratio *= 2;
     d.setTempo(ratio);
     d._syncBase = d.tempo; // référence pour le verrouillage continu
+    d._syncRef = d.tempo;  // ancre de sécurité de l'APPRENTISSAGE de ratio
+    d._phaseFree = false;  // SYNC demandé = le recollage de phase reprend
 
     // Alignement sur la MESURE : décale le deck pour que ses traits rouges
     // (débuts de mesure) coïncident avec ceux du master
@@ -1270,6 +1328,8 @@ export class AudioEngine {
     }
     d.synced = true;
     d._syncPhaseOff = 0; // SYNC = retour à l'alignement grille sur grille
+    d._ratioCal = false; // calibration éclair au prochain frame
+    d._ratioMeas = null;
     return true;
   }
 
@@ -1290,7 +1350,23 @@ export class AudioEngine {
     let err = pm - pd;
     if (err > 0.5) err -= 1;
     if (err < -0.5) err += 1;
+    // AIMANT VISUEL : un calage à l'oreille laisse toujours un micro-résidu
+    // (± quelques ms) — inaudible, mais VISIBLE au zoom (« censés être
+    // alignés mais ça ne l'est pas »). En-dessous de 0,03 temps (~12 ms),
+    // l'intention est CLAIREMENT « aligné » : on vise l'alignement EXACT.
+    // Un décalage volontaire plus grand reste respecté tel quel.
+    if (Math.abs(err) < 0.03) err = 0;
     d._syncPhaseOff = err;
+    d._errFilt = 0;
+    // Une mesure de calibration en cours est FAUSSÉE par le geste manuel
+    // (le déplacement serait pris pour une dérive de ratio) : on la jette —
+    // la calibration DÉJÀ acquise (_ratioCal), elle, est conservée
+    d._ratioMeas = null;
+    // PLACEMENT MANUEL = PAROLE D'ÉVANGILE : plus AUCUNE poursuite de phase
+    // ensuite (« les tracks ne doivent plus bouger une fois que je déplace »).
+    // Le deck garde le bon TEMPO, c'est tout. SYNC ou un nouveau morceau
+    // réactivent le recollage.
+    d._phaseFree = true;
   }
 
   // Recale le deck i après un scratch à la main :
@@ -1298,7 +1374,12 @@ export class AudioEngine {
   //   (beatmatching) ;
   // - sinon, on cale sur la PROPRE grille du morceau (segment ou micro-segment
   //   le plus proche) : posé sur un trait rouge, il y reste exactement.
-  snapToRef(i, maxErr = 0.2) {
+  // AIMANT DISCRET (0,06 temps ≈ 25 ms) : il ne « termine » que les
+  // lâchers déjà presque alignés — un placement volontairement décalé ou
+  // un déplacement GROSSIER dans le son reste EXACTEMENT où le DJ l'a mis
+  // (« on aimerait pouvoir déplacer grossièrement et faire des mouvements
+  // rapides » — l'ancien 0,2 temps ravalait les placements sur les traits)
+  snapToRef(i, maxErr = 0.06) {
     const d = this.decks[i];
     if (!d.buffer || !d.bpm || (d.beatOffset == null && !d.beats)) return false;
     const hasGrid = (x) => x && x.buffer && x.bpm && (x.beatOffset != null || x.beats);
@@ -1335,24 +1416,109 @@ export class AudioEngine {
     this._updateAutoMaster();
     if (this.jogHold) return;
     const mi = this.masterIdx !== null ? this.masterIdx : this.autoMasterIdx;
+    // CHANGEMENT DE MASTER = TRANSITION SANS AUCUN SAUT. L'ancienne base
+    // (_syncBase) d'un deck peut dater d'un ANCIEN master : la réappliquer
+    // au moment de la bascule changeait le BPM d'un coup (« un cut a changé
+    // le master et foutu en l'air le BPM d'un des sons »). Ici chaque deck
+    // syncé repart de sa vitesse ACTUELLE — rien ne bouge à l'oreille — et
+    // se recalibre en éclair contre le NOUVEAU master.
+    if (mi !== this._lastMi) {
+      this._lastMi = mi;
+      const mNew = mi != null ? this.decks[mi] : null;
+      // BPM effectif du nouveau master, correction de servo retirée
+      const mEff = mNew && mNew.bpm
+        ? mNew.bpm * (mNew.tempo / (1 + (mNew._pllCorr || 0))) : null;
+      this.decks.forEach((d, j) => {
+        if (!d._syncBase) return;
+        if (j !== mi && d.synced && d.bpm && mEff) {
+          // Un deck SYNCÉ vise le BPM du NOUVEAU master : c'est le CONTRAT
+          // du bouton SYNC. (la version « sans aucun saut » le laissait à
+          // sa vitesse du moment : un deck syncé restait affiché 147.6
+          // face à un master 144.9 — « pas calibré au même endroit »)
+          let ratio = mEff / d.bpm;
+          while (ratio > 1.6) ratio /= 2;
+          while (ratio < 0.5) ratio *= 2;
+          d._syncBase = ratio;
+        } else {
+          // le deck qui DEVIENT master (ou non-syncé) ne saute JAMAIS :
+          // sa vitesse ACTUELLE devient sa base, la correction est retirée
+          d._syncBase = d.tempo / (1 + (d._pllCorr || 0));
+        }
+        d._syncRef = d._syncBase;
+        d._pllCorr = 0;
+        d.setTempo(d._syncBase);
+        d._ratioCal = false;
+        d._ratioMeas = null;
+        d._syncPhaseOff = null; // ré-ancré sur l'alignement PRÉSENT ci-dessous
+        d._errFilt = 0;
+      });
+    }
+    // Master AUTO en arrêt bref (cut, dans la grâce de _updateAutoMaster) :
+    // on FIGE tout — personne ne poursuit personne pendant le geste ; à la
+    // reprise, l'alignement constaté est adopté tel quel. (jamais pour un
+    // master MANUEL : mis en pause longtemps, il gèlerait tout à l'infini)
+    if (this.masterIdx === null && mi != null && this.decks[mi]
+        && !this.decks[mi].playing) return;
     this.decks.forEach((d, i) => {
       if (i === mi) {
         // Le MASTER est la RÉFÉRENCE : il n'est JAMAIS recalé — même s'il
         // est marqué sync. Sinon il se fait poursuivre par ses propres
         // esclaves (getMasterDeck l'exclut → il visait un esclave) et le
         // décalage posé au jog se « redéplaçait » tout seul après le geste.
+        // On ne retire que la micro-correction du verrou, et SEULEMENT si le
+        // deck est encore en SYNC : un deck qui DEVIENT master ne doit JAMAIS
+        // sauter de tempo — son _syncBase peut être périmé (slider tempo,
+        // grille ÷2/×2, changement de morceau) et le réappliquer cassait le
+        // mix (« le BPM du son restant change de fou / fait ×2 »)
         if (d._pllCorr) {
           d._pllCorr = 0;
-          if (d._syncBase) d.setTempo(d._syncBase);
+          if (d.synced && d._syncBase) d.setTempo(d._syncBase);
         }
         return;
       }
-      if (!d.synced || !d.playing || !d._syncBase) return;
+      if (!d.synced || !d.playing) return;
+      // (l'ancien gel « _phaseFree » créait un MICRO-DÉCALAGE cumulatif :
+      // les BPM détectés ne sont jamais parfaits, sans maintien l'écart
+      // grandit avec les minutes — « pas négligeable avec le temps ». Le
+      // servo ci-dessous maintient LE DÉCALAGE CHOISI PAR LE DJ, avec des
+      // corrections homéopathiques invisibles.)
       const m = this.getMasterDeck(i);
       if (!m || !m.playing) return;
+      // GARANTIE ABSOLUE « MÊME BPM » : SYNC allumé = le deck vise TOUJOURS
+      // le BPM du master. Base ABSENTE (BPM corrigé à la main, grille
+      // ÷2/×2 — la purge laissait un SYNC allumé… qui ne faisait plus
+      // RIEN : « le BPM se calle mais pas au même BPM ») ou base ABERRANTE
+      // (> 3 % de la cible) : le sync se RÉPARE tout seul, re-visée
+      // immédiate puis recalibration éclair.
+      if (d.bpm && m.bpm) {
+        let want = (m.bpm * m.tempo) / d.bpm;
+        while (want > 1.6) want /= 2;
+        while (want < 0.5) want *= 2;
+        if (!d._syncBase || Math.abs(d._syncBase / want - 1) > 0.03) {
+          d._syncBase = want;
+          d._syncRef = want;
+          d._pllCorr = 0;
+          d.setTempo(want);
+          d._ratioCal = false;
+          d._ratioMeas = null;
+          d._syncPhaseOff = null;
+          d._errFilt = 0;
+          return;
+        }
+      }
+      if (!d._syncBase) return; // aucun BPM détecté : rien à verrouiller
       const pm = this._beatPhase(m);
       const pd = this._beatPhase(d);
       if (pm == null || pd == null) return;
+      // Après un changement de master, l'alignement PRÉSENT devient la
+      // cible : on ne « rattrape » jamais un décalage né d'une passation
+      // (même aimant visuel qu'au ré-ancrage : quasi-aligné = aligné EXACT)
+      if (d._syncPhaseOff == null) {
+        let off = pm - pd;
+        off -= Math.round(off);
+        if (Math.abs(off) < 0.03) off = 0;
+        d._syncPhaseOff = off;
+      }
       // La cible n'est pas forcément phase 0 : après un décalage manuel au
       // jog, _syncPhaseOff mémorise l'alignement voulu par le DJ
       let err = pm - pd - (d._syncPhaseOff || 0);
@@ -1364,21 +1530,89 @@ export class AudioEngine {
       // micro-dérives ; le placement du DJ est respecté tel quel.
       if (Math.abs(err) > 0.08) {
         d._syncPhaseOff = pm - pd;
+        d._ratioMeas = null; // la cible a changé : mesure de calibration à refaire
+        d._errFilt = 0;
         if (d._pllCorr) {
           d._pllCorr = 0;
           d.setTempo(d._syncBase);
         }
         return;
       }
-      if (Math.abs(err) < 0.002) {
+      // CALIBRATION ÉCLAIR (une mesure de 0,35 s, UNE SEULE correction) :
+      // les BPM détectés ne sont jamais parfaits, donc le ratio calculé au
+      // SYNC est légèrement faux. L'ancien servo « apprenait » l'erreur en
+      // continu → le BPM affiché mettait des secondes à se calmer et
+      // « respirait » (142.0↔142.1 au lieu de 141.6 : les deux se
+      // battaient). Ici : tempo FIGÉ, on mesure la PENTE de dérive de
+      // phase, et on corrige le ratio EN UNE FOIS — verrouillé net, le
+      // tempo est ensuite CONSTANT, égal au BPM du master.
+      if (!d._ratioCal) {
+        const nowC = performance.now() / 1000;
+        const ms = d._ratioMeas;
+        if (!ms || nowC - ms.t > 2) {
+          // départ (ou mesure interrompue trop longtemps) : base propre
+          if (d._pllCorr) {
+            d._pllCorr = 0;
+            d.setTempo(d._syncBase);
+          }
+          d._ratioMeas = { t: nowC, e: err, dp: d.currentTime(), mp: m.currentTime() };
+          return;
+        }
+        if (nowC - ms.t < 0.9) return;
+        const dtW = nowC - ms.t;
+        // VALIDITÉ : un beat jump / seek / boucle PENDANT la mesure fausse
+        // la pente — c'était le « tu réajustes le BPM quand j'avance ou
+        // recule » : chaque déplacement recalculait un faux ratio. Si l'un
+        // des deux sons n'a pas avancé en ligne droite, la mesure est
+        // JETÉE et refaite. Se déplacer ne touche JAMAIS le BPM.
+        const dOk = Math.abs((d.currentTime() - ms.dp) / (d.tempo || 1) - dtW) < 0.05;
+        const mOk = Math.abs((m.currentTime() - ms.mp) / (m.tempo || 1) - dtW) < 0.05;
+        if (!dOk || !mOk) {
+          d._ratioMeas = null;
+          return;
+        }
+        let de = err - ms.e;
+        de -= Math.round(de);
+        const fd = (d.bpm * d.tempo) / 60; // temps (beats) par seconde
+        const kRaw = 1 + de / (dtW * fd);
+        const k = Math.max(0.99, Math.min(1.01, kRaw)); // garde-fou bruit/grille
+        d._syncBase *= k;
+        d._syncRef = d._syncBase;
+        // butée atteinte = écart au-delà de 1 % : re-mesure par paliers
+        d._ratioCal = k === kRaw;
+        d._ratioMeas = null;
+        d._errFilt = 0;
+        d.setTempo(d._syncBase);
+        return;
+      }
+      // ERREUR LISSÉE : l'horloge audio avance par blocs (~3 ms) — ce bruit
+      // faisait « respirer » la correction dans les deux sens, VISIBLE sur
+      // les vagues zoomées (inaudible). Passe-bas + zone morte élargie :
+      // le servo ne réagit qu'aux vraies dérives, l'image reste immobile.
+      d._errFilt = (d._errFilt || 0) * 0.85 + err * 0.15;
+      const eF = d._errFilt;
+      if (Math.abs(eF) < 0.0015) {
+        // Collé au décalage voulu (< 0,6 ms) : repos total
         if (d._pllCorr) {
           d._pllCorr = 0;
           d.setTempo(d._syncBase);
         }
         return;
       }
-      // Correction proportionnelle douce (inaudible), bornée à ±0,8 %
-      const corr = Math.max(-0.008, Math.min(0.008, err * 0.25));
+      // SERVO DE MAINTIEN : corrections bornées ±0,2 %, inaudibles.
+      // (l'épisode « ±0,15 % » : borne PLUS PETITE que le résidu possible
+      // de la calibration → servo saturé à vie, glissement CONTINU à
+      // l'écran — « il se décale à chaque instant, tu as empiré ». La
+      // borne doit toujours dépasser le pire résidu de ratio.)
+      const corr = Math.max(-0.002, Math.min(0.002, eF * 0.08));
+      // ABSORPTION ADAPTATIVE du résidu dans la base : correction en BUTÉE
+      // = le ratio est encore faux → absorption RAPIDE (réglée en ~1 s) ;
+      // presque au repos → absorption douce. corr retombe à zéro et le
+      // tempo devient parfaitement CONSTANT (borné ±3 % de l'ancre).
+      const gain = Math.abs(corr) >= 0.0018 ? 0.08 : 0.01;
+      const refA = d._syncRef || d._syncBase;
+      d._syncBase = Math.max(refA * 0.97,
+        Math.min(refA * 1.03, d._syncBase * (1 + corr * gain)));
       d._pllCorr = corr;
       d.setTempo(d._syncBase * (1 + corr));
     });

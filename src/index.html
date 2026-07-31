@@ -2,7 +2,7 @@
 <html lang="fr">
 <head>
   <meta charset="UTF-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://*.sndcdn.com">
   <title>OpenMix</title>
   <link rel="stylesheet" href="styles.css">
 </head>
@@ -123,8 +123,9 @@
         <div class="set-row">
           <label>Couleurs de la forme d'onde</label>
           <select id="set-palette">
+            <option value="rekordbox">Rekordbox (basses bleues, médiums ambre, aigus blancs)</option>
             <option value="rgb">RGB (graves rouges, médiums verts, aigus bleus)</option>
-            <option value="blueorange">Bleu / Orange (style Rekordbox)</option>
+            <option value="blueorange">Bleu / Orange (mélange doux)</option>
             <option value="neon">Néon (rose / vert / bleu)</option>
             <option value="mono">Mono (gris clair)</option>
           </select>

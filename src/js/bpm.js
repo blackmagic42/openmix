@@ -413,6 +413,38 @@ export async function detectBPM(buffer, range) {
         cands.push({ ...dual(c), tern: o.tern });
       }
     }
+    // BALAYAGE COMPLET de la plage (le correctif du « 162 au lieu de
+    // 145 ») : l'autocorrélation peut accrocher un tempo SANS rapport
+    // simple avec le vrai (162/145 = 1,117 — ni octave ni ternaire) et
+    // dans ce cas AUCUN candidat proche du vrai n'existait même dans la
+    // course. Ici TOUTE la plage concourt : passe grossière (0,5 BPM) sur
+    // le double score de phase, puis affinage fin des 3 meilleurs bassins.
+    {
+      const coarse = [];
+      for (let c = RLO; c <= RHI; c += 0.5) coarse.push(dual(c));
+      let cm1 = 0;
+      let cm2 = 0;
+      for (const x of coarse) {
+        if (x.s1 > cm1) cm1 = x.s1;
+        if (x.s2 > cm2) cm2 = x.s2;
+      }
+      const cSc = (x) => (cm1 ? x.s1 / cm1 : 0) + (cm2 ? x.s2 / cm2 : 0);
+      const tops = [];
+      for (const x of coarse) {
+        const near = tops.find((t) => Math.abs(t.bpm - x.bpm) < 2.5);
+        if (near) {
+          if (cSc(x) > cSc(near)) Object.assign(near, x);
+        } else {
+          tops.push({ ...x });
+        }
+      }
+      tops.sort((a, b) => cSc(b) - cSc(a));
+      for (const t of tops.slice(0, 3)) {
+        for (let c = Math.max(RLO, t.bpm - 0.6); c <= Math.min(RHI, t.bpm + 0.6); c += 0.02) {
+          cands.push({ ...dual(c), tern: false });
+        }
+      }
+    }
     let m1 = 0;
     let m2 = 0;
     for (const x of cands) {

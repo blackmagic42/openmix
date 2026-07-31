@@ -190,6 +190,9 @@ function buildWaveRow(i) {
     if (scrub.wasPlaying) deck.play();
     // Recale automatiquement : segment sur segment (désactivable en ⚙)
     if (localStorage.getItem('snapRelease') !== '0') engine.snapToRef(i);
+    // Le placement posé à la souris est ADOPTÉ : sans ré-ancrage, le servo
+    // RAMENAIT le son à l'ancien alignement (« il se remet sur le rouge »)
+    for (let k = 0; k < 4; k++) engine.reanchorSync(k);
     scrub = null;
   };
   canvas.addEventListener('pointerup', endScrub);
@@ -220,7 +223,8 @@ function updateQueueUI(i) {
 }
 
 function queuePush(i, track) {
-  if (!track || track.scPlaylist) return;
+  // Les lignes de navigation (playlists SC, comptes 👤) ne se mettent pas en file
+  if (!track || track.scPlaylist || track.scAccountRow) return;
   const deck = engine.decks[i];
   // Deck vide et file vide : on charge directement
   if (!deck.buffer && !deckQueues[i].length) {
@@ -282,6 +286,7 @@ function buildDeckPanel(i) {
     <div class="deck-head">
       <span class="deck-badge">${i + 1}</span>
       <span class="pad-chip hidden"></span>
+      <img class="deck-cover hidden" alt="" title="Pochette du morceau">
       <span class="deck-title">— vide —</span>
       <span class="deck-master hidden">MASTER</span>
       <span class="beat-dots" title="Position dans la mesure (1·2·3·4)"><i></i><i></i><i></i><i></i></span>
@@ -364,6 +369,7 @@ function buildDeckPanel(i) {
     el,
     wave,
     title: el.querySelector('.deck-title'),
+    cover: el.querySelector('.deck-cover'),
     beatDots: [...el.querySelectorAll('.beat-dots i')],
     padChip: el.querySelector('.pad-chip'),
     bpm: el.querySelector('.deck-bpm'),
@@ -451,7 +457,10 @@ function buildDeckPanel(i) {
     flashStatus(`Deck ${i + 1} : « ${next.name} » chargé depuis la file — prêt (en pause)`);
     loadTrackToDeck(i, next); // chargé PRÊT, en pause — à toi de lancer
   };
-  ui.grid.addEventListener('click', () => {
+  // Recalage de grille : partagé entre le bouton écran ET le bouton GRID
+  // des platines MIDI (le calage est SAUVEGARDÉ sur le morceau, il revient
+  // tout seul au prochain chargement)
+  const recalGrid = () => {
     if (!deck.buffer || !deck.bpm) {
       flashStatus('GRID : charge un morceau avec un BPM détecté d’abord');
       return;
@@ -469,6 +478,30 @@ function buildDeckPanel(i) {
       if (deck.track) library.setBeatOffset(deck.track, deck.beatOffset);
     }
     flashStatus(`Grille du deck ${i + 1} recalée : début de mesure posé ici`);
+  };
+  ui.grid.addEventListener('click', recalGrid);
+  ui.recalGrid = recalGrid;
+
+  // CORRECTION MANUELLE DU BPM : double-clic sur l'affichage BPM du deck —
+  // porte de sortie quand l'analyse se trompe (ex. 162 détecté pour 145).
+  // La valeur saisie est SAUVEGARDÉE sur le morceau (manualBpm : la
+  // ré-analyse ne l'écrasera plus), la grille est reconstruite dessus.
+  ui.bpm.style.cursor = 'pointer';
+  ui.bpm.title = 'Double-clic : corriger le BPM à la main (sauvegardé sur le morceau)';
+  ui.bpm.addEventListener('dblclick', async () => {
+    if (!deck.buffer || !deck.bpm) return;
+    const val = await askText(`BPM réel du deck ${i + 1} (détecté : ${deck.bpm.toFixed(1)})`, deck.bpm.toFixed(1));
+    const nb = Number(String(val).replace(',', '.'));
+    if (!nb || nb < 40 || nb > 260) return;
+    deck.bpm = nb;
+    deck.beats = null; // grille FIXE reconstruite sur le BPM saisi
+    if (deck.beatOffset == null) deck.beatOffset = 0;
+    deck.synced = false;
+    deck._syncBase = null;
+    deck._pllCorr = 0;
+    if (deck.track) library.setBpmValue(deck.track, nb);
+    updateTempoLabel(i);
+    flashStatus(`Deck ${i + 1} — BPM corrigé à ${nb} (mémorisé)`);
   });
   ui.masterBtn.addEventListener('click', () => {
     engine.setMaster(i);
@@ -498,10 +531,15 @@ function buildDeckPanel(i) {
       deck.beats = nbBeats;
       deck.bpm = nb;
       deck.synced = false;
+      // Le BPM vient de changer ×2/÷2 : l'ancien ratio de sync est caduc
+      deck._syncBase = null;
+      deck._pllCorr = 0;
       if (deck.track) library.setGridData(deck.track, { beats: nbBeats, barAnchor: deck.barAnchor, bpm: nb });
     } else {
       deck.bpm = nb;
       deck.synced = false;
+      deck._syncBase = null;
+      deck._pllCorr = 0;
       if (deck.track) library.setBpmValue(deck.track, nb);
     }
     updateTempoLabel(i);
@@ -671,7 +709,9 @@ function buildDeckPanel(i) {
     if (!overScrub) return;
     deck.scrubEnd();
     if (overScrub.wasPlaying) deck.play();
-    // Miniature = navigation : JAMAIS de recadrage
+    // Miniature = navigation : JAMAIS de recadrage — et la sync ADOPTE la
+    // position choisie au lieu de la « recalibrer » aussitôt
+    for (let k = 0; k < 4; k++) engine.reanchorSync(k);
     overScrub = null;
   };
   ui.over.addEventListener('pointerup', endOverScrub);
@@ -1561,14 +1601,38 @@ function gpFxTypeStep(u, dir) {
 function gpFxBeatsStep(u, dir) {
   const sel = uiRefs.fxUnits[u].beatsSel;
   const idx = Math.max(0, Math.min(sel.options.length - 1, sel.selectedIndex + dir));
-  if (idx === sel.selectedIndex) return;
+  if (idx === sel.selectedIndex) return false; // déjà en butée
   sel.selectedIndex = idx;
   sel.dispatchEvent(new Event('change'));
   flashStatus(`FX ${u + 1} — durée ${sel.options[idx].textContent.trim()} temps`);
+  return true;
+}
+
+// Retour lumineux des boutons BEAT ◄/► de la platine : flash net du bouton
+// pressé à chaque cran — TRIPLE clignotement quand on est en butée
+function midiBeatFlash(note, ok) {
+  const set = (on) => {
+    midi.setLed(4, note, on);
+    midi.setLed(5, note, on);
+  };
+  if (ok) {
+    set(true);
+    setTimeout(() => set(false), 220);
+  } else {
+    let n = 0;
+    const iv = setInterval(() => {
+      set(n % 2 === 0);
+      n += 1;
+      if (n >= 6) {
+        clearInterval(iv);
+        set(false);
+      }
+    }, 90);
+  }
 }
 
 // Durée du FX un cran plus long / plus court — dans la liste COMPLÈTE
-// (1/16 … 1/2 … 3/4 … 16) : le 3/4 reste accessible, David y tient
+// (1/4 … 1/2 … 3/4 … 32) : le 3/4 reste accessible, David y tient
 function gpFxBeatsX2(u, dir) {
   const sel = uiRefs.fxUnits[u].beatsSel;
   const cur = Number(sel.value);
@@ -1819,9 +1883,8 @@ const FX_TYPE_OPTIONS = `
   <option value="helix">Helix</option>
   <option value="crush">Crush</option>
 `;
+// Plage CONVENTIONNELLE (demande David) : de 1/4 à 32 temps
 const FX_BEATS_OPTIONS = `
-  <option value="0.0625">1/16</option>
-  <option value="0.125">1/8</option>
   <option value="0.25">1/4</option>
   <option value="0.5" selected>1/2</option>
   <option value="0.75">3/4</option>
@@ -1830,6 +1893,7 @@ const FX_BEATS_OPTIONS = `
   <option value="4">4</option>
   <option value="8">8</option>
   <option value="16">16</option>
+  <option value="32">32</option>
 `;
 
 function buildFxBar() {
@@ -1946,8 +2010,83 @@ function buildFxBar() {
   });
   bar.appendChild(cellsWrap);
   uiRefs.fxPanel = { cells };
+
+  // --- FX MASTER : bandeau dédié sous la matrice — le FX du MIX ENTIER
+  // (position MASTER du channel select des platines). Indépendant des 4
+  // unités joueurs : il vit sur le bus master.
+  const MFX_TYPES = [...FX_TYPE_OPTIONS.matchAll(/value="([^"]+)"[^>]*>([^<]+)/g)]
+    .map((mm) => [mm[1], mm[2].trim()]);
+  const mWrap = document.createElement('div');
+  mWrap.className = 'fx-master';
+  mWrap.innerHTML = `
+    <b class="fx-master-title">MASTER</b>
+    <div class="fx-cell fxm-type" title="Effet du mix — clic : suivant"><b class="fx-cell-lbl">EFFET</b><span class="fx-cell-val">Echo</span></div>
+    <div class="fx-cell fxm-beats" title="Durée — clic : ×2 (reboucle)"><b class="fx-cell-lbl">DURÉE</b><span class="fx-cell-val">1/2</span></div>
+    <div class="fx-cell fxm-level" title="Niveau — clic : +25 %"><b class="fx-cell-lbl">NIVEAU</b><span class="fx-cell-val">0%</span></div>
+    <div class="fx-cell fx-cell-onoff fxm-on" title="FX du MIX ENTIER on/off"><b class="fx-cell-lbl">MIX</b><span class="fx-cell-val fx-badge">OFF</span></div>
+  `;
+  const mfxEls = {
+    type: mWrap.querySelector('.fxm-type .fx-cell-val'),
+    beats: mWrap.querySelector('.fxm-beats .fx-cell-val'),
+    level: mWrap.querySelector('.fxm-level .fx-cell-val'),
+    on: mWrap.querySelector('.fxm-on .fx-cell-val')
+  };
+  uiRefs.masterFxEls = mfxEls;
+  mWrap.querySelector('.fxm-type').addEventListener('click', () => {
+    const u = engine.ensureMasterFx();
+    const idx = Math.max(0, MFX_TYPES.findIndex(([v]) => v === u.type));
+    u.setType(MFX_TYPES[(idx + 1) % MFX_TYPES.length][0]);
+    updateMasterFxRow();
+  });
+  mWrap.querySelector('.fxm-beats').addEventListener('click', () => {
+    if (!masterFxBeatsStep(1)) {
+      engine.ensureMasterFx().setBeatsMult(MASTER_FX_BEATS[0]); // reboucle à 1/4
+    }
+    updateMasterFxRow();
+  });
+  mWrap.querySelector('.fxm-level').addEventListener('click', () => {
+    const u = engine.ensureMasterFx();
+    u.setLevel(u.level >= 0.99 ? 0 : Math.min(1, u.level + 0.25));
+    updateMasterFxRow();
+  });
+  mWrap.querySelector('.fxm-on').addEventListener('click', () => {
+    engine.resume();
+    const u = engine.ensureMasterFx();
+    u.setEnabled(!u.enabled);
+    // Pas de niveau par défaut : c'est TOI qui joues la jauge (David)
+    updateMasterFxRow();
+    flashStatus(`FX MASTER ${u.enabled ? (u.level === 0 ? 'ACTIVÉ — monte la jauge' : 'ACTIVÉ') : 'coupé'} (tout le mix)`);
+  });
+  bar.appendChild(mWrap);
+  uiRefs.masterFxTypes = MFX_TYPES;
+
   gpShowFxUnit(0); // au départ, le panneau montre l'unité 1
   updateFxPanel();
+  updateMasterFxRow();
+}
+
+// Rafraîchit le bandeau FX MASTER (appelé à chaque frame, garde par signature)
+let _mfxSig = '';
+function updateMasterFxRow() {
+  const els = uiRefs.masterFxEls;
+  if (!els) return;
+  const u = engine.masterFx;
+  const sig = u
+    ? `${u.type}|${u.beatsMult}|${Math.round(u.level * 100)}|${u.enabled ? 1 : 0}`
+    : 'off';
+  if (sig === _mfxSig) return;
+  _mfxSig = sig;
+  if (!u) {
+    els.on.textContent = 'OFF';
+    els.on.classList.remove('live');
+    return;
+  }
+  const tt = (uiRefs.masterFxTypes || []).find(([v]) => v === u.type);
+  els.type.textContent = tt ? tt[1] : u.type;
+  els.beats.textContent = u.beatsMult >= 1 ? String(u.beatsMult) : `1/${Math.round(1 / u.beatsMult)}`;
+  els.level.textContent = `${Math.round(u.level * 100)}%`;
+  els.on.textContent = u.enabled ? 'ON' : 'OFF';
+  els.on.classList.toggle('live', u.enabled);
 }
 
 // KNOB de niveau du rack FX : 4 jauges concentriques (une par joueur, sa
@@ -2118,11 +2257,15 @@ function renderLibrary() {
   libBody.textContent = '';
   rowByTrack.clear();
   lastSelIdx = library.selection;
-  // Bouton retour : visible quand on est dans une playlist SoundCloud
+  // Bouton retour : visible quand on est dans une playlist SoundCloud — et,
+  // en b2b (≥ 2 comptes), partout sauf sur la liste des comptes (il y a
+  // toujours un niveau au-dessus : playlists du compte → liste des comptes)
   const backBtn = document.getElementById('btn-sc-back');
   if (backBtn) {
-    backBtn.classList.toggle('hidden',
-      !(library.mode === 'sc' && library.scPlaylists && library.scPlaylists.length && library.scTracks !== library.scPlaylists));
+    const canScBack = library.mode === 'sc' && !library.scAccountsView &&
+      ((library.scPlaylists && library.scPlaylists.length && library.scTracks !== library.scPlaylists) ||
+       (library.scAccountCount || 0) >= 2);
+    backBtn.classList.toggle('hidden', !canScBack);
   }
   // Boutons playlists : retour + jouer visibles quand une playlist est ouverte
   const plBackBtn = document.getElementById('btn-pl-back');
@@ -2141,7 +2284,7 @@ function renderLibrary() {
     const sep = t.name.indexOf(' - ');
     const artist = sep > 0 ? t.name.slice(0, sep) : '';
     const title = sep > 0 ? t.name.slice(sep + 3) : t.name;
-    const bpmCell = (t.scRootRow || t.plRootRow || t.scLikes || t.fsUpRow)
+    const bpmCell = (t.scRootRow || t.plRootRow || t.scLikes || t.fsUpRow || t.scAccountRow)
       ? ''
       : t.fsRow
       ? 'dossier'
@@ -2152,13 +2295,13 @@ function renderLibrary() {
           : (t.bpm ? t.bpm.toFixed(1) : (t.analyzed ? '?' : '…'));
     tr.innerHTML = `
       <td class="col-num">${idx + 1}</td>
-      <td class="col-prev">${t.preview ? `<img src="${t.preview}" alt="">` : ''}</td>
+      <td class="col-prev">${t.preview ? `<img src="${t.preview}" alt="">` : (t.artwork ? `<img class="prev-art" src="${t.artwork.replace('-t500x500', '-large')}" alt="">` : '')}</td>
       <td></td>
       <td class="col-artist"></td>
       <td class="col-bpm">${bpmCell}</td>
       <td class="col-dur">${t.duration ? formatTime(t.duration) : ''}</td>
     `;
-    const isNavRow = t.plRow || t.fsRow || t.scRootRow || t.plRootRow || t.scLikes || t.fsUpRow;
+    const isNavRow = t.plRow || t.fsRow || t.scRootRow || t.plRootRow || t.scLikes || t.fsUpRow || t.scAccountRow;
     tr.children[2].textContent = isNavRow ? t.name : title;
     tr.children[3].textContent = isNavRow ? '' : artist;
     tr.addEventListener('click', () => {
@@ -2170,7 +2313,15 @@ function renderLibrary() {
     } else if (t.scRootRow) {
       tr.addEventListener('dblclick', () => openSoundCloud());
     } else if (t.scLikes) {
-      tr.addEventListener('dblclick', () => openScLikes());
+      tr.addEventListener('dblclick', () => openScLikes(t.acctIdx));
+    } else if (t.scAccountRow) {
+      // Ligne compte SoundCloud (b2b) : entrer = SES playlists, clic droit =
+      // retirer le compte de la liste
+      tr.addEventListener('dblclick', () => openScAccount(t.acctIdx));
+      tr.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        showScAccountMenu(e, t);
+      });
     } else if (t.plRootRow) {
       tr.addEventListener('dblclick', () => openPlaylistsRoot());
     } else if (t.fsRow) {
@@ -2184,8 +2335,8 @@ function renderLibrary() {
         showPlaylistMenu(e, t.pl);
       });
     } else if (t.scPlaylist) {
-      // Playlist SoundCloud : double-clic pour l'ouvrir
-      tr.addEventListener('dblclick', () => openScPlaylist(t.permalink));
+      // Playlist SoundCloud : double-clic pour l'ouvrir (avec SON compte)
+      tr.addEventListener('dblclick', () => openScPlaylist(t.permalink, t.acctIdx));
     } else {
       tr.draggable = true;
       tr.addEventListener('dragstart', (e) => {
@@ -2234,7 +2385,10 @@ function renderLibrary() {
       items: library.filtered.slice(0, 400).map((t) => ({
         name: t.name,
         bpm: t.bpm ? Number(t.bpm.toFixed(1)) : null,
-        pl: !!(t.scPlaylist || t.plRow)
+        // TOUTES les lignes de navigation sont marquées : le téléphone ne
+        // doit jamais pouvoir « charger » un compte ou un dossier sur un deck
+        pl: !!(t.scPlaylist || t.plRow || t.scAccountRow || t.scLikes ||
+               t.scRootRow || t.plRootRow || t.fsRow || t.fsUpRow)
       }))
     });
   }
@@ -2292,6 +2446,35 @@ function showPlaylistMenu(e, p) {
   ctxMenu.classList.remove('hidden');
 }
 
+// Menu clic droit sur une ligne 👤 compte SoundCloud : retirer le compte
+// (fin du b2b — les jetons du pote ne restent pas sur le PC)
+function showScAccountMenu(e, t) {
+  ctxMenu.textContent = '';
+  const d = document.createElement('div');
+  d.className = 'ctx-item';
+  d.textContent = `🗑 Retirer ce compte (${String(t.name || '').replace(/^👤 /, '')})`;
+  d.addEventListener('click', async () => {
+    hideCtxMenu();
+    const r = await window.api.scRemoveAccount(t.acctIdx);
+    if (!r.ok) {
+      flashStatus(`SoundCloud : ${r.error}`);
+      return;
+    }
+    flashStatus('Compte SoundCloud retiré');
+    // Les index de comptes ont bougé (splice) : les caches par compte de la
+    // vue ne valent plus rien, et l'arbre doit repartir de zéro
+    library.scPlaylistsByAcct = {};
+    library.scPlaylists = null;
+    await refreshScStatus();
+    buildTree();
+    openSoundCloud(); // re-dispatch : invite / playlists / liste des comptes
+  });
+  ctxMenu.appendChild(d);
+  ctxMenu.style.left = `${Math.min(e.clientX, window.innerWidth - 260)}px`;
+  ctxMenu.style.top = `${Math.min(e.clientY, window.innerHeight - 50)}px`;
+  ctxMenu.classList.remove('hidden');
+}
+
 let lastSelIdx = -1;
 function updateSelectionUI() {
   const rows = libBody.children;
@@ -2324,23 +2507,46 @@ function enterFolder(p) {
   treeReveal(p);
 }
 
-// Entrer dans SoundCloud = voir directement SES playlists (et ❤️ Likes).
+// Clé d'arbre d'une entrée SoundCloud : préfixée par le compte quand il y en
+// a plusieurs — en mono-compte l'arbre garde ses clés historiques
+function scTreeKey(idx, leaf) {
+  return (library.scAccountCount || 0) >= 2 ? `sc:${idx}:${leaf}` : `sc:${leaf}`;
+}
+
+// Entrer dans SoundCloud — selon le nombre de comptes connectés : 0 = invite
+// à se connecter ; 1 = direct SES playlists (comme avant) ; ≥ 2 (b2b) = la
+// liste des comptes, chacun va chercher ses sons chez lui.
 // Chaque destination surligne AUSSI sa ligne dans l'arbre de gauche — le
 // « micro menu » dit toujours où on est, comme la barre latérale de VS Code
-function openSoundCloud() {
+async function openSoundCloud() {
   setLibTab('sc');
-  library.loadScMine();
+  const s = await window.api.scStatus();
+  const accounts = (s && s.accounts) || [];
+  library.scAccountCount = accounts.length;
+  if (!accounts.length) {
+    flashStatus('Aucun compte SoundCloud — clique « Se connecter » dans la barre SoundCloud');
+  } else if (accounts.length === 1) {
+    library.loadScMine(0);
+  } else {
+    library.loadScAccounts();
+  }
   treeRevealKey('sc:');
 }
-function openScLikes() {
+// Playlists d'UN compte précis (ligne 👤 double-cliquée, nœud d'arbre…)
+function openScAccount(idx = 0) {
   setLibTab('sc');
-  library.loadScLikes();
-  treeRevealKey('sc:', 'sc:likes');
+  library.loadScMine(idx);
+  treeRevealKey('sc:', `sc:acct:${idx}`);
 }
-function openScPlaylist(permalink) {
+function openScLikes(idx = 0) {
   setLibTab('sc');
-  library.loadScUrl(permalink);
-  treeRevealKey('sc:', `sc:${permalink}`);
+  library.loadScLikes(idx);
+  treeRevealKey('sc:', scTreeKey(idx, 'likes'));
+}
+function openScPlaylist(permalink, idx = 0) {
+  setLibTab('sc');
+  library.loadScUrl(permalink, idx);
+  treeRevealKey('sc:', scTreeKey(idx, permalink));
 }
 function openPlaylistsRoot() {
   setLibTab('pl');
@@ -2384,7 +2590,12 @@ async function loadSelectedToDeck(i) {
   }
   // Ligne « playlist SoundCloud » : on ouvre la playlist au lieu de charger un deck
   if (track.scPlaylist) {
-    library.loadScUrl(track.permalink);
+    library.loadScUrl(track.permalink, track.acctIdx);
+    return;
+  }
+  // Ligne « compte SoundCloud » (b2b) : on entre dans SES playlists
+  if (track.scAccountRow) {
+    openScAccount(track.acctIdx);
     return;
   }
   // Ligne « playlist locale » : on l'ouvre
@@ -2468,6 +2679,17 @@ async function loadTrackToDeck(i, track, autoplay = false) {
     resetStemsCol(i);
     updateTempoLabel(i);
     remotePushWave(i); // la console téléphone reçoit la nouvelle vague
+    // POCHETTE : tags du fichier (ou jaquette SoundCloud), en cache après
+    // la première lecture — affichée dans l'en-tête du deck
+    ui.cover.classList.add('hidden');
+    ui._coverTrack = track;
+    library.coverFor(track).then((url) => {
+      if (ui._coverTrack !== track) return; // un autre son a été chargé depuis
+      if (url) {
+        ui.cover.src = url;
+        ui.cover.classList.remove('hidden');
+      }
+    });
     flashStatus(`« ${track.name} » chargé sur le deck ${i + 1}`);
     library.addHistory(track);
     if (autoplay) engine.decks[i].play();
@@ -3591,7 +3813,7 @@ const gamepad = new GamepadManager({
       // sélectionnés (une seule unité, routée vers chacun de ses decks)
       const u = Math.min(st.player - 1, 3);
       if (!gpFxBeatsX2(u, side)) {
-        flashStatus(`⏱ J${st.player} — FX déjà au ${side > 0 ? 'maximum (16 temps)' : 'minimum (1/16 temps)'}`);
+        flashStatus(`⏱ J${st.player} — FX déjà au ${side > 0 ? 'maximum (32 temps)' : 'minimum (1/4 temps)'}`);
         return;
       }
       const s = uiRefs.fxUnits[u].beatsSel;
@@ -3685,7 +3907,19 @@ const gamepad = new GamepadManager({
       library.openPlaylist(t.pl);
       st.navSel = 0;
     } else if (t.scPlaylist) {
-      library.loadScUrl(t.permalink);
+      library.loadScUrl(t.permalink, t.acctIdx);
+      st.navSel = 0;
+    } else if (t.scAccountRow) {
+      // Ligne 👤 compte SoundCloud (b2b) : Rond/B entre dans SES playlists
+      openScAccount(t.acctIdx);
+      st.navSel = 0;
+    } else if (t.scRootRow) {
+      // Bug historique corrigé : ces lignes de navigation tombaient dans le
+      // chargement de deck et échouaient en silence (ni path ni scId)
+      openSoundCloud();
+      st.navSel = 0;
+    } else if (t.scLikes) {
+      openScLikes(t.acctIdx);
       st.navSel = 0;
     } else {
       gpLoadedTrack[st.player - 1] = t; // marqueur PERMANENT « J.. a chargé ça »
@@ -3980,6 +4214,35 @@ let lastFrame = performance.now();
 const wavesEl = document.getElementById('waves');
 const wavePlayhead = document.getElementById('wave-playhead');
 
+// --- RETOUR LUMINEUX vers la platine : vumètres par tranche, LED play/cue/
+// sync, boucle, FX qui CLIGNOTE, channel select — « la magie de la platine »,
+// c'est le logiciel qui la pilote. N'émet que les CHANGEMENTS (cache midi).
+const MIDI_SEL_NOTES = [29, 31, 28, 20]; // channel select : decks 1-4 (canal 5)
+function midiFeedback(now) {
+  if (!midi.output) return;
+  const blink = (now % 500) < 250; // clignotant 2 Hz
+  for (let i = 0; i < 4; i++) {
+    const d = engine.decks[i];
+    // Vumètre de la tranche (rouge compris : même valeur que les mètres écran)
+    midi.setVu(i, Math.min(1, stripUI[i].meterVal || 0));
+    midi.setLed(i, 11, d.playing);                       // PLAY
+    midi.setLed(i, 12, !!d.buffer && !d.playing);        // CUE (prêt, à l'arrêt)
+    midi.setLed(i, 88, d.synced);                        // SYNC
+    // Boucle : IN fixe quand un point est posé, IN+OUT clignotent en boucle
+    midi.setLed(i, 16, d.looping ? blink : d._loopInPoint != null);
+    midi.setLed(i, 17, d.looping ? blink : false);
+    midi.setLed(i, 77, d.looping);                       // RELOOP/EXIT
+  }
+  // FX : le bouton clignote dès qu'un FX est actif quelque part — la LED de
+  // la FLX6 (MERGE FX) n'écoute peut-être pas le canal du bouton : on émet
+  // la note 71 sur TOUS les canaux plausibles
+  const fxOn = engine.fx.some((u) => u.enabled) ||
+    engine.padFx.some((u) => u && u.enabled);
+  for (let ch = 0; ch < 8; ch++) midi.setLed(ch, 71, fxOn && blink);
+  // Channel select : la position du deck ACTIF reste allumée
+  MIDI_SEL_NOTES.forEach((n, i) => midi.setLed(5, n, i === activeDeck));
+}
+
 function frame(now) {
   // Une exception ici tuait le requestAnimationFrame → app entièrement
   // figée (c'était le « crash » du passage 4 → 2 decks pendant la lecture).
@@ -4017,6 +4280,11 @@ function frameBody(now) {
     const zoomSig = `${t.toFixed(3)}|${deckWindow.toFixed(3)}|${deck.looping ? deck.loopStart + '-' + deck.loopEnd : ''}|${deck._loopInPoint ?? ''}|${deck.peaks ? deck.peaks.duration : 0}|${deck.beatOffset}|${deck.bpm}|${deck.gridShift}|${deck.barAnchor}|${deck.beats ? deck.beats.length : 0}|${getGlobalGridOffset()}|${cueSig}`;
     if (ui._zoomSig !== zoomSig) {
       ui._zoomSig = zoomSig;
+      // FENÊTRE FIXE, délibérément : l'échelle × tempo (tentée puis
+      // RETIRÉE) faisait BOUGER tout le tracé à chaque mise à jour interne
+      // de vitesse — « tu l'as rendu mobile, encore pire ». L'alignement
+      // visuel des beats est garanti par l'aimant à zéro du calage +
+      // le servo, PAS par l'échelle. Ne pas re-tenter.
       drawZoom(ui.wave.canvas, deck, deckWindow);
     }
     const overSig = deck.peaks
@@ -4103,7 +4371,15 @@ function frameBody(now) {
         ui._beatIdx = bi;
         ui.beatDots.forEach((dot, k) => dot.classList.toggle('on', k === bi));
       }
-      const ebpm = deck.effectiveBpm;
+      let ebpm = deck.effectiveBpm;
+      // Deck SYNCÉ verrouillé : on AFFICHE le BPM du master — le verrou
+      // garantit la même vitesse réelle ; l'ancien affichage montrait la
+      // petite erreur de détection du morceau (143.6 face à 144.0) alors
+      // que les temps sont collés — « il faut le MÊME BPM » : le voilà
+      if (deck.synced && deck.playing && deck._syncBase) {
+        const mstr = engine.getMasterDeck(i);
+        if (mstr && mstr.bpm && mstr.playing) ebpm = mstr.bpm * mstr.tempo;
+      }
       const bpmText = ebpm ? ebpm.toFixed(1) : '--.-';
       if (ui._bpmText !== bpmText) {
         ui._bpmText = bpmText;
@@ -4157,6 +4433,9 @@ function frameBody(now) {
     if (!u || !u.enabled) return;
     u.setBeatDur(engine.decks[d].effectiveBpm ? 60 / engine.decks[d].effectiveBpm : masterBeat);
   });
+  // Le FX MASTER se cale sur le BPM du deck master + bandeau à jour
+  if (engine.masterFx && engine.masterFx.enabled) engine.masterFx.setBeatDur(masterBeat);
+  updateMasterFxRow();
 
   // VU-mètres : niveau crête par tranche + LED rouge si saturation.
   // Animés par TRANSFORM : changer height/width à chaque frame invalidait la
@@ -4179,6 +4458,8 @@ function frameBody(now) {
     if (mPeak >= 1) masterClipUntil = now + 700;
     masterMeterClip.classList.toggle('on', now < masterClipUntil);
   }
+
+  midiFeedback(now); // LED et vumètres de la platine (n'émet que les changements)
 
   // Trait de lecture global : getBoundingClientRect FORCE une mise en page
   // synchrone — on ne le mesure plus qu'à ~2 Hz (et au redimensionnement),
@@ -4216,19 +4497,26 @@ const midiCueHold = [false, false, false, false];
 
 function midiCue(i, on) {
   const deck = engine.decks[i];
-  if (!deck.buffer) return;
+  if (!deck.buffer) {
+    // deck vide : le DIRE (l'ancien silence ressemblait à un bouton mort)
+    if (on) flashStatus(`Deck ${i + 1} — aucun son chargé (CUE)`);
+    return;
+  }
   if (on) {
     if (deck.playing) {
       deck.cue();
+      flashStatus(`⏹ Deck ${i + 1} — retour au point CUE`);
       return;
     }
     const atCue = Math.abs(deck.currentTime() - deck.cuePoint) < 0.02;
     if (!atCue) {
       deck.cue();
+      flashStatus(`📍 Deck ${i + 1} — point CUE posé ici`);
       return;
     }
     midiCueHold[i] = true;
     deck.play();
+    flashStatus(`▶ Deck ${i + 1} — pré-écoute (maintiens CUE)`);
   } else if (midiCueHold[i]) {
     midiCueHold[i] = false;
     deck.pause();
@@ -4236,7 +4524,92 @@ function midiCue(i, on) {
   }
 }
 
-const midiJogTimer = [null, null, null, null]; // relâcher du nudge MIDI
+const midiJogTimer = [null, null, null, null]; // relâcher du nudge MIDI (côté)
+const midiScratchTimer = [null, null, null, null]; // relâcher du scratch (dessus)
+const midiSeekAcc = [0, 0, 0, 0];   // déplacement accumulé (dessus sans toucher)
+const midiSeekTimer = [null, null, null, null];
+let midiShiftHeld = false; // bouton SHIFT (gauche ou droit) tenu enfoncé
+const midiJogState = [null, null, null, null];  // geste de scratch en cours
+const midiJogTouchHeld = [false, false, false, false]; // main posée sur le disque
+const midiJogArmTimer = [null, null, null, null]; // armement différé du toucher
+let midiJogTouchAt = 0; // instant du dernier toucher (filtre anti-parasites)
+let midiXfLastAt = 0;   // continuité du crossfader (filtre anti-rafales)
+// CIBLE du FX platine : la position du CHANNEL SELECT de la FLX6 décide quel
+// deck le bouton FX / knob niveau / BEAT ◄► pilotent (« je suis sur le 2
+// donc c'est le FX du 2 qui doit s'activer »). 'master' = le deck master.
+let midiFxTarget = null; // null = suivre le deck actif · 'master' = FX du MIX
+function midiFxUnit() {
+  return Math.min(midiFxTarget != null ? midiFxTarget : activeDeck, 3);
+}
+// --- FX « platine » : UN SEUL effet à la fois, qui SUIT le sélecteur ---
+// (demande David : passer de 1 à 2 déplace l'effet, pas besoin de couper le
+// 1 à la main ; et le niveau vient TOUJOURS de la jauge, jamais d'un défaut)
+function platineFxCurrent() {
+  if (engine.masterFx && engine.masterFx.enabled) return { kind: 'master', fx: engine.masterFx };
+  const u = engine.fx.findIndex((f) => f.enabled);
+  return u >= 0 ? { kind: 'deck', u, fx: engine.fx[u] } : null;
+}
+function platineFxOff() {
+  engine.fx.forEach((f, u) => {
+    if (!f.enabled) return;
+    f.setEnabled(false);
+    const b = uiRefs.fxUnits[u].onBtn;
+    b.textContent = 'OFF';
+    b.classList.remove('on');
+  });
+  if (engine.masterFx) engine.masterFx.setEnabled(false);
+  engine.updateFxSends();
+  updateMasterFxRow();
+}
+// Allume l'effet sur la cible du sélecteur, en TRANSFÉRANT réglages et
+// niveau de l'effet précédent (src) s'il y en avait un
+function platineFxOnTarget(src) {
+  if (midiFxTarget === 'master') {
+    const mu = engine.ensureMasterFx();
+    if (src) {
+      mu.setType(src.type);
+      mu.setBeatsMult(src.beatsMult);
+      mu.setLevel(src.level);
+    }
+    mu.setEnabled(true);
+    updateMasterFxRow();
+    return 'MASTER';
+  }
+  const u = midiFxUnit();
+  const f = engine.fx[u];
+  if (src) {
+    const r = uiRefs.fxUnits[u];
+    r.typeSel.value = src.type;
+    r.typeSel.dispatchEvent(new Event('change'));
+    r.beatsSel.value = String(src.beatsMult);
+    r.beatsSel.dispatchEvent(new Event('change'));
+    f.setLevel(src.level);
+    r.levelKnob.update();
+  }
+  // Route AU MOINS vers son propre deck (une vieille assignation vide
+  // rendait le FX muet — « le fx ne marche que sur le master »)
+  engine.fxAssign[u][u] = true;
+  f.setEnabled(true);
+  const b = uiRefs.fxUnits[u].onBtn;
+  b.textContent = 'ON';
+  b.classList.add('on');
+  engine.updateFxSends();
+  return `deck ${u + 1}`;
+}
+
+// Échelle de durées du FX MASTER (même échelle que le panneau : 1/4 → 32)
+const MASTER_FX_BEATS = [0.25, 0.5, 0.75, 1, 2, 4, 8, 16, 32];
+function masterFxBeatsStep(dir) {
+  const u = engine.ensureMasterFx();
+  const idx = MASTER_FX_BEATS.findIndex((v) => Math.abs(v - u.beatsMult) < 0.01);
+  const next = Math.max(0, Math.min(MASTER_FX_BEATS.length - 1, (idx < 0 ? 1 : idx) + dir));
+  if (idx === next) return false;
+  u.setBeatsMult(MASTER_FX_BEATS[next]);
+  const b = MASTER_FX_BEATS[next];
+  flashStatus(`FX MASTER — durée ${b >= 1 ? b : `1/${Math.round(1 / b)}`} temps`);
+  return true;
+}
+const tempoHintAt = [0, 0, 0, 0]; // limiteur de l'indicateur de reprise tempo
 const midi = new MidiManager({
   press(action, deck, on) {
     const i = deck == null ? activeDeck : deck;
@@ -4245,29 +4618,128 @@ const midi = new MidiManager({
     engine.resume();
     switch (action) {
       case 'play': if (on) { d.scrubEnd(); d.togglePlay(); } break;
+      case 'jogTouch':
+        // VRAI toucher du disque (capteur note 54) : POSE = le son se coupe
+        // et le disque devient la tête de lecture — RELÂCHE = reprise pile
+        // où la main a laissé le son, placement adopté (phase gelée)
+        if (!d.buffer) {
+          // Toucher sur un deck VIDE : le DIRE au lieu d'un silence mystère
+          // (bouton DECK matériel basculé sur un deck sans son chargé)
+          if (on) flashStatus(`🖐 Disque → deck ${i + 1} : AUCUN son chargé ici (bouton DECK de la platine ?)`);
+          break;
+        }
+        midiJogTouchAt = performance.now();
+        if (on) {
+          midiJogTouchHeld[i] = true;
+          clearTimeout(midiScratchTimer[i]);
+          clearTimeout(midiJogArmTimer[i]); // annule une reprise en attente (anti-rebond)
+          // COUPURE INSTANTANÉE à la pose (exigence d'origine de David) —
+          // l'anti-rebond est côté RELÂCHER : un capteur qui « rebondit »
+          // pendant la pose ne relance plus la lecture par à-coups
+          if (!midiJogState[i]) {
+            midiJogState[i] = { wasPlaying: d.playing, pos: d.currentTime() };
+            if (d.playing) d.pause();
+            if (scratchSound) d.scrubStart();
+            engine.jogHold = true;
+            flashStatus(`🖐 Disque → deck ${i + 1}`);
+          }
+        } else {
+          midiJogTouchHeld[i] = false;
+          clearTimeout(midiScratchTimer[i]);
+          // REPRISE DIFFÉRÉE de 60 ms : si le capteur re-presse aussitôt
+          // (rebond), la reprise est annulée — le scratch continue sans à-coup
+          clearTimeout(midiJogArmTimer[i]);
+          midiJogArmTimer[i] = setTimeout(() => {
+            if (midiJogTouchHeld[i]) return; // re-pressé entre-temps
+            const s2 = midiJogState[i];
+            midiJogState[i] = null;
+            if (!s2) return;
+            if (s2.raf) cancelAnimationFrame(s2.raf);
+            d.scrubEnd();
+            d.seek(Math.max(0, s2.pos));
+            if (s2.wasPlaying) d.play();
+            engine.jogHold = false;
+            for (let k = 0; k < 4; k++) engine.reanchorSync(k);
+          }, 60);
+        }
+        break;
       case 'select':
         // CHANNEL SELECT : la FLX6 envoie une note par position — le deck
         // arrive donc directement du contrôleur, rien à compter côté logiciel
         if (on) {
+          midiFxTarget = i; // le FX de la platine vise CE deck désormais
           setActiveDeck(i);
-          flashStatus(`CHANNEL SELECT — deck ${i + 1} ACTIF`);
+          // Un effet déjà actif SUIT le sélecteur : il se déplace tout seul
+          // vers la nouvelle cible (réglages et niveau conservés)
+          const cur = platineFxCurrent();
+          if (cur && !(cur.kind === 'deck' && cur.u === i)) {
+            const src = { type: cur.fx.type, beatsMult: cur.fx.beatsMult, level: cur.fx.level };
+            platineFxOff();
+            platineFxOnTarget(src);
+            flashStatus(`CHANNEL SELECT — deck ${i + 1} ACTIF (le FX suit)`);
+          } else {
+            flashStatus(`CHANNEL SELECT — deck ${i + 1} ACTIF`);
+          }
         }
         break;
       case 'selectMaster':
         if (on) {
+          midiFxTarget = 'master';
           const mi = engine.masterIdx !== null ? engine.masterIdx : engine.autoMasterIdx;
           if (mi != null) setActiveDeck(mi);
-          flashStatus('CHANNEL SELECT — MASTER (les contrôles suivent le deck master)');
+          const cur = platineFxCurrent();
+          if (cur && cur.kind !== 'master') {
+            const src = { type: cur.fx.type, beatsMult: cur.fx.beatsMult, level: cur.fx.level };
+            platineFxOff();
+            platineFxOnTarget(src);
+            flashStatus('CHANNEL SELECT — MASTER (le FX suit sur tout le mix)');
+          } else {
+            flashStatus('CHANNEL SELECT — MASTER');
+          }
         }
         break;
-      case 'cue': midiCue(i, on); break;
-      case 'sync': if (on) syncDeck(i); break;
+      case 'shift':
+        // État SHIFT global (un côté ou l'autre) : modifie browse/CUE/SYNC
+        midiShiftHeld = on;
+        break;
+      case 'cueBack':
+        // SHIFT+CUE matériel (note 72) : retour au tout début, à l'arrêt
+        if (on && d.buffer) {
+          d.pause();
+          d.seek(0);
+          flashStatus(`⏮ Deck ${i + 1} — retour au début`);
+        }
+        break;
+      case 'cue':
+        if (midiShiftHeld) {
+          // SHIFT+CUE = retour au DÉBUT du morceau, à l'arrêt (rekordbox)
+          if (on && d.buffer) {
+            d.pause();
+            d.seek(0);
+            flashStatus(`⏮ Deck ${i + 1} — retour au début`);
+          }
+          break;
+        }
+        midiCue(i, on);
+        break;
+      case 'sync':
+        // TOGGLE (réglage David) : appui = sync, re-appui = désync — le
+        // tempo reste où il est, pas besoin de SHIFT
+        if (on) {
+          if (d.synced) {
+            d.synced = false;
+            flashStatus(`Deck ${i + 1} — SYNC OFF`);
+          } else {
+            syncDeck(i);
+          }
+        }
+        break;
       case 'master': if (on) engine.setMaster(i); break;
       case 'grid':
-        if (on && d.buffer && d.bpm) {
-          d.beatOffset = d.currentTime();
-          if (d.track) library.setBeatOffset(d.track, d.beatOffset);
-        }
+        // Même moteur que le bouton GRID écran : gère AUSSI les grilles
+        // dynamiques (l'ancien code n'écrivait que beatOffset = no-op sur
+        // quasi tous les morceaux) et SAUVEGARDE le calage
+        if (on && deckUI[i]) deckUI[i].recalGrid();
         break;
       case 'load': if (on) loadSelectedToDeck(i); break;
       // Encodeur bibliothèque : APPUI = ENTRER (dossier, playlist locale ou
@@ -4278,11 +4750,12 @@ const midi = new MidiManager({
           if (!t) break;
           if (t.fsUpRow) folderUp();
           else if (t.scRootRow) openSoundCloud();
-          else if (t.scLikes) openScLikes();
+          else if (t.scAccountRow) openScAccount(t.acctIdx);
+          else if (t.scLikes) openScLikes(t.acctIdx);
           else if (t.plRootRow) openPlaylistsRoot();
           else if (t.fsRow) enterFolder(t.path);
           else if (t.plRow) openLocalPlaylist(t.pl);
-          else if (t.scPlaylist) openScPlaylist(t.permalink);
+          else if (t.scPlaylist) openScPlaylist(t.permalink, t.acctIdx);
           else flashStatus('Morceau sélectionné — utilise un bouton LOAD pour le charger');
         }
         break;
@@ -4300,14 +4773,17 @@ const midi = new MidiManager({
           } else if (!folderUp()) flashStatus('Bibliothèque — racines (tout en haut)');
         }
         break;
-      // VIEW : masque / réaffiche l'explorateur — plein écran pour les decks
+      // VIEW : masque / réaffiche l'explorateur — les decks prennent alors
+      // TOUT l'espace (la rangée bibliothèque disparaît de la grille)
       case 'viewToggle':
         if (on) {
           const lib = document.getElementById('library');
-          if (lib) {
+          const appEl = document.getElementById('app');
+          if (lib && appEl) {
             lib.classList.toggle('hidden');
+            appEl.classList.toggle('lib-hidden', lib.classList.contains('hidden'));
             flashStatus(lib.classList.contains('hidden')
-              ? 'VIEW — bibliothèque masquée' : 'VIEW — bibliothèque affichée');
+              ? 'VIEW — plein écran decks (bibliothèque masquée)' : 'VIEW — bibliothèque affichée');
           }
         }
         break;
@@ -4331,15 +4807,68 @@ const midi = new MidiManager({
           }
         }
         break;
-      case 'fxOn': if (on) uiRefs.fxUnits[Math.min(i, 3)].onBtn.click(); break;
+      case 'fxOn':
+        // Bouton FX platine : UN SEUL effet à la fois, sur la cible du
+        // sélecteur. Re-appui sur la même cible = coupé. Le NIVEAU vient
+        // de la jauge, jamais d'une valeur par défaut.
+        if (on) {
+          const targetOn = midiFxTarget === 'master'
+            ? !!(engine.masterFx && engine.masterFx.enabled)
+            : engine.fx[midiFxUnit()].enabled;
+          if (targetOn) {
+            platineFxOff();
+            flashStatus('FX coupé (platine)');
+          } else {
+            const cur = platineFxCurrent();
+            const src = cur ? { type: cur.fx.type, beatsMult: cur.fx.beatsMult, level: cur.fx.level } : null;
+            platineFxOff();
+            const where = platineFxOnTarget(src);
+            const lvl = midiFxTarget === 'master' ? engine.masterFx.level : engine.fx[midiFxUnit()].level;
+            flashStatus(`FX ACTIVÉ → ${where}${lvl === 0 ? ' — monte la jauge pour l\'entendre' : ''}`);
+          }
+        }
+        break;
       case 'keyUp': if (on && deckUI[i].applyKey) deckUI[i].applyKey(1); break;
       case 'keyDn': if (on && deckUI[i].applyKey) deckUI[i].applyKey(-1); break;
       case 'bpmUp': if (on) masterBpmNudge(1); break;
       case 'bpmDn': if (on) masterBpmNudge(-1); break;
+      // BEAT ◄ / ► de la section FX : durée de l'effet du deck choisi au
+      // CHANNEL SELECT ÷2 / ×2 (position MASTER = FX du mix)
+      case 'fxBeatsDn':
+        if (on) {
+          const ok = midiFxTarget === 'master' ? masterFxBeatsStep(-1) : gpFxBeatsStep(midiFxUnit(), -1) !== false;
+          midiBeatFlash(6, ok);
+        }
+        break;
+      case 'fxBeatsUp':
+        if (on) {
+          const ok = midiFxTarget === 'master' ? masterFxBeatsStep(1) : gpFxBeatsStep(midiFxUnit(), 1) !== false;
+          midiBeatFlash(7, ok);
+        }
+        break;
       default:
+        if (action.startsWith('padDel')) {
+          // SHIFT+pad physique : efface le hot cue / le sample du slot
+          const idx = Number(action.slice(6)) - 1;
+          if (on && !Number.isNaN(idx)) padClear(i, idx);
+          break;
+        }
         if (action.startsWith('pad')) {
-          const idx = Number(action.slice(3)) - 1;
+          let idx = Number(action.slice(3)) - 1;
           if (Number.isNaN(idx)) break;
+          // SÉRIGRAPHIE FLX6 : les 8 pads physiques suivent ce qui est
+          // IMPRIMÉ sur la platine, pas l'ordre des 10 pads de l'écran.
+          // BEAT JUMP en PAIRES ◄1► ◄2► ◄4► ◄8► (en temps) ; PAD FX =
+          // ROLL½, SWEEP, FLANGER, V.BRAKE / ECHO¼, ECHO½, REVERB,
+          // BACKSPIN ; BEAT LOOP = tailles 1-16 puis IN/OUT/✕ ; KEY = ±4.
+          const HW_PAD_MAP = {
+            jump: [3, 6, 2, 7, 1, 8, 0, 9],
+            fx: [0, 1, 2, 4, 5, 6, 8, 9],
+            loop: [5, 6, 7, 8, 9, 0, 1, 2],
+            key: [1, 2, 3, 4, 5, 6, 7, 8]
+          };
+          const hw = HW_PAD_MAP[deckUI[i].padMode];
+          if (hw && idx < 8) idx = hw[idx];
           // Mode PAD FX : le pad physique TIENT l'effet (appui/relâcher),
           // comme sur Rekordbox — les autres modes déclenchent à l'appui
           if (deckUI[i].padMode === 'fx') padFxPress(i, idx, on);
@@ -4351,6 +4880,19 @@ const midi = new MidiManager({
     const i = deck == null ? activeDeck : deck;
     const d = engine.decks[i];
     if (!d) return;
+    // (voir case 'tempo' : indicateur de reprise de la jauge — dans quel
+    // sens la ramener, exprimé en BPM, « monter ou descendre comparé au
+    // master ». Affiché au plus 2×/s par deck.)
+    function tempoPickupHint(idx, target, cur) {
+      const nowH = performance.now();
+      if (nowH - (tempoHintAt[idx] || 0) < 500) return;
+      tempoHintAt[idx] = nowH;
+      const dk = engine.decks[idx];
+      if (!dk.bpm) return;
+      const bAt = (dk.bpm * target).toFixed(1);
+      const bTo = (dk.bpm * cur).toFixed(1);
+      flashStatus(`🎚 Deck ${idx + 1} : jauge tempo à ${bAt} BPM → amène-la sur ${bTo} pour la reprendre`);
+    }
     switch (action) {
       case 'volume': d.setVolume(v); stripUI[i].fader.update(); break;
       case 'trim': d.setTrim(v * 2 - 1); stripUI[i].kTrim.update(); break;
@@ -4358,19 +4900,55 @@ const midi = new MidiManager({
       case 'eqMid': d.setEq('mid', v * 2 - 1); stripUI[i].kMid.update(); break;
       case 'eqLow': d.setEq('low', v * 2 - 1); stripUI[i].kLow.update(); break;
       case 'filter': engine.setDeckColor(i, v * 2 - 1); stripUI[i].kFilt.update(); break;
-      case 'tempo':
-        d.setTempo(0.5 + v);
+      case 'tempo': {
+        // SOFT TAKEOVER (reprise en douceur, comme rekordbox) : quand le
+        // logiciel a changé le tempo dans le dos du fader (SYNC,
+        // calibration, passation de master), la position PHYSIQUE ne
+        // correspond plus. Sans garde, la PREMIÈRE re-déclaration de la
+        // platine (state refresh au toucher de jog…) écrasait le BPM avec
+        // la position du fader ET cassait le sync — « un nouveau BPM
+        // intempestif selon l'état du bouton ». Le fader est donc IGNORÉ
+        // tant que la jauge n'est pas REVENUE sur la valeur actuelle (ou
+        // ne l'a pas croisée d'un geste) : on remet d'abord la jauge au
+        // bon emplacement, et alors seulement elle reprend la main.
+        const target = 0.5 + v;
+        const cur = d.tempo;
+        const nowT = performance.now();
+        const pr = deckUI[i]._tempoPrev;
+        deckUI[i]._tempoPrev = { v: target, t: nowT };
+        // « croisée » = entre DEUX messages d'un MÊME geste (< 200 ms) —
+        // une vieille position d'il y a des minutes ne compte pas
+        const cross = pr && nowT - pr.t < 200
+          && ((pr.v <= cur && cur <= target) || (target <= cur && cur <= pr.v));
+        if (Math.abs(target - cur) > 0.005 && !cross) {
+          tempoPickupHint(i, target, cur);
+          break;
+        }
+        d.setTempo(target);
         d.synced = false;
         updateTempoLabel(i);
         break;
-      case 'crossfader': engine.setCrossfader(v); xfFader.update(); break;
+      }
+      case 'crossfader':
+        // AUCUN filtre : le fader physique est la VÉRITÉ. Les valeurs reçues
+        // aux touchers de jog sont la platine qui re-déclare sa position
+        // réelle — les appliquer est CORRECT (l'écran rejoint le matériel).
+        engine.setCrossfader(v);
+        xfFader.update();
+        break;
       case 'masterVol': engine.setMasterVolume(v); uiRefs.master.volKnob.update(); break;
       case 'masterFilter':
         engine.setMasterFilter(v * 2 - 1);
         uiRefs.master.filterKnob.update();
         break;
       case 'fxLevel': {
-        const u = Math.min(i, 3);
+        // Le knob de niveau FX vise le deck choisi au CHANNEL SELECT —
+        // position MASTER = niveau du FX du mix entier
+        if (midiFxTarget === 'master') {
+          engine.ensureMasterFx().setLevel(v);
+          break;
+        }
+        const u = midiFxUnit();
         engine.fx[u].setLevel(v);
         uiRefs.fxUnits[u].levelKnob.update();
         break;
@@ -4378,6 +4956,12 @@ const midi = new MidiManager({
     }
   },
   rel(action, deck, delta) {
+    if (action === 'browseZoom') {
+      // SHIFT + molette (CC 100 dédié de la platine) = zoom des vagues,
+      // en douceur : 15 % par cran
+      waveZoom(delta > 0 ? 1 / 1.15 : 1.15);
+      return;
+    }
     if (action === 'browse') {
       library.moveSelection(Math.sign(delta));
       updateSelectionUI();
@@ -4398,10 +4982,12 @@ const midi = new MidiManager({
         gpBend[i] = { tempo: gpBaseTempo(d), synced: d.synced };
         engine.jogHold = true;
       }
-      d.synced = false;
-      // Nudge VOLONTAIREMENT doux (÷4) : les deux vitesses du jog doivent
-      // se sentir — côté = micro-calage, dessus = déplacement franc
-      d.setTempo(gpBend[i].tempo * (1 + Math.max(-8, Math.min(8, delta)) * 0.002));
+      // On ne touche PLUS à d.synced pendant le geste (David : « il faut
+      // pas toucher au sync au déplacement ») — jogHold suspend déjà le
+      // verrou ; couper/remettre le sync relançait la calibration en boucle
+      // Coefficient 0.0044 = le réglage de la TRANCHE validé par David
+      // (« +25 % de plus ») — la tranche route maintenant sur jogBend
+      d.setTempo(gpBend[i].tempo * (1 + Math.max(-8, Math.min(8, delta)) * 0.0044));
       clearTimeout(midiJogTimer[i]);
       midiJogTimer[i] = setTimeout(() => {
         const b = gpBend[i];
@@ -4417,15 +5003,68 @@ const midi = new MidiManager({
     if (action === 'jog') {
       const i = deck == null ? activeDeck : deck;
       const d = engine.decks[i];
-      if (!d.buffer) return;
-      const t = d.currentTime() + delta * 0.0015;
-      if (d.playing) {
-        d.seek(t);
-      } else if (scratchSound) {
-        if (!d._scrubbing) d.scrubStart();
-        d.scrubMove(t);
-      } else {
-        d.seek(t);
+      if (!d.buffer || delta === 0) return;
+      engine.resume();
+      // C'est le CAPTEUR DE TOUCHER qui décide (doctrine finale) :
+      let st = midiJogState[i];
+      // Toucher en attente d'armement + rotation = INTENTION claire de
+      // scratch : on arme tout de suite, sans attendre les 120 ms
+      if (!st && midiJogTouchHeld[i]) {
+        clearTimeout(midiJogArmTimer[i]);
+        st = midiJogState[i] = { wasPlaying: d.playing, pos: d.currentTime() };
+        if (d.playing) d.pause();
+        if (scratchSound) d.scrubStart();
+        engine.jogHold = true;
+      }
+      if (st) {
+        // MAIN POSÉE : SCRATCH à INERTIE — les crans n'écrivent pas la
+        // position, ils poussent une VITESSE (delta × |delta| : la force de
+        // rotation compte), et une friction la ramène à zéro en ~180 ms :
+        // le disque GLISSE brièvement jusqu'au stop au lieu de freiner sec.
+        // COURBE MIXTE linéaire + cubique (itération David : « encore trop
+        // rapide ET trop lent ») : le lent remonte ×4 (terme linéaire), le
+        // rapide redescend ÷2 (cube adouci) — pente continue entre les deux
+        const mag = Math.min(10, Math.abs(delta));
+        st.vel = (st.vel || 0) + Math.sign(delta) * (mag * 0.003 + mag * mag * mag * 0.00032);
+        if (!st.raf) {
+          st.t = performance.now();
+          const step = () => {
+            if (midiJogState[i] !== st) return; // geste terminé
+            const now2 = performance.now();
+            const dt2 = Math.min(0.05, (now2 - st.t) / 1000);
+            st.t = now2;
+            if (Math.abs(st.vel) > 0.02) {
+              st.pos = Math.max(0, Math.min(d.duration, st.pos + st.vel * dt2));
+              if (scratchSound) d.scrubMove(st.pos);
+              else d.seek(st.pos);
+            }
+            st.vel *= Math.pow(0.001, dt2 / 0.25); // friction adoucie : glisse ~250 ms (moins « sec »)
+            st.raf = requestAnimationFrame(step);
+          };
+          st.raf = requestAnimationFrame(step);
+        }
+        return;
+      }
+      // MAIN NON POSÉE, dessus du disque : DÉPLACEMENT dans le son —
+      // avancer / reculer vite, comme la recherche d'un CDJ. Le BPM n'est
+      // JAMAIS touché (David : « au lieu de se déplacer sur le son tu
+      // changes le BPM pour avancer ou reculer » — corrigé). Les crans
+      // s'accumulent et la position saute par petits pas réguliers.
+      if (!d.playing) {
+        d.seek(Math.max(0, d.currentTime() + delta * 0.005));
+        return;
+      }
+      engine.jogHold = true;
+      midiSeekAcc[i] += delta * 0.012;
+      if (!midiSeekTimer[i]) {
+        midiSeekTimer[i] = setTimeout(() => {
+          midiSeekTimer[i] = null;
+          const off = midiSeekAcc[i];
+          midiSeekAcc[i] = 0;
+          if (off) d.seek(Math.max(0, d.currentTime() + off));
+          engine.jogHold = false;
+          for (let k = 0; k < 4; k++) engine.reanchorSync(k);
+        }, 70);
       }
     }
   }
@@ -4439,6 +5078,63 @@ midi.onStatus = (name) => {
   renderMidiTable();
 };
 midi.init();
+
+// --- LED DE LA PLATINE (façon rekordbox — « les boutons qui s'allument ») ---
+// Protocole Pioneer : chaque bouton s'allume en recevant SA note. Rafraîchi
+// 10×/s ; setLed n'émet que les CHANGEMENTS (cache) et l'anti-écho avale
+// les retours — zéro appui fantôme possible.
+const LED_PAD_CH = [7, 9, 11, 13];
+const LED_MODE_NOTES = { hotcue: 27, fx: 30, jump: 32, smp: 34, loop: 109, key: 111 };
+const LED_PAD_BASE = { hotcue: 0, fx: 16, jump: 32, smp: 48, loop: 96 };
+function ledTick() {
+  if (!midi.outputs || !midi.outputs.length) return;
+  const blink = Math.floor(performance.now() / 800) % 2 === 0;
+  for (let i = 0; i < 4; i++) {
+    const d = engine.decks[i];
+    const ui = deckUI[i];
+    if (!d || !ui) continue;
+    const loaded = !!d.buffer;
+    // PLAY (notes 11 + 14) : fixe en lecture, clignote à l'arrêt si un son
+    // est chargé — exactement rekordbox
+    const play = d.playing || (loaded && blink);
+    midi.setLed(i, 11, play);              // PLAY (note 11 — table finale)
+    midi.setLed(i, 14, loaded);            // CUE (note 14 — table finale)
+    midi.setLed(i, 12, loaded);            // CUE (ancienne supposition)
+    midi.setLed(i, 88, !!d.synced);        // BEAT SYNC
+    midi.setLed(i, 16, !!d.looping);       // LOOP IN
+    midi.setLed(i, 17, !!d.looping);       // LOOP OUT
+    midi.setLed(i, 77, !!d.looping);       // RELOOP
+    midi.setLed(15, i, loaded);            // « track loaded » (canal 15)
+    // Boutons de MODE des pads : celui de l'onglet actif est allumé
+    for (const mode of Object.keys(LED_MODE_NOTES)) {
+      midi.setLed(i, LED_MODE_NOTES[mode], ui.padMode === mode);
+    }
+    // PADS : allumés selon le CONTENU du mode (hot cue posé, sample chargé,
+    // sinon pad disponible)
+    const base = LED_PAD_BASE[ui.padMode];
+    if (base != null) {
+      for (let p = 0; p < 8; p++) {
+        let on = true;
+        if (ui.padMode === 'hotcue') on = !!(d.hotCues && d.hotCues[p] != null);
+        else if (ui.padMode === 'smp') on = !!samplerBank[p];
+        midi.setLed(LED_PAD_CH[i], base + p, on);
+      }
+    }
+  }
+  // FX : les sections CLIGNOTENT AU TEMPS du master quand un effet est
+  // actif — la « magie de la platine »
+  const mi2 = engine.masterIdx !== null ? engine.masterIdx : engine.autoMasterIdx;
+  const md = mi2 != null ? engine.decks[mi2] : null;
+  const ph = md && md.playing ? engine._beatPhase(md) : null;
+  const fxActive = engine.fx.some((u) => u && u.enabled)
+    || !!(engine.masterFx && engine.masterFx.enabled);
+  const fxLed = fxActive && (ph != null ? ph < 0.5 : blink);
+  midi.setLed(4, 71, fxLed);
+  midi.setLed(5, 71, fxLed);
+}
+// 4 Hz suffisent (et la platine répond à CHAQUE émission par une rafale
+// de re-déclarations : moins on parle, mieux elle écoute les boutons)
+setInterval(ledTick, 250);
 
 // --- Bascule 2 decks / 4 decks ---
 const btnDeckCount = document.getElementById('btn-deckcount');
@@ -4479,14 +5175,23 @@ function renderGuestPanel() {
   bClose.addEventListener('click', () => guestPanel.classList.add('hidden'));
   head.append(bClear, bClose);
   guestPanel.appendChild(head);
-  window.api.remoteStart().then((r) => {
+  // QR CODE : les invités scannent l'écran et tombent direct sur /guest
+  const qrWrap = document.createElement('div');
+  qrWrap.className = 'gp-qr';
+  guestPanel.appendChild(qrWrap);
+  window.api.remoteStart().then(async (r) => {
     const u = document.getElementById('gp-url');
     if (u) u.textContent = `Invités : ${r.url}/guest`;
+    const qr = await window.api.guestQr(`${r.url}/guest`);
+    if (qr) {
+      qrWrap.innerHTML = `<img src="${qr}" alt="QR invités">
+        <span>Scanne-moi pour demander ton son</span>`;
+    }
   });
   if (!guestData.votes.length && !guestData.msgs.length) {
     const e = document.createElement('div');
     e.className = 'gp-empty';
-    e.textContent = 'Aucune demande pour l\'instant — fais scanner l\'adresse ci-dessus à tes potes !';
+    e.textContent = 'Aucune demande pour l\'instant — fais scanner le QR code à tes potes !';
     guestPanel.appendChild(e);
   }
   guestData.votes.forEach((v) => {
@@ -4497,7 +5202,7 @@ function renderGuestPanel() {
     row.title = 'Clic : charger sur le deck actif';
     row.addEventListener('click', () => {
       const tr = [...library.tracks, ...library.scTracks].find(
-        (t) => !t.scPlaylist && t.name === v.name);
+        (t) => !t.scPlaylist && !t.scAccountRow && t.name === v.name);
       if (tr) {
         loadTrackToDeck(activeDeck, tr);
         guestPanel.classList.add('hidden');
@@ -4625,10 +5330,34 @@ refreshScratchBtn();
 // Clavier (pratique sans manette)
 // ---------------------------------------------------------------------------
 
+// Raccourci pads : bascule l'onglet du deck actif (miroir des boutons de
+// mode de la platine — H/J/L/K/F/M)
+function kbdPadMode(mode) {
+  deckUI[activeDeck].padMode = mode;
+  renderPads(activeDeck);
+}
+
 document.addEventListener('keydown', (e) => {
-  if (e.target.tagName === 'INPUT' && e.target.type === 'text') {
-    if (e.key === 'Escape') e.target.blur();
+  const t = e.target;
+  if (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT'
+      || t.isContentEditable) {
+    if (e.key === 'Escape') t.blur();
     return;
+  }
+  // F2-F11 = pads 1 à 10 du deck actif (dans le mode d'onglet courant)
+  const fPad = /^F([2-9]|1[01])$/.exec(e.key);
+  if (fPad && !e.repeat) {
+    e.preventDefault();
+    padPress(activeDeck, Number(fPad[1]) - 2);
+    return;
+  }
+  switch (e.key) {
+    case 'h': case 'H': kbdPadMode('hotcue'); break;
+    case 'j': case 'J': kbdPadMode('jump'); break;
+    case 'l': case 'L': kbdPadMode('loop'); break;
+    case 'k': case 'K': kbdPadMode('key'); break;
+    case 'f': case 'F': kbdPadMode('fx'); break;
+    case 'm': case 'M': kbdPadMode('smp'); break;
   }
   switch (e.key) {
     case '1': case '2': case '3': case '4':
@@ -4682,6 +5411,8 @@ buildFxBar();
 setActiveDeck(0);
 deckUI.forEach((_, i) => renderPads(i));
 samplerInit(); // recharge les samples posés sur les pads (chemins mémorisés)
+// Fermeture : écrit en synchrone tout calage de grille encore en attente
+window.addEventListener('beforeunload', () => library.flushSave());
 renderHelp();
 // Premier positionnement des faders une fois la mise en page calculée
 requestAnimationFrame(() => {
@@ -4756,10 +5487,17 @@ setWaveSize.addEventListener('change', () => {
   document.body.classList.toggle('waves-lg', setWaveSize.value === 'grand');
 });
 
+// Palette par défaut : RGB (verdict de David — « la couleur n'est plus en
+// RGB comme tantôt ! ») ; ma migration automatique vers 'rekordbox' est
+// ANNULÉE. La palette Rekordbox reste disponible dans ⚙ pour qui la veut.
+if (!localStorage.getItem('wavePaletteChosen') && localStorage.getItem('wavePalette') === 'rekordbox') {
+  localStorage.setItem('wavePalette', 'rgb');
+}
 setWavePalette(localStorage.getItem('wavePalette') || 'rgb');
 document.getElementById('set-palette').value = localStorage.getItem('wavePalette') || 'rgb';
 document.getElementById('set-palette').addEventListener('change', (e) => {
   localStorage.setItem('wavePalette', e.target.value);
+  localStorage.setItem('wavePaletteChosen', '1'); // choix explicite : respecté à vie
   setWavePalette(e.target.value);
   invalidateWaves();
 });
@@ -4917,7 +5655,11 @@ window.api.onRemoteCmd((c) => {
     }
     case 'load': {
       const tr = library.filtered[c.value];
-      if (tr && !tr.scPlaylist) loadTrackToDeck(c.deck, tr);
+      // Seules les VRAIES pistes (path ou scId) se chargent depuis le
+      // téléphone — jamais une ligne de navigation (playlist, compte 👤…)
+      if (tr && !tr.scPlaylist && !tr.scAccountRow && tr.name && (tr.path || tr.scId)) {
+        loadTrackToDeck(c.deck, tr);
+      }
       break;
     }
     case 'mbpm': masterBpmNudge(c.value); break;
@@ -4928,6 +5670,14 @@ window.api.onRemoteCmd((c) => {
     case 'xf':
       engine.setCrossfader(c.value);
       xfFader.update();
+      break;
+    case 'led':
+      // Diagnostic : piloter une LED de la platine à la main (ch, note, on)
+      midi.send([0x90 | (c.ch & 0x0f), c.note & 0x7f, c.on ? 0x7f : 0]);
+      break;
+    case 'rawmidi':
+      // Diagnostic : trame MIDI brute (tableau d'octets)
+      if (Array.isArray(c.bytes)) midi.send(c.bytes.map((b) => b & 0xff));
       break;
   }
 });
@@ -5105,18 +5855,34 @@ async function buildTree() {
   const roots = await window.api.fsRoots();
   libTree.textContent = '';
   treeRowsByPath.clear();
-  // SoundCloud DANS l'explorateur : entrer = voir SES playlists (❤️ Likes
-  // comprise) — les mêmes apparaissent en enfants dans l'arbre
+  // SoundCloud DANS l'explorateur : 1 compte = SES playlists (❤️ Likes
+  // comprise) en enfants directs, comme toujours ; ≥ 2 comptes (b2b) = un
+  // nœud 👤 par compte, chacun dépliant SES playlists avec SON jeton.
+  // Les playlists sont demandées DIRECTEMENT au main (sans passer par la
+  // vue) : déplier l'arbre ne change plus la liste affichée à droite.
   libTree.appendChild(makeTreeNode({
     name: '☁️ SoundCloud',
     path: 'sc:',
     onClick: () => openSoundCloud(),
     getChildren: async () => {
-      if (!library.scPlaylists || !library.scPlaylists.length) await library.loadScMine();
-      return (library.scPlaylists || []).map((p) => ({
-        name: p.name,
-        path: p.scLikes ? 'sc:likes' : `sc:${p.permalink}`,
-        onClick: () => (p.scLikes ? openScLikes() : openScPlaylist(p.permalink))
+      const s = await window.api.scStatus();
+      const accounts = (s && s.accounts) || [];
+      library.scAccountCount = accounts.length;
+      const multi = accounts.length >= 2;
+      const plChildren = async (i) => {
+        const r = await window.api.scMyPlaylists(i);
+        return (r.playlists || []).map((p) => ({
+          name: p.name,
+          path: p.scLikes ? scTreeKey(i, 'likes') : scTreeKey(i, p.permalink),
+          onClick: () => (p.scLikes ? openScLikes(i) : openScPlaylist(p.permalink, i))
+        }));
+      };
+      if (!multi) return plChildren(0);
+      return accounts.map((a, i) => ({
+        name: `👤 ${a.name || `Compte ${i + 1}`}`,
+        path: `sc:acct:${i}`,
+        onClick: () => openScAccount(i),
+        getChildren: () => plChildren(i)
       }));
     }
   }, 0));
@@ -5314,7 +6080,8 @@ btnPlPlay.addEventListener('click', () => {
 // Télécharge en dur (Musique/TurboMix) les pistes SoundCloud d'une playlist
 async function ensureLocalCopy(ref) {
   if (!ref || !ref.sc || !ref.scId) return;
-  const r = await window.api.scDownloadTo(ref.scId, ref.name);
+  // Le compte d'origine de la piste part avec la demande (privées/Go+)
+  const r = await window.api.scDownloadTo(ref.scId, ref.name, ref.acctIdx);
   if (r.ok) {
     ref.path = r.path;
     library.savePlaylists();
@@ -5410,30 +6177,43 @@ const btnScMine = document.getElementById('btn-sc-mine');
 
 async function refreshScStatus() {
   const s = await window.api.scStatus();
+  const accounts = (s && s.accounts) || [];
+  // scBack() a besoin de savoir s'il existe un niveau « liste des comptes »
+  library.scAccountCount = accounts.length;
   btnScMine.classList.toggle('hidden', !s.connected);
-  btnScLogin.textContent = s.connected ? '✓ Connecté' : 'Se connecter';
+  // Le MÊME bouton sert à tout : 1er login, ajout du compte du pote (b2b),
+  // reconnexion d'un compte dont le jeton a expiré
+  const expired = accounts.find((a) => a.expired);
+  btnScLogin.textContent = expired
+    ? `⚠ Reconnecter ${expired.name || 'le compte'}`
+    : accounts.length ? '+ Ajouter un compte' : 'Se connecter';
   return s.connected;
 }
 
 btnScLogin.addEventListener('click', async () => {
   const r = await window.api.scLogin();
   if (r.ok) {
+    flashStatus(`Compte ${r.name || 'SoundCloud'} ajouté`);
     await refreshScStatus();
-    library.loadScMine();
+    buildTree(); // le nœud SoundCloud change de forme (nœuds 👤 par compte)
+    library.loadScMine(r.index ?? 0);
   } else {
     flashStatus(`SoundCloud : ${r.error}`);
   }
 });
 
-btnScMine.addEventListener('click', () => library.loadScMine());
+// « Mes playlists » passe par openSoundCloud : en b2b il montre d'abord QUI
+// (la liste des comptes), en solo il garde son comportement direct
+btnScMine.addEventListener('click', () => openSoundCloud());
 document.getElementById('btn-sc-back').addEventListener('click', () => library.scBack());
 
 refreshScStatus().then((connected) => {
   // Si déjà connecté, l'onglet SoundCloud montrera direct tes playlists
+  // (ou la liste des comptes quand on est plusieurs)
   if (connected) {
     tabSc.addEventListener('click', function once() {
       tabSc.removeEventListener('click', once);
-      if (!library.scTracks.length) library.loadScMine();
+      if (!library.scTracks.length) openSoundCloud();
     });
   }
 });

@@ -40,8 +40,11 @@ export async function computeBandPeaks(buffer, perSecond = 400) {
   const orig2 = buffer.numberOfChannels > 1 ? buffer.getChannelData(1) : orig;
 
   const total = Math.max(1, Math.ceil(buffer.duration * perSecond));
-  const spbOrig = Math.max(1, Math.floor(buffer.sampleRate / perSecond));
-  const spbBand = Math.max(1, Math.floor(bandSr / perSecond));
+  // DÉCOUPAGE EN TEMPS EXACT : un nombre ENTIER d'échantillons par tranche
+  // (l'ancien floor) accumulait ~0,23 % de dérive — la vague glissait vers
+  // la droite le long du morceau (« la basse commence au trait rouge mais
+  // s'affiche après »). Chaque tranche est bornée par round(b × sr / pps).
+  const sr = buffer.sampleRate;
 
   // Enveloppe réelle : min et max signés du signal par tranche
   const top = new Float32Array(total);
@@ -49,20 +52,26 @@ export async function computeBandPeaks(buffer, perSecond = 400) {
   const bands = [new Float32Array(total), new Float32Array(total), new Float32Array(total)];
 
   for (let b = 0; b < total; b++) {
-    let start = b * spbOrig;
-    let end = Math.min(start + spbOrig, orig.length);
+    let start = Math.round(b * sr / perSecond);
+    let end = Math.min(Math.round((b + 1) * sr / perSecond), orig.length);
     let hi = 0;
     let lo = 0;
     for (let i = start; i < end; i++) {
-      const v = (orig[i] + orig2[i]) * 0.5;
-      if (v > hi) hi = v;
-      if (v < lo) lo = v;
+      // Enveloppe PAR CANAL (pas de moyenne L+R : sur les stéréos en
+      // opposition de phase — typiques des drops — la somme s'ANNULE et
+      // le drop paraissait muet à l'écran)
+      const a = orig[i];
+      const c2 = orig2[i];
+      const mx = a > c2 ? a : c2;
+      const mn = a < c2 ? a : c2;
+      if (mx > hi) hi = mx;
+      if (mn < lo) lo = mn;
     }
     top[b] = hi;
     bottom[b] = lo;
 
-    start = b * spbBand;
-    end = Math.min(start + spbBand, chans[0].length);
+    start = Math.round(b * bandSr / perSecond);
+    end = Math.min(Math.round((b + 1) * bandSr / perSecond), chans[0].length);
     for (let c = 0; c < 3; c++) {
       const d = chans[c];
       let m = 0;
@@ -80,18 +89,23 @@ export async function computeBandPeaks(buffer, perSecond = 400) {
   // genoux : vagues saccadées, son qui accroche)
   const FINE_PPS = 4000;
   const fineTotal = Math.max(1, Math.ceil(buffer.duration * FINE_PPS));
-  const spbFine = Math.max(1, Math.floor(buffer.sampleRate / FINE_PPS));
   const fineTop = new Int8Array(fineTotal);
   const fineBottom = new Int8Array(fineTotal);
   for (let b = 0; b < fineTotal; b++) {
-    const start = b * spbFine;
-    const end = Math.min(start + spbFine, orig.length);
+    // même règle anti-dérive : bornes en temps exact
+    const start = Math.round(b * sr / FINE_PPS);
+    const end = Math.min(Math.round((b + 1) * sr / FINE_PPS), orig.length);
     let hi = 0;
     let lo = 0;
     for (let i = start; i < end; i++) {
-      const v = (orig[i] + orig2[i]) * 0.5;
-      if (v > hi) hi = v;
-      if (v < lo) lo = v;
+      // Même règle que l'enveloppe principale : par canal, jamais de
+      // moyenne (l'annulation de phase masquait les drops)
+      const a = orig[i];
+      const c2 = orig2[i];
+      const mx = a > c2 ? a : c2;
+      const mn = a < c2 ? a : c2;
+      if (mx > hi) hi = mx;
+      if (mn < lo) lo = mn;
     }
     fineTop[b] = Math.max(-127, Math.min(127, Math.round(hi * 127)));
     fineBottom[b] = Math.max(-127, Math.min(127, Math.round(lo * 127)));
@@ -116,7 +130,9 @@ export function setWavePalette(p) {
 }
 const PAL_SETS = {
   blueorange: [[40, 115, 255], [255, 150, 40], [235, 240, 255]],
-  neon: [[255, 45, 150], [80, 255, 160], [90, 200, 255]]
+  neon: [[255, 45, 150], [80, 255, 160], [90, 200, 255]],
+  // Façon Rekordbox RGB : basses bleu profond, médiums ambre, aigus blancs
+  rekordbox: [[25, 70, 255], [255, 170, 70], [246, 248, 255]]
 };
 
 function waveColor(l, m, h) {
@@ -124,6 +140,18 @@ function waveColor(l, m, h) {
   if (PALETTE === 'mono') return 'rgb(168,190,215)';
   if (PALETTE === 'rgb') {
     return `rgb(${Math.round((l / mx) * 255)},${Math.round((m / mx) * 255)},${Math.round((h / mx) * 255)})`;
+  }
+  if (PALETTE === 'rekordbox') {
+    // Poids au CARRÉ : la bande dominante impose sa couleur (le kick est
+    // FRANCHEMENT bleu, les hats FRANCHEMENT blancs) au lieu d'un mélange
+    // moyen — c'est ça le look Rekordbox
+    const C = PAL_SETS.rekordbox;
+    const wl = (l / mx) ** 2, wm = (m / mx) ** 2, wh = (h / mx) ** 2;
+    const sum = wl + wm + wh || 1;
+    const r = Math.round((C[0][0] * wl + C[1][0] * wm + C[2][0] * wh) / sum);
+    const g = Math.round((C[0][1] * wl + C[1][1] * wm + C[2][1] * wh) / sum);
+    const b = Math.round((C[0][2] * wl + C[1][2] * wm + C[2][2] * wh) / sum);
+    return `rgb(${r},${g},${b})`;
   }
   const C = PAL_SETS[PALETTE] || PAL_SETS.blueorange;
   const wl = l / mx, wm = m / mx, wh = h / mx;
@@ -256,9 +284,12 @@ export function drawZoom(canvas, deck, windowSec = 8) {
       let hi = -1;
       let lo = 1;
       for (let s = i0; s < i1; s++) {
-        const v = (ch0[s] + ch1[s]) * 0.5;
-        if (v > hi) hi = v;
-        if (v < lo) lo = v;
+        const a = ch0[s];
+        const b2 = ch1[s];
+        const mx = a > b2 ? a : b2;
+        const mn = a < b2 ? a : b2;
+        if (mx > hi) hi = mx;
+        if (mn < lo) lo = mn;
       }
       if (hi < lo) continue;
       const b = Math.min(len - 1, Math.max(0, Math.floor(tA * pps)));

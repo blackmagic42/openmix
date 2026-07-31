@@ -11,6 +11,14 @@ let win = null;
 // perdre la bibliothèque, les analyses, les cues ni la session SoundCloud)
 app.setPath('userData', path.join(app.getPath('appData'), 'Turbo Mix'));
 
+// Autorise le Web MIDI **avec SysEx** (indispensable au keep-alive Pioneer
+// qui débloque les LED des platines) — app locale, aucune page distante
+app.whenReady().then(() => {
+  const { session: sess } = require('electron');
+  sess.defaultSession.setPermissionRequestHandler((_wc, _permission, cb) => cb(true));
+  sess.defaultSession.setPermissionCheckHandler(() => true);
+});
+
 function createWindow() {
   win = new BrowserWindow({
     width: 1720,
@@ -85,8 +93,41 @@ async function loadSettings() {
 }
 async function saveSettings() {
   try {
+    // Miroir rétro-compat : une ancienne version de l'app ne connaît que
+    // settings.scToken — on y reflète le jeton du compte 0 à chaque
+    // sauvegarde pour qu'un retour en arrière ne perde pas la session
+    if (Array.isArray(settings.scAccounts)) {
+      settings.scToken = (settings.scAccounts[0] && settings.scAccounts[0].token) || null;
+    }
     await fsp.writeFile(settingsPath(), JSON.stringify(settings));
   } catch { /* non bloquant */ }
+}
+
+// Comptes SoundCloud connectés (b2b : le mien + celui du pote), chacun avec
+// SON jeton. Migration paresseuse depuis l'ancien réglage mono-compte
+// scToken — la garde teste la PRÉSENCE du tableau (même vide), jamais
+// scToken : le miroir rétro-compat ci-dessus relancerait sinon la migration
+// en boucle et ressusciterait des comptes supprimés.
+function scAccounts() {
+  if (!Array.isArray(settings.scAccounts)) {
+    settings.scAccounts = settings.scToken
+      ? [{ name: null, token: settings.scToken, fromCookie: true }]
+      : [];
+    // Le jeton historique venait du cookie de la session par défaut : la
+    // migration vaut adoption, on ne relira plus jamais ce cookie
+    if (settings.scToken) settings.scCookieMigrated = true;
+    saveSettings();
+  }
+  return settings.scAccounts;
+}
+
+// Compte à utiliser pour une requête : celui demandé s'il a encore un jeton,
+// sinon le premier compte valide, sinon null (requête anonyme au client_id)
+function scAcctOrDefault(accountIdx) {
+  const accounts = scAccounts();
+  const acct = accountIdx != null ? accounts[accountIdx] : null;
+  if (acct && acct.token) return acct;
+  return accounts.find(a => a.token) || null;
 }
 
 ipcMain.handle('pick-folder', async () => {
@@ -173,7 +214,29 @@ ipcMain.handle('scan-folder', async (_e, dir) => {
 });
 
 ipcMain.handle('read-file', async (_e, p) => {
+  if (!p || typeof p !== 'string') return null; // chemin absent : pas de crash
   return fsp.readFile(p);
+});
+
+// POCHETTE d'un morceau : tags du fichier local (ID3/FLAC/MP4 via
+// music-metadata) ou téléchargement d'une jaquette distante (SoundCloud).
+// Retourne { data: base64, format: mime } ou null.
+ipcMain.handle('read-cover', async (_e, src) => {
+  try {
+    if (/^https?:\/\//i.test(src)) {
+      const r = await fetch(src);
+      if (!r.ok) return null;
+      const buf = Buffer.from(await r.arrayBuffer());
+      return { data: buf.toString('base64'), format: r.headers.get('content-type') || 'image/jpeg' };
+    }
+    const mm = await import('music-metadata'); // paquet ESM : import dynamique
+    const meta = await mm.parseFile(src, { duration: false });
+    const pic = meta.common.picture && meta.common.picture[0];
+    if (!pic) return null;
+    return { data: Buffer.from(pic.data).toString('base64'), format: pic.format || 'image/jpeg' };
+  } catch {
+    return null;
+  }
 });
 
 const cachePath = () => path.join(app.getPath('userData'), 'turbo-mix-cache.json');
@@ -192,6 +255,17 @@ ipcMain.handle('cache-save', async (_e, obj) => {
     return true;
   } catch {
     return false;
+  }
+});
+
+// Version SYNCHRONE pour la fermeture de l'app : bloque jusqu'à l'écriture
+// disque — le quit ne peut plus couper une sauvegarde de calage en vol
+ipcMain.on('cache-save-sync', (e, obj) => {
+  try {
+    require('fs').writeFileSync(cachePath(), JSON.stringify(obj));
+    e.returnValue = true;
+  } catch {
+    e.returnValue = false;
   }
 });
 
@@ -297,6 +371,21 @@ function guestSnapshot() {
   };
 }
 ipcMain.handle('guest-get', () => guestSnapshot());
+
+// QR CODE de la page invités : les potes scannent l'écran du DJ et tombent
+// direct sur /guest — généré côté main (paquet qrcode), renvoyé en dataURL
+ipcMain.handle('guest-qr', async (_e, url) => {
+  try {
+    const QRCode = require('qrcode');
+    return await QRCode.toDataURL(url, {
+      margin: 1,
+      width: 220,
+      color: { dark: '#0a0b0e', light: '#eef0f5' }
+    });
+  } catch {
+    return null;
+  }
+});
 ipcMain.handle('guest-clear', () => {
   guestVotes.clear();
   guestMsgs = [];
@@ -568,16 +657,23 @@ ipcMain.handle('save-recording', async (_e, data, defaultName) => {
 const SC_API = 'https://api-v2.soundcloud.com';
 let scClientId = null;
 
-function scAuthHeaders() {
-  return settings.scToken ? { 'Authorization': `OAuth ${settings.scToken}` } : {};
+// `acct` est l'OBJET compte de settings.scAccounts (pas un jeton nu) : c'est
+// ce qui permet d'invalider LE BON compte sur un 401 sans toucher aux autres
+function scAuthHeaders(acct) {
+  return acct && acct.token ? { 'Authorization': `OAuth ${acct.token}` } : {};
 }
 
-async function scGetJson(url) {
-  const r = await fetch(url, { headers: { 'Accept': 'application/json', ...scAuthHeaders() } });
-  if (r.status === 401 && settings.scToken) {
-    settings.scToken = null;
+async function scGetJson(url, acct = null) {
+  const r = await fetch(url, { headers: { 'Accept': 'application/json', ...scAuthHeaders(acct) } });
+  if (r.status === 401 && acct && acct.token) {
+    // Invalidation CIBLÉE : seul CE compte est marqué expiré (l'entrée reste
+    // dans la liste pour proposer la reconnexion) — en b2b, le jeton mort du
+    // pote ne doit surtout pas déconnecter tout le monde. Message
+    // volontairement SANS « HTTP 401 » : scTry ne doit pas re-tenter avec un
+    // client_id frais (comportement historique voulu).
+    acct.token = null;
     await saveSettings();
-    throw new Error('Session SoundCloud expirée — reconnecte-toi');
+    throw new Error(`Session SoundCloud de ${acct.name || 'ton compte'} expirée — reconnecte ce compte`);
   }
   if (!r.ok) throw new Error(`SoundCloud HTTP ${r.status}`);
   return r.json();
@@ -627,19 +723,22 @@ async function scTry(fn) {
   }
 }
 
-// Adopte le jeton de session présent dans les cookies (connexion déjà faite)
+// Adopte le jeton de la session navigateur HISTORIQUE (connexion d'avant le
+// multi-compte, cookie dans la session par défaut). ONE-SHOT : le flag
+// scCookieMigrated garantit qu'on ne relit JAMAIS ce cookie ensuite — sinon
+// supprimer le compte historique le ressusciterait au sc-status suivant.
 async function scAdoptCookieToken() {
-  if (settings.scToken) return true;
+  const accounts = scAccounts(); // déclenche au passage la migration scToken
+  if (settings.scCookieMigrated) return;
+  settings.scCookieMigrated = true; // même en cas d'échec : une seule tentative
   try {
     const cookies = await session.defaultSession.cookies.get({ name: 'oauth_token' });
     const c = cookies.find(k => k.domain.includes('soundcloud.com') && k.value);
-    if (c) {
-      settings.scToken = c.value;
-      await saveSettings();
-      return true;
-    }
+    // fromCookie : à la suppression de ce compte on saura qu'il faut AUSSI
+    // retirer le cookie de la session par défaut
+    if (c) accounts.push({ name: null, token: c.value, fromCookie: true });
   } catch { /* pas de cookie */ }
-  return false;
+  await saveSettings();
 }
 
 // Fenêtre de connexion officielle SoundCloud ; on récupère le jeton de session
@@ -652,7 +751,15 @@ function scLoginWindow() {
       parent: win,
       title: 'Connexion SoundCloud',
       autoHideMenuBar: true,
-      webPreferences: { nodeIntegration: false, contextIsolation: true }
+      // Partition ÉPHÉMÈRE (pas de préfixe « persist: » = session en RAM,
+      // jetée à la fermeture) : chaque connexion part d'une page VIERGE.
+      // Sans elle, le 2e compte tombait sur la session déjà connectée du 1er
+      // (impossible d'ajouter le compte du pote sans déconnecter le sien).
+      webPreferences: {
+        nodeIntegration: false,
+        contextIsolation: true,
+        partition: `sc-login-${Date.now()}`
+      }
     });
     lw.loadURL('https://soundcloud.com/signin');
     let done = false;
@@ -675,14 +782,67 @@ function scLoginWindow() {
   });
 }
 
+// Connexion d'un compte : le MÊME handler sert au 1er login, à l'ajout du
+// compte du pote (b2b) et à la reconnexion d'un compte expiré. Plus de
+// court-circuit « déjà connecté » : chaque appel ouvre une fenêtre vierge.
 ipcMain.handle('sc-login', async () => {
   try {
-    if (await scAdoptCookieToken()) return { ok: true };
+    const accounts = scAccounts();
     const token = await scLoginWindow();
     if (!token) return { ok: false, error: 'Connexion annulée' };
-    settings.scToken = token;
+    let cid = '';
+    try { cid = await scEnsureClientId(); } catch { /* le jeton peut suffire */ }
+    const q = cid ? `?client_id=${cid}` : '';
+    // /me avec CE jeton : identifie le compte (nom affiché + anti-doublon).
+    // Objet compte jetable : un 401 ici ne doit invalider personne d'autre.
+    const me = await scGetJson(`${SC_API}/me${q}`, { name: null, token });
+    const name = me.username || null;
+    // Un compte migré (name encore null) doit être identifié AVANT
+    // l'anti-doublon, sinon se reconnecter à son propre compte le dupliquerait
+    for (const a of accounts) {
+      if (!a.name && a.token) {
+        try {
+          const m = await scGetJson(`${SC_API}/me${q}`, a);
+          a.name = m.username || null;
+        } catch { /* jeton mort : déjà invalidé par scGetJson */ }
+      }
+    }
+    // Reconnexion IN-PLACE : même compte déjà connu → on RÉUTILISE son index,
+    // les acctIdx tagués sur les lignes déjà affichées restent valables
+    const existing = accounts.findIndex(a => name && a.name === name);
+    if (existing >= 0) {
+      if (accounts[existing].token) {
+        await saveSettings(); // les noms fraîchement appris méritent d'être gardés
+        return { ok: false, error: `Compte ${name} déjà connecté` };
+      }
+      accounts[existing].token = token;
+      await saveSettings();
+      return { ok: true, name, index: existing };
+    }
+    accounts.push({ name, token });
     await saveSettings();
-    return { ok: true };
+    return { ok: true, name, index: accounts.length - 1 };
+  } catch (err) {
+    return { ok: false, error: String(err.message || err) };
+  }
+});
+
+// Retire un compte de la liste (clic droit sur sa ligne 👤 dans l'interface)
+ipcMain.handle('sc-remove-account', async (_e, idx) => {
+  try {
+    const accounts = scAccounts();
+    const acct = accounts[idx];
+    if (!acct) return { ok: false, error: 'Compte inconnu' };
+    accounts.splice(idx, 1);
+    // Compte hérité de la session navigateur historique : on retire AUSSI le
+    // cookie de la session par défaut, sinon le jeton traînerait sur le disque
+    if (acct.fromCookie) {
+      try {
+        await session.defaultSession.cookies.remove('https://soundcloud.com', 'oauth_token');
+      } catch { /* déjà absent */ }
+    }
+    await saveSettings();
+    return { ok: true, accounts: accounts.map(a => ({ name: a.name, expired: !a.token })) };
   } catch (err) {
     return { ok: false, error: String(err.message || err) };
   }
@@ -690,19 +850,31 @@ ipcMain.handle('sc-login', async () => {
 
 ipcMain.handle('sc-status', async () => {
   await scAdoptCookieToken();
-  return { connected: !!settings.scToken };
+  const accounts = scAccounts();
+  return {
+    connected: accounts.some(a => a.token),
+    accounts: accounts.map(a => ({ name: a.name, expired: !a.token }))
+  };
 });
 
-// Playlists du compte connecté : celles de l'utilisateur + celles de sa bibliothèque
-ipcMain.handle('sc-my-playlists', async () => {
+// Playlists DU COMPTE DEMANDÉ (accountIdx) : celles de l'utilisateur +
+// celles de sa bibliothèque. Sans index → compte 0, comme avant le multi.
+ipcMain.handle('sc-my-playlists', async (_e, accountIdx) => {
   try {
     await scAdoptCookieToken();
-    if (!settings.scToken) return { ok: false, needLogin: true, error: 'Pas connecté à SoundCloud' };
+    const idx = accountIdx ?? 0;
+    const acct = scAccounts()[idx];
+    if (!acct || !acct.token) return { ok: false, needLogin: true, error: 'Pas connecté à SoundCloud' };
     return await scTry(async () => {
       let cid = '';
       try { cid = await scEnsureClientId(); } catch { /* le jeton peut suffire */ }
       const q = cid ? `client_id=${cid}&` : '';
-      const me = await scGetJson(`${SC_API}/me?${q}`.replace(/[?&]$/, ''));
+      const me = await scGetJson(`${SC_API}/me?${q}`.replace(/[?&]$/, ''), acct);
+      // Compte migré de l'ancien réglage mono-compte : on apprend son nom ici
+      if (!acct.name && me.username) {
+        acct.name = me.username;
+        await saveSettings();
+      }
       const seen = new Set();
       const items = [];
       const push = (p) => {
@@ -717,36 +889,42 @@ ipcMain.handle('sc-my-playlists', async () => {
         }
       };
       try {
-        const lib = await scGetJson(`${SC_API}/me/library/all?${q}limit=100`);
+        const lib = await scGetJson(`${SC_API}/me/library/all?${q}limit=100`, acct);
         for (const it of (lib.collection || [])) push(it.playlist);
       } catch { /* endpoint parfois indisponible */ }
       try {
-        const own = await scGetJson(`${SC_API}/users/${me.id}/playlists?${q}limit=100`);
+        const own = await scGetJson(`${SC_API}/users/${me.id}/playlists?${q}limit=100`, acct);
         for (const p of (own.collection || [])) push(p);
       } catch { /* idem */ }
       // Les LIKES en tête, comme une playlist — « une playlist like » (David)
       items.unshift({ scLikes: true, name: '❤️ Likes', trackCount: null });
-      return { ok: true, username: me.username, playlists: items };
+      return { ok: true, username: me.username, accountIdx: idx, playlists: items };
     });
   } catch (err) {
     return { ok: false, error: String(err.message || err) };
   }
 });
 
-// Tous les sons LIKÉS du compte connecté (paginé)
-ipcMain.handle('sc-my-likes', async () => {
+// Tous les sons LIKÉS du compte demandé (paginé) — sans index : compte 0
+ipcMain.handle('sc-my-likes', async (_e, accountIdx) => {
   try {
     await scAdoptCookieToken();
-    if (!settings.scToken) return { ok: false, needLogin: true, error: 'Pas connecté à SoundCloud' };
+    const idx = accountIdx ?? 0;
+    const acct = scAccounts()[idx];
+    if (!acct || !acct.token) return { ok: false, needLogin: true, error: 'Pas connecté à SoundCloud' };
     return await scTry(async () => {
       let cid = '';
       try { cid = await scEnsureClientId(); } catch { /* le jeton peut suffire */ }
       const q = cid ? `client_id=${cid}&` : '';
-      const me = await scGetJson(`${SC_API}/me?${q}`.replace(/[?&]$/, ''));
+      const me = await scGetJson(`${SC_API}/me?${q}`.replace(/[?&]$/, ''), acct);
+      if (!acct.name && me.username) {
+        acct.name = me.username;
+        await saveSettings();
+      }
       const raw = [];
       let url = `${SC_API}/users/${me.id}/track_likes?${q}limit=100&linked_partitioning=1`;
       for (let page = 0; page < 10 && url; page++) {
-        const r = await scGetJson(url);
+        const r = await scGetJson(url, acct);
         for (const it of (r.collection || [])) {
           const t = it.track || it;
           if (t && t.id) raw.push(t);
@@ -755,8 +933,8 @@ ipcMain.handle('sc-my-likes', async () => {
           ? r.next_href + (cid && !r.next_href.includes('client_id') ? `&client_id=${cid}` : '')
           : null;
       }
-      const tracks = await scHydrateTracks(raw, cid);
-      return { ok: true, tracks: tracks.map(scSimplifyTrack) };
+      const tracks = await scHydrateTracks(raw, cid, acct);
+      return { ok: true, username: me.username, accountIdx: idx, tracks: tracks.map(scSimplifyTrack) };
     });
   } catch (err) {
     return { ok: false, error: String(err.message || err) };
@@ -768,18 +946,22 @@ function scSimplifyTrack(t) {
     scId: t.id,
     name: `${(t.user && t.user.username) || '?'} - ${t.title || t.id}`,
     duration: t.duration ? t.duration / 1000 : null,
-    streamable: t.streamable !== false && t.policy !== 'BLOCK'
+    streamable: t.streamable !== false && t.policy !== 'BLOCK',
+    // Jaquette SoundCloud (t500 = grande taille) — pochette sur le deck
+    artwork: t.artwork_url ? t.artwork_url.replace('-large', '-t500x500') : null
   };
 }
 
-// Complète les pistes « stub » (les playlists ne renvoient en entier que les premières)
-async function scHydrateTracks(tracks, cid) {
+// Complète les pistes « stub » (les playlists ne renvoient en entier que les
+// premières). Le compte est propagé : sans lui, les pistes privées/Go+ d'une
+// playlist resteraient des stubs invisibles.
+async function scHydrateTracks(tracks, cid, acct = null) {
   const stubs = tracks.filter(t => !t.title).map(t => t.id);
   const byId = new Map();
   for (let i = 0; i < stubs.length; i += 30) {
     const ids = stubs.slice(i, i + 30).join(',');
     try {
-      const full = await scGetJson(`${SC_API}/tracks?ids=${ids}&client_id=${cid}`);
+      const full = await scGetJson(`${SC_API}/tracks?ids=${ids}&client_id=${cid}`, acct);
       for (const t of full) byId.set(t.id, t);
     } catch { /* pistes indisponibles : ignorées */ }
   }
@@ -788,22 +970,25 @@ async function scHydrateTracks(tracks, cid) {
     .filter(Boolean);
 }
 
-// Résout une URL SoundCloud : playlist -> pistes ; profil -> liste de playlists
-ipcMain.handle('sc-resolve', async (_e, url) => {
+// Résout une URL SoundCloud : playlist -> pistes ; profil -> liste de playlists.
+// accountIdx = compte dont le jeton accompagne les requêtes (playlists
+// privées / Go+) ; à défaut, premier compte valide, sinon anonyme.
+ipcMain.handle('sc-resolve', async (_e, url, accountIdx) => {
   try {
     if (!/^https?:\/\/(www\.|m\.|on\.)?soundcloud\.com\//.test(url.trim())) {
       return { ok: false, error: 'Ce n’est pas un lien soundcloud.com' };
     }
+    const acct = scAcctOrDefault(accountIdx);
     return await scTry(async () => {
     const cid = await scEnsureClientId();
-    const obj = await scGetJson(`${SC_API}/resolve?url=${encodeURIComponent(url.trim())}&client_id=${cid}`);
+    const obj = await scGetJson(`${SC_API}/resolve?url=${encodeURIComponent(url.trim())}&client_id=${cid}`, acct);
 
     if (obj.kind === 'playlist') {
-      const tracks = await scHydrateTracks(obj.tracks || [], cid);
+      const tracks = await scHydrateTracks(obj.tracks || [], cid, acct);
       return { ok: true, kind: 'playlist', title: obj.title, tracks: tracks.map(scSimplifyTrack) };
     }
     if (obj.kind === 'user') {
-      const pl = await scGetJson(`${SC_API}/users/${obj.id}/playlists?client_id=${cid}&limit=50`);
+      const pl = await scGetJson(`${SC_API}/users/${obj.id}/playlists?client_id=${cid}&limit=50`, acct);
       const items = (pl.collection || []).map(p => ({
         scPlaylist: true,
         permalink: p.permalink_url,
@@ -823,14 +1008,15 @@ ipcMain.handle('sc-resolve', async (_e, url) => {
 });
 
 // Recherche dans TOUT le catalogue SoundCloud (pas seulement les playlists)
-ipcMain.handle('sc-search', async (_e, query) => {
+ipcMain.handle('sc-search', async (_e, query, accountIdx) => {
   try {
     const q = String(query || '').trim();
     if (!q) return { ok: false, error: 'Recherche vide' };
+    const acct = scAcctOrDefault(accountIdx);
     return await scTry(async () => {
       const cid = await scEnsureClientId();
       const res = await scGetJson(
-        `${SC_API}/search/tracks?q=${encodeURIComponent(q)}&client_id=${cid}&limit=50`);
+        `${SC_API}/search/tracks?q=${encodeURIComponent(q)}&client_id=${cid}&limit=50`, acct);
       const tracks = (res.collection || [])
         .filter(t => t && t.id)
         .map(scSimplifyTrack)
@@ -842,10 +1028,12 @@ ipcMain.handle('sc-search', async (_e, query) => {
   }
 });
 
-// Téléchargement du flux audio d'une piste SoundCloud vers un fichier
-async function scDownloadToFile(scId, dest) {
+// Téléchargement du flux audio d'une piste SoundCloud vers un fichier.
+// Le compte (acct) ouvre l'accès aux pistes privées/Go+ ; les fetch bruts du
+// flux plus bas restent sans auth : ce sont des URLs déjà signées.
+async function scDownloadToFile(scId, dest, acct = null) {
     const cid = await scEnsureClientId();
-    const arr = await scGetJson(`${SC_API}/tracks?ids=${scId}&client_id=${cid}`);
+    const arr = await scGetJson(`${SC_API}/tracks?ids=${scId}&client_id=${cid}`, acct);
     const track = arr && arr[0];
     if (!track) throw new Error('Piste introuvable');
 
@@ -856,7 +1044,7 @@ async function scDownloadToFile(scId, dest) {
     if (!chosen) throw new Error('Aucun flux lisible pour cette piste');
 
     const sep = chosen.url.includes('?') ? '&' : '?';
-    const { url: streamUrl } = await scGetJson(`${chosen.url}${sep}client_id=${cid}`);
+    const { url: streamUrl } = await scGetJson(`${chosen.url}${sep}client_id=${cid}`, acct);
 
     let buf;
     if (chosen === prog) {
@@ -881,7 +1069,8 @@ async function scDownloadToFile(scId, dest) {
 
 // Télécharge la piste dans le cache local (pour la lecture) — le reste du
 // pipeline (décodage, BPM) est identique aux fichiers locaux.
-ipcMain.handle('sc-fetch-track', async (_e, scId) => {
+// accountIdx : le compte d'où vient la piste (ses Go+/privées à lui).
+ipcMain.handle('sc-fetch-track', async (_e, scId, accountIdx) => {
   try {
     const dir = path.join(app.getPath('userData'), 'sc-cache');
     await fsp.mkdir(dir, { recursive: true });
@@ -890,15 +1079,16 @@ ipcMain.handle('sc-fetch-track', async (_e, scId) => {
       const st = await fsp.stat(dest);
       if (st.size > 0) return { ok: true, path: dest };
     } catch { /* pas en cache */ }
-    await scTry(() => scDownloadToFile(scId, dest));
+    await scTry(() => scDownloadToFile(scId, dest, scAcctOrDefault(accountIdx)));
     return { ok: true, path: dest };
   } catch (err) {
     return { ok: false, error: String(err.message || err) };
   }
 });
 
-// Télécharge une piste EN DUR dans Musique\TurboMix (pour les playlists)
-ipcMain.handle('sc-download-to', async (_e, scId, baseName) => {
+// Télécharge une piste EN DUR dans Musique\TurboMix (pour les playlists) —
+// accountIdx : compte propriétaire de la piste (jeton pour les privées/Go+)
+ipcMain.handle('sc-download-to', async (_e, scId, baseName, accountIdx) => {
   try {
     const dir = path.join(app.getPath('music'), 'TurboMix');
     await fsp.mkdir(dir, { recursive: true });
@@ -917,7 +1107,7 @@ ipcMain.handle('sc-download-to', async (_e, scId, baseName) => {
         return { ok: true, path: dest };
       }
     } catch { /* pas en cache */ }
-    await scTry(() => scDownloadToFile(scId, dest));
+    await scTry(() => scDownloadToFile(scId, dest, scAcctOrDefault(accountIdx)));
     return { ok: true, path: dest };
   } catch (err) {
     return { ok: false, error: String(err.message || err) };
