@@ -246,7 +246,7 @@ export async function detectBPM(buffer, range) {
   };
 
   // ---- GRILLE RIGIDE : le vrai système Rekordbox ----
-  // Mesuré sur les analyses Rekordbox de David (fichiers ANLZ) : 61/61
+  // Mesuré sur 61 grilles d'analyse ANLZ trouvées sur le disque : 61/61
   // grilles sont parfaitement RIGIDES (un seul tempo, temps équidistants au
   // ms près) et 60/61 ont un BPM ENTIER — la musique électronique est
   // produite en DAW à tempo fixe. Une grille rigide ne PEUT PAS dériver.

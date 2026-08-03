@@ -2304,7 +2304,7 @@ body.two-decks .strip .knob-wrap span { font-size: 8.5px; }
 body.two-decks .knob-col { gap: 6px; }
 body.two-decks .vfader { width: 36px; }
 
-/* ===== DEMANDES DU PUBLIC (CoBeat maison, gratuit) ===== */
+/* ===== DEMANDES DU PUBLIC ===== */
 #btn-guests { color: #ffd24a; }
 #btn-guests b {
   display: inline-block;
@@ -2505,7 +2505,7 @@ button:focus-visible { outline: 1px solid #4aa3ff; outline-offset: 1px; }
 #btn-rec.on { animation: rec-pulse 1.2s ease-in-out infinite; }
 
 /* ============================================================ */
-/* ===== THEME PRO SOBRE (ref Rekordbox) : noir, UN accent ==== */
+/* ===== THEME PRO SOBRE : noir, UN accent ==== */
 /* ===== bleu, plat, net. La couleur ne reste que la ou elle == */
 /* ===== INFORME (decks, cues, joueurs). ====================== */
 /* ============================================================ */
@@ -2597,7 +2597,7 @@ button:active { background: #22262e; transform: none; }
 #lib-table tr.selected td { background: rgba(45, 125, 241, 0.14); }
 .lib-tabs button.on, #lib-tabs button.on { background: var(--accent); color: #fff; border-color: var(--accent); }
 
-/* ===== CARRE ET SEC (ref Rekordbox) : angles droits partout, ===== */
+/* ===== CARRE ET SEC : angles droits partout, ===== */
 /* ===== seuls les knobs et indicateurs ronds le restent ============ */
 button, input, select, textarea,
 .pads .pad, .pad-modes button, .stems-col button,
@@ -2617,7 +2617,7 @@ button, input, select, textarea,
 #logo::after { display: none; }
 .deck-badge, .pad-chip { box-shadow: none; }
 
-/* ===== NOIR TOTAL (ref Rekordbox) : fond #000, panneaux presque ===== */
+/* ===== NOIR TOTAL : fond #000, panneaux presque ===== */
 /* ===== noirs, indicateurs BLEUS uniformes, zero halo ================ */
 body, #app { background: #000; }
 #topbar { background: #000; }

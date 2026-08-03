@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="build/logo.png" alt="OpenMix" width="360">
+</p>
+
 # OpenMix
 
 **Le logiciel DJ libre et gratuit — 4 decks, platines DDJ et tout matériel DJ
@@ -5,11 +9,11 @@ USB-MIDI, manettes de jeu, téléphones.**
 
 ![OpenMix — 4 decks, vagues 3 bandes, mixer 4 voies, bibliothèque](docs/screenshot-main.png)
 
-OpenMix remplace les logiciels DJ payants : analyse BPM/grille au niveau de
-Rekordbox (validée contre ses propres fichiers d'analyse), mix à 4 platines,
-et une idée que personne d'autre n'a : **jusqu'à 4 joueurs mixent ensemble à
-la manette**, plus une console tactile sur téléphone et un système de
-demandes du public — le tout 100 % local, sans cloud, sans abonnement.
+OpenMix est un logiciel DJ complet, libre et gratuit : détection de BPM et
+grilles de temps précises, mix à 4 platines, et une idée que personne d'autre
+n'a : **jusqu'à 4 joueurs mixent ensemble à la manette**, plus une console
+tactile sur téléphone et un système de demandes du public — le tout 100 %
+local, sans cloud, sans abonnement.
 
 ## Fonctionnalités
 
@@ -28,9 +32,9 @@ demandes du public — le tout 100 % local, sans cloud, sans abonnement.
 - **Console téléphone** (page web ou APK Android fournie) : 2 platines
   paysage, jog wheels, pads, EQ, faders, bibliothèque — pilote le PC en WiFi
 - **Demandes du public** : tes invités scannent une URL, votent les morceaux
-  et t'envoient des messages — l'équivalent de CoBeat, gratuit et local
-- **Grilles Rekordbox** : importe les analyses de ton ancien Rekordbox
-  (fichiers ANLZ) pour une transition sans douleur
+  et t'envoient des messages — sans appli à installer, sans compte, en local
+- **Import de grilles** : lit les fichiers d'analyse (ANLZ) déjà présents sur
+  ton disque pour reprendre tes grilles existantes sans tout ré-analyser
 - **Platines & contrôleurs DJ** : compatible avec les DDJ Pioneer et tout
   matériel DJ USB-MIDI — chaque bouton est mappable (voir ci-dessous)
 - Enregistrement du mix, mode 2 ou 4 decks
@@ -55,11 +59,16 @@ driver à installer, branche et c'est parti :
 
 ## Installation (PC)
 
-### Le plus simple : l'installeur Windows
+### Le plus simple : l'installeur Windows — **aucun prérequis**
 
 1. Va sur la page [Releases](https://github.com/blackmagic42/openmix/releases)
 2. Télécharge **`OpenMix-Setup-x.y.z.exe`**
 3. Double-clique : OpenMix s'installe et se lance tout seul (raccourci créé)
+
+> **Rien d'autre à installer.** Ni Node.js, ni npm, ni Python : l'installeur
+> contient déjà tout ce dont le logiciel a besoin (~96 Mo). Tu télécharges,
+> tu double-cliques, tu mixes. La désinstallation se fait normalement depuis
+> « Applications » de Windows, et tes réglages sont conservés.
 
 > Windows SmartScreen peut afficher un avertissement (application non signée —
 > les certificats coûtent cher, OpenMix est gratuit) : clique sur
@@ -71,7 +80,7 @@ Prérequis : [Node.js](https://nodejs.org) 20+.
 
 ```bash
 git clone https://github.com/blackmagic42/openmix.git
-cd openmix/turbo-mix
+cd openmix
 npm install
 npm start
 ```
@@ -79,8 +88,9 @@ npm start
 ### Construire soi-même l'installeur
 
 ```bash
-cd openmix/turbo-mix
+cd openmix
 npm install
+npm run icon          # (optionnel) régénère build/icon.ico depuis build/logo.png
 npm run dist          # → dist/OpenMix-Setup-x.y.z.exe (installeur NSIS)
 npm run dist:portable # → version portable sans installation
 ```
@@ -91,7 +101,7 @@ npm run dist:portable # → version portable sans installation
 Optionnel :
 - **STEMS** : `pip install demucs` (Python 3.10+). La séparation se fait en
   arrière-plan, en priorité basse, jamais pendant la lecture.
-- **Grilles Rekordbox** : si Rekordbox est installé sur le même PC, bouton
+- **Import de grilles** : si un dossier d'analyses existe sur le même PC, bouton
   d'import dans ⚙ Paramètres.
 
 ## Console téléphone
@@ -99,7 +109,7 @@ Optionnel :
 Le serveur démarre automatiquement avec l'app (port **8722**).
 
 - **Navigateur** : ouvre `http://IP_DU_PC:8722` sur le téléphone (même WiFi)
-- **APK Android** : installe `turbo-mix/OpenMix.apk` (12 Ko) — plein écran
+- **APK Android** : télécharge `OpenMix.apk` dans les [Releases](https://github.com/blackmagic42/openmix/releases) — plein écran
   paysage, l'IP est demandée au premier lancement puis mémorisée
 - **Invités / demandes** : fais scanner `http://IP_DU_PC:8722/guest` — votes
   et messages arrivent dans le bouton DEMANDES de la barre du haut
@@ -207,7 +217,7 @@ propres télécommandes, bots ou intégrations :
 ## Structure du code
 
 ```
-turbo-mix/
+openmix/
 ├── main.js            Processus principal Electron : fenêtre, serveur HTTP
 │                      (console/invités), SoundCloud, Demucs, grilles Rekordbox
 ├── preload.js         Pont sécurisé renderer ↔ main
@@ -242,3 +252,16 @@ code natif change ; l'interface, elle, vit sur le PC.
 
 MIT — libre d'utilisation, de modification et de partage.
 **OpenMix : libérer le mix.**
+
+## Marques citées
+
+Pioneer DJ, DDJ, rekordbox, SoundCloud, PlayStation et Xbox sont des marques
+de leurs propriétaires respectifs. OpenMix est un projet indépendant : il
+n'est ni affilié à ces sociétés, ni approuvé, ni soutenu par elles. Ces noms
+ne sont cités que pour indiquer avec quel matériel ou quel service OpenMix
+sait fonctionner.
+
+OpenMix ne contourne aucune protection : les morceaux protégés par DRM ne
+sont pas lisibles, et le logiciel le signale clairement. Aucun échantillon
+sonore, aucun préréglage et aucun fichier provenant d'un logiciel commercial
+n'est distribué avec OpenMix.

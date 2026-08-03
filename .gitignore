@@ -8,3 +8,12 @@ dist/
 *.log
 .DS_Store
 Thumbs.db
+
+# Tailles intermediaires de l'icone (regenerees par : npm run icon)
+build/icon-*.png
+build/_*.html
+
+# Produits de compilation Android (l'APK se telecharge dans les Releases)
+android-app/build/
+*.apk
+*.idsig

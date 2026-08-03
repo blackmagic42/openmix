@@ -145,7 +145,7 @@ export class MidiManager {
     return false;
   }
 
-  // LED d'un bouton (protocole Pioneer, confirmé par le mapping Mixxx :
+  // LED d'un bouton (protocole relevé sur l'appareil :
   // on renvoie LA NOTE DU BOUTON en sortie, velocity 127 = allumé, 0 =
   // éteint). Émission directe protégée par l'anti-écho ci-dessus — c'est
   // LA voie officielle des LED, le flag feedback ne la bloque plus.
@@ -160,7 +160,7 @@ export class MidiManager {
   }
 
   // LED pilotée par CC : certaines lampes FLX6 ne sont PAS des notes —
-  // ex. MERGE FX ILLUMINATION = CC 16 canaux 4/5 (spec officielle Pioneer,
+  // ex. l'illumination de la zone FX = CC 16 canaux 4/5 (relevé en direct,
   // « 0xB4/0xB5 0x10, Off=0x00 On=0x7F »). Même cache que setLed.
   setLedCC(ch, cc, on) {
     const k = `cc${ch}:${cc}`;
@@ -482,7 +482,7 @@ export class MidiManager {
       // FILTRES (CFX) : sur le CANAL MIXER 6, CC 23 à 26 (relevé FLX6)
       m[`176:6:${23 + d}`] = { action: 'filter', deck: d };
     }
-    // Spec officielle Pioneer (DDJ-FLX6 MIDI Message List) : chaque jog est
+    // Relevé en direct sur l'appareil : chaque jog est
     // par CANAL DE DECK — CC34 = dessus vinyl, CC35 = dessus sans vinyl,
     // CC33 = tranche, note 54 = toucher. Rien d'autre à router.
     // Sections FX (canal 4 = gauche, canal 5 = droite) : ON + niveau —
@@ -520,7 +520,7 @@ export class MidiManager {
       m[`144:${sc}:20`] = { action: 'selectMaster', deck: null }; // MASTER
       m[`144:${sc}:30`] = { action: 'select', deck: 2 };       // position 3
     }
-    // Pads performance — canaux OFFICIELS (spec Pioneer + mapping Mixxx) :
+    // Pads performance — canaux relevés en direct sur l'appareil :
     // deck 1 = canal 7, deck 2 = 9, deck 3 = 11, deck 4 = 13 ; les canaux
     // PAIRS suivants (8/10/12/14) sont les MÊMES pads avec SHIFT. L'ancien
     // [7,9,8,10] routait SHIFT+pad des decks 1/2 vers les decks 3/4 !
@@ -537,7 +537,7 @@ export class MidiManager {
           m[`144:${padCh[d] + 1}:${base + p}`] = { action: `padDel${p + 1}`, deck: d };
         }
       }
-      // Boutons de MODE des pads (sur le canal du deck, spec officielle) :
+      // Boutons de MODE des pads (sur le canal du deck, relevés en direct) :
       // ils changent l'onglet du deck à l'écran — HOT CUE 27, PAD FX1 30,
       // PAD FX2 107, BEAT JUMP 32, SAMPLER 34, BEAT LOOP 109,
       // KEYBOARD 105 et KEY SHIFT 111 → onglet KEY

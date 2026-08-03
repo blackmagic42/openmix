@@ -360,7 +360,7 @@ ipcMain.on('remote-wave', (_e, i, payload) => {
 });
 ipcMain.on('remote-lib', (_e, d) => { remoteLibData = d; });
 
-// --- 📨 DEMANDES DU PUBLIC (notre CoBeat, gratuit et 100 % local) :
+// --- 📨 DEMANDES DU PUBLIC (100 % local, sans compte ni service tiers) :
 // les invités votent des morceaux / envoient des messages depuis /guest ---
 const guestVotes = new Map(); // nom du morceau -> { name, bpm, votes }
 let guestMsgs = [];
@@ -583,7 +583,7 @@ ipcMain.handle('stems-separate', async (_e, trackPath) => {
   }
 });
 
-// --- Explorateur de fichiers (arborescence style Rekordbox) ---
+// --- Explorateur de fichiers (arborescence classique) ---
 ipcMain.handle('fs-roots', async () => {
   const fs = require('fs');
   const roots = [];
@@ -676,7 +676,7 @@ ipcMain.handle('save-recording', async (_e, data, defaultName) => {
 });
 
 // ---------------------------------------------------------------------------
-// SoundCloud (même approche que soundcloud_playlist_tool.py : api-v2 + client_id)
+// SoundCloud : API publique v2 du site + client_id extrait comme le fait le lecteur web
 // ---------------------------------------------------------------------------
 
 const SC_API = 'https://api-v2.soundcloud.com';
@@ -1157,10 +1157,9 @@ async function scDownloadToFile(scId, dest, acct = null) {
     // octets chiffrés — un faux « succès » avec un fichier illisible.
     const codings = allCodings.filter((c) => !scIsDrm(c));
     if (!codings.length) {
-      // (rekordbox y arrive parce que Pioneer est un PARTENAIRE SOUS LICENCE
-      // de SoundCloud : leur logiciel reçoit les clés de déchiffrement par
-      // contrat. Rien à « réparer » côté code — c'est un accord commercial.)
-      throw new Error('Morceau protégé (DRM) : SoundCloud ne le déverrouille que pour ses logiciels partenaires sous licence. Utilise le fichier acheté ou un autre son.');
+      // Flux chiffré : la clé n'est délivrée qu'au lecteur du site. Rien à
+      // « réparer » côté code, et rien à contourner — on le dit, c'est tout.
+      throw new Error('Morceau protégé (DRM) : sa lecture hors du site du service n\'est pas autorisée. Utilise le fichier que tu possèdes, ou un autre morceau.');
     }
 
     // ORDRE DE PRÉFÉRENCE des flux — on ne rejette plus RIEN d'emblée :

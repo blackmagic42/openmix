@@ -134,8 +134,8 @@ export function setWavePalette(p) {
 const PAL_SETS = {
   blueorange: [[40, 115, 255], [255, 150, 40], [235, 240, 255]],
   neon: [[255, 45, 150], [80, 255, 160], [90, 200, 255]],
-  // Façon Rekordbox RGB : basses bleu profond, médiums ambre, aigus blancs
-  rekordbox: [[25, 70, 255], [255, 170, 70], [246, 248, 255]]
+  // Palette « club » : basses bleu profond, médiums ambre, aigus blancs
+  club: [[25, 70, 255], [255, 170, 70], [246, 248, 255]]
 };
 
 function waveColor(l, m, h) {
@@ -144,11 +144,11 @@ function waveColor(l, m, h) {
   if (PALETTE === 'rgb') {
     return `rgb(${Math.round((l / mx) * 255)},${Math.round((m / mx) * 255)},${Math.round((h / mx) * 255)})`;
   }
-  if (PALETTE === 'rekordbox') {
+  if (PALETTE === 'club') {
     // Poids au CARRÉ : la bande dominante impose sa couleur (le kick est
     // FRANCHEMENT bleu, les hats FRANCHEMENT blancs) au lieu d'un mélange
-    // moyen — c'est ça le look Rekordbox
-    const C = PAL_SETS.rekordbox;
+    // moyen délavé
+    const C = PAL_SETS.club;
     const wl = (l / mx) ** 2, wm = (m / mx) ** 2, wh = (h / mx) ** 2;
     const sum = wl + wm + wh || 1;
     const r = Math.round((C[0][0] * wl + C[1][0] * wm + C[2][0] * wh) / sum);
@@ -336,11 +336,27 @@ export function drawZoom(canvas, deck, windowSec = 8, timeOverride) {
     cv.height = H;
     strip = canvas._strip = { cv, g: cv.getContext('2d'), sig, peaks, t0: NaN };
   }
-  // Hors bande (démarrage, saut, scratch rapide) : on la recentre
+  // Hors bande (démarrage, saut, scratch rapide) : on la recentre.
+  // On ne peint TOUT DE SUITE que le tiers VISIBLE ; les deux autres tiers
+  // sont peints aux images suivantes, un par image. Sinon un repeint
+  // complet (3 écrans de colonnes) tombait d'un coup toutes les ~8 s et
+  // se voyait comme un micro-accroc dans le défilement.
   if (!(t0 >= strip.t0 && t0 + windowSec <= strip.t0 + windowSec * 3)) {
     strip.t0 = t0 - windowSec;                 // fenêtre visible au centre
     strip.g.clearRect(0, 0, W * 3, H);
-    peintureColonnes(strip.g, strip.t0, W * 3);
+    strip.g.save();
+    strip.g.translate(W, 0);                   // tiers du milieu
+    peintureColonnes(strip.g, strip.t0 + windowSec, W);
+    strip.g.restore();
+    strip.reste = [2, 0];                      // droite d'abord (sens de lecture)
+  }
+  // Un tiers restant par image : le coût est réparti, jamais un pic
+  if (strip.reste && strip.reste.length) {
+    const tiers = strip.reste.shift();
+    strip.g.save();
+    strip.g.translate(W * tiers, 0);
+    peintureColonnes(strip.g, strip.t0 + windowSec * tiers, W);
+    strip.g.restore();
   }
   // Recopie GPU : partie DÉJÀ JOUÉE en pleine opacité, partie à venir en
   // demi-teinte — exactement l'ancien rendu, en deux appels au lieu de 1200

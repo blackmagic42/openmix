@@ -758,7 +758,7 @@ const KEY_VALS = [-5, -4, -3, -2, -1, 1, 2, 3, 4, 5]; // demi-tons (mode KEY)
 // PAD FX façon Rekordbox : MAINTENIR = l'effet joue, RELÂCHER = il se coupe
 // et l'unité FX du deck retrouve exactement son réglage d'avant.
 // beats = fraction de temps (suit le BPM master), level = dosage fixe du pad
-// Sélection de David (d'après les deux banques Rekordbox) : V.BRAKE et
+// Sélection retenue : V.BRAKE et
 // BACKSPIN gardés (effets « platine » : spin = manipulation du disque),
 // plus 8 effets wet (echo, sweep…)
 const PADFX = [
@@ -2429,7 +2429,7 @@ function renderLibrary() {
     // logiciels partenaires sous licence.
     if (t.drm) {
       tr.classList.add('drm');
-      tr.title = 'Morceau protégé (DRM) : SoundCloud ne le déverrouille que pour ses logiciels partenaires — illisible ici';
+      tr.title = 'Morceau protégé (DRM) : sa lecture hors du site du service n\'est pas autorisée';
       const lock = document.createElement('span');
       lock.className = 'drm-lock';
       lock.textContent = '🔒';
@@ -2786,7 +2786,7 @@ async function loadTrackToDeck(i, track, autoplay = false) {
   if (!track || track.scPlaylist || ui.loading) return;
   // Protégé (DRM) : refus IMMÉDIAT, sans attendre un aller-retour réseau
   if (track.drm) {
-    flashStatus(`🔒 « ${track.name} » est protégé (DRM) : SoundCloud ne le déverrouille que pour ses partenaires sous licence`);
+    flashStatus(`🔒 « ${track.name} » est protégé (DRM) : sa lecture hors du site n'est pas autorisée`);
     return;
   }
   // Refus si le MÊME son joue déjà sur un autre deck
@@ -4429,11 +4429,10 @@ function frameBody(now) {
     const dispTempo = gpBend[i] ? gpBend[i].tempo : (deck.tempo || 1);
     const deckWindow = waveWindowSec * dispTempo;
     const zoomSig = `${t.toFixed(3)}|${deckWindow.toFixed(3)}|${deck.looping ? deck.loopStart + '-' + deck.loopEnd : ''}|${deck._loopInPoint ?? ''}|${deck.peaks ? deck.peaks.duration : 0}|${deck.beatOffset}|${deck.bpm}|${deck.gridShift}|${deck.barAnchor}|${deck.beats ? deck.beats.length : 0}|${getGlobalGridOffset()}|${cueSig}`;
-    // PERF : le tracé de la vague zoomée est LE plus gros poste CPU — il
-    // est plafonné à ~30 images/s (invisible à l'œil sur un défilement,
-    // et divise par deux le coût sur les machines modestes)
-    if (ui._zoomSig !== zoomSig && now - (ui._zoomAt || 0) >= 32) {
-      ui._zoomAt = now;
+    // PLEIN 60 IMAGES/SECONDE : le bridage à 30 n'a plus lieu d'être depuis
+    // que la vague est une bande pré-rendue (une simple recopie GPU par
+    // image). Il se voyait au défilement — « pas la fluidité pro ».
+    if (ui._zoomSig !== zoomSig) {
       ui._zoomSig = zoomSig;
       // FENÊTRE FIXE, délibérément : l'échelle × tempo (tentée puis
       // RETIRÉE) faisait BOUGER tout le tracé à chaque mise à jour interne
@@ -5426,7 +5425,7 @@ setInterval(ledTick, 250);
 // --- Bascule 2 decks / 4 decks ---
 const btnDeckCount = document.getElementById('btn-deckcount');
 
-// --- 📨 DEMANDES DU PUBLIC (notre CoBeat gratuit) : les invités votent
+// --- 📨 DEMANDES DU PUBLIC : les invités votent
 // depuis http://IP:8722/guest — le DJ voit tout ici et charge en un clic ---
 let guestData = { votes: [], msgs: [] };
 let guestSeen = 0;
@@ -5836,10 +5835,9 @@ setWaveSize.addEventListener('change', () => {
   document.body.classList.toggle('waves-lg', setWaveSize.value === 'grand');
 });
 
-// Palette par défaut : RGB (verdict de David — « la couleur n'est plus en
-// RGB comme tantôt ! ») ; ma migration automatique vers 'rekordbox' est
-// ANNULÉE. La palette Rekordbox reste disponible dans ⚙ pour qui la veut.
-if (!localStorage.getItem('wavePaletteChosen') && localStorage.getItem('wavePalette') === 'rekordbox') {
+// Palette par défaut : RGB. (Une palette « club » est aussi disponible
+// dans ⚙ pour qui préfère basses bleues / médiums ambre / aigus blancs.)
+if (!localStorage.getItem('wavePaletteChosen') && localStorage.getItem('wavePalette') === 'rekordbox') {  // ancienne valeur
   localStorage.setItem('wavePalette', 'rgb');
 }
 setWavePalette(localStorage.getItem('wavePalette') || 'rgb');

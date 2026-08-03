@@ -65,8 +65,8 @@ public class MainActivity extends Activity {
     dialogOpen = true;
     final EditText input = new EditText(this);
     input.setInputType(InputType.TYPE_CLASS_TEXT);
-    input.setHint("ex : 10.21.179.240");
-    input.setText(prefs.getString("ip", "10.21.179.240"));
+    input.setHint("ex : 192.168.1.20");
+    input.setText(prefs.getString("ip", ""));
     new AlertDialog.Builder(this)
         .setTitle(title)
         .setView(input)
