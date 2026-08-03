@@ -451,6 +451,26 @@ function startRemoteServer() {
       res.end(JSON.stringify(remoteLibData));
       return;
     }
+    // RECHERCHE SOUNDCLOUD POUR LES INVITÉS : ils cherchent dans TOUT le
+    // catalogue depuis leur téléphone, pas seulement dans ta bibliothèque
+    if (req.url.startsWith('/scsearch')) {
+      const q = decodeURIComponent((/[?&]q=([^&]*)/.exec(req.url) || [, ''])[1] || '');
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      scSearchTracks(q).then((r) => {
+        // On ne propose PAS aux invités les morceaux protégés (DRM) : ils ne
+        // pourraient pas être chargés, autant ne pas les faire voter dessus
+        const tracks = (r.ok ? r.tracks : []).filter((t) => !t.drm).slice(0, 40).map((t) => ({
+          name: t.name,
+          url: t.permalink,
+          art: t.artwork || null,
+          dur: t.duration || 0
+        }));
+        res.end(JSON.stringify({ ok: !!r.ok, error: r.error || null, tracks }));
+      }).catch((err) => {
+        res.end(JSON.stringify({ ok: false, error: String(err.message || err), tracks: [] }));
+      });
+      return;
+    }
     // --- pages et API des INVITÉS (votes de morceaux, messages) ---
     if (req.url === '/guest' || req.url.startsWith('/guest?')) {
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
@@ -479,6 +499,11 @@ function startRemoteServer() {
             const key = String(v.name).slice(0, 200);
             const cur = guestVotes.get(key) || { name: key, bpm: v.bpm || null, votes: 0 };
             cur.votes++;
+            // Demande venue de la RECHERCHE SOUNDCLOUD : on garde le lien et
+            // la pochette — le DJ charge le morceau en un clic même s'il
+            // n'est pas dans sa bibliothèque
+            if (v.url) cur.url = String(v.url).slice(0, 400);
+            if (v.art) cur.art = String(v.art).slice(0, 400);
             guestVotes.set(key, cur);
           }
           try { win.webContents.send('guest-req', guestSnapshot()); } catch { /* fenêtre fermée */ }
@@ -663,17 +688,63 @@ function scAuthHeaders(acct) {
   return acct && acct.token ? { 'Authorization': `OAuth ${acct.token}` } : {};
 }
 
-async function scGetJson(url, acct = null) {
-  const r = await fetch(url, { headers: { 'Accept': 'application/json', ...scAuthHeaders(acct) } });
-  if (r.status === 401 && acct && acct.token) {
-    // Invalidation CIBLÉE : seul CE compte est marqué expiré (l'entrée reste
-    // dans la liste pour proposer la reconnexion) — en b2b, le jeton mort du
-    // pote ne doit surtout pas déconnecter tout le monde. Message
-    // volontairement SANS « HTTP 401 » : scTry ne doit pas re-tenter avec un
-    // client_id frais (comportement historique voulu).
-    acct.token = null;
-    await saveSettings();
-    throw new Error(`Session SoundCloud de ${acct.name || 'ton compte'} expirée — reconnecte ce compte`);
+// Sonde d'identité : le SEUL verdict qui autorise à effacer un jeton.
+// /me répond 200 avec un OAuth valide MÊME SANS client_id — un client_id
+// périmé ne peut donc plus faire passer une session vivante pour morte.
+// Mémoïsée 30 s : une playlist qui échoue en boucle ne doit pas déclencher
+// une sonde par piste.
+let scProbe = { at: 0, key: null, dead: false, pending: null };
+async function scTokenReallyDead(acct) {
+  const key = acct.token;
+  if (scProbe.key === key && !scProbe.pending && Date.now() - scProbe.at < 30000) return scProbe.dead;
+  if (scProbe.pending && scProbe.key === key) return scProbe.pending;
+  scProbe = { at: 0, key, dead: false, pending: null };
+  scProbe.pending = (async () => {
+    let dead = false;
+    try {
+      const r = await fetch(`${SC_API}/me`, {
+        headers: { 'Accept': 'application/json', 'Authorization': `OAuth ${key}` }
+      });
+      dead = r.status === 401; // 403 / 404 / 429 / 5xx : on ne conclut RIEN
+    } catch {
+      dead = false;            // réseau coupé : surtout ne pas déconnecter
+    }
+    scProbe = { at: Date.now(), key, dead, pending: null };
+    return dead;
+  })();
+  return scProbe.pending;
+}
+
+async function scGetJson(url, acct = null, opts = {}) {
+  const get = () => fetch(url, { headers: { 'Accept': 'application/json', ...scAuthHeaders(acct) } });
+  let r = await get();
+  // 429 = trop de requêtes (SoundCloud limite le débit) : on patiente et on
+  // retente au lieu d'afficher une erreur de chargement à l'utilisateur
+  for (let i = 0; i < 2 && r.status === 429; i++) {
+    await new Promise((ok) => setTimeout(ok, 1200 * (i + 1)));
+    r = await get();
+  }
+  // opts.keepToken : un 401 venu de l'URL D'UN FLUX ne prouve RIEN sur la
+  // session (il manque le plus souvent track_authorization) — invalider le
+  // jeton là-dessus déconnectait un compte payant parfaitement valide, et
+  // faisait échouer tous les morceaux suivants en cascade.
+  if (r.status === 401 && acct && acct.token && !opts.keepToken) {
+    // Un 401 ne PROUVE PAS que la session est morte : ce peut être le
+    // client_id public périmé, une piste sans droits, une URL mal formée.
+    // On ne déconnecte QUE si la sonde /me le confirme — sinon on éjectait
+    // des comptes payants valides, DE FAÇON PERSISTANTE (le null repart
+    // dans les réglages), et tout le reste de la soirée échouait.
+    if (await scTokenReallyDead(acct)) {
+      // Invalidation CIBLÉE : seul CE compte est marqué expiré (l'entrée
+      // reste dans la liste pour proposer la reconnexion) — en b2b, le
+      // jeton mort du pote ne doit pas déconnecter tout le monde.
+      acct.token = null;
+      await saveSettings();
+      throw new Error(`Session SoundCloud de ${acct.name || 'ton compte'} expirée — reconnecte ce compte`);
+    }
+    // Session vivante : c'est très probablement le client_id. On laisse
+    // « SoundCloud HTTP 401 » remonter pour que scTry en réextraie un frais.
+    throw new Error('SoundCloud HTTP 401');
   }
   if (!r.ok) throw new Error(`SoundCloud HTTP ${r.status}`);
   return r.json();
@@ -715,7 +786,11 @@ async function scTry(fn) {
   try {
     return await fn();
   } catch (e) {
-    if (/HTTP (401|403)/.test(String(e))) {
+    // ANCRÉ sur « SoundCloud HTTP » : seuls les appels d'API justifient de
+    // réextraire le client_id. Un « Segment HTTP 403 » (URL de CDN signée
+    // qui expire) relançait tout le téléchargement du morceau — alors qu'un
+    // client_id neuf ne resigne évidemment pas une URL de CDN.
+    if (/SoundCloud HTTP (401|403)/.test(String(e))) {
       await scEnsureClientId(true);
       return fn();
     }
@@ -941,11 +1016,26 @@ ipcMain.handle('sc-my-likes', async (_e, accountIdx) => {
   }
 });
 
+// Un flux « encrypted-hls » est protégé par DRM (FairPlay/Widevine) : sa clé
+// n'est délivrée qu'au lecteur du site. On ne peut ni le lire ni l'analyser —
+// il faut le DIRE, pas afficher « erreur de chargement ».
+const scIsDrm = (c) => /encrypted/i.test((c.format && c.format.protocol) || '');
+
 function scSimplifyTrack(t) {
+  const codings = (t.media && t.media.transcodings) || [];
+  const drm = codings.length > 0 && codings.every(scIsDrm);
   return {
+    drm,
     scId: t.id,
     name: `${(t.user && t.user.username) || '?'} - ${t.title || t.id}`,
     duration: t.duration ? t.duration / 1000 : null,
+    // LIEN DU MORCEAU — sans lui, les demandes du public venues de la
+    // recherche SoundCloud arrivaient sans adresse et étaient TOUTES refusées
+    permalink: t.permalink_url || null,
+    // Droits : on les affiche au lieu de faire disparaître la ligne
+    policy: t.policy || null,             // ALLOW / MONETIZE / SNIP / BLOCK
+    snipped: t.snipped === true || codings.some((c) => c.snipped === true),
+    blocked: t.policy === 'BLOCK',
     streamable: t.streamable !== false && t.policy !== 'BLOCK',
     // Jaquette SoundCloud (t500 = grande taille) — pochette sur le deck
     artwork: t.artwork_url ? t.artwork_url.replace('-large', '-t500x500') : null
@@ -1007,8 +1097,10 @@ ipcMain.handle('sc-resolve', async (_e, url, accountIdx) => {
   }
 });
 
-// Recherche dans TOUT le catalogue SoundCloud (pas seulement les playlists)
-ipcMain.handle('sc-search', async (_e, query, accountIdx) => {
+// Recherche dans TOUT le catalogue SoundCloud (pas seulement les playlists).
+// Fonction partagée : utilisée par le logiciel (IPC) ET par la page des
+// invités (/scsearch) — ils cherchent depuis leur téléphone.
+async function scSearchTracks(query, accountIdx) {
   try {
     const q = String(query || '').trim();
     if (!q) return { ok: false, error: 'Recherche vide' };
@@ -1018,13 +1110,30 @@ ipcMain.handle('sc-search', async (_e, query, accountIdx) => {
       const res = await scGetJson(
         `${SC_API}/search/tracks?q=${encodeURIComponent(q)}&client_id=${cid}&limit=50`, acct);
       const tracks = (res.collection || [])
-        .filter(t => t && t.id)
+        .filter(t => t && t.id && (t.kind === 'track' || !t.kind))
         .map(scSimplifyTrack)
-        .filter(t => t.streamable);
+        // « streamable » est un champ HÉRITÉ de l'ancienne API : il vaut
+        // false sur des pistes qui se lisent très bien une fois authentifié
+        // — il supprimait EN SILENCE des résultats. On ne masque plus que
+        // le vrai retrait (BLOCK), qu'aucun abonnement ne débloque.
+        .filter(t => !t.blocked);
       return { ok: true, tracks };
     });
   } catch (err) {
     return { ok: false, error: String(err.message || err) };
+  }
+}
+ipcMain.handle('sc-search', (_e, query, accountIdx) => scSearchTracks(query, accountIdx));
+
+// Ouvre un lien dans le NAVIGATEUR du système (page invités cliquable)
+ipcMain.handle('open-external', (_e, url) => {
+  try {
+    const u = String(url || '');
+    if (!/^https?:\/\//i.test(u)) return false;
+    require('electron').shell.openExternal(u);
+    return true;
+  } catch {
+    return false;
   }
 });
 
@@ -1037,50 +1146,131 @@ async function scDownloadToFile(scId, dest, acct = null) {
     const track = arr && arr[0];
     if (!track) throw new Error('Piste introuvable');
 
-    const codings = (track.media && track.media.transcodings) || [];
-    const prog = codings.find(c => c.format && c.format.protocol === 'progressive');
-    const hls = codings.find(c => c.format && c.format.protocol === 'hls' && /mpeg|mp3/.test(c.format.mime_type || ''));
-    const chosen = prog || hls;
-    if (!chosen) throw new Error('Aucun flux lisible pour cette piste');
-
-    const sep = chosen.url.includes('?') ? '&' : '?';
-    const { url: streamUrl } = await scGetJson(`${chosen.url}${sep}client_id=${cid}`, acct);
-
-    let buf;
-    if (chosen === prog) {
-      const r = await fetch(streamUrl);
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      buf = Buffer.from(await r.arrayBuffer());
-    } else {
-      const m3u8 = await (await fetch(streamUrl)).text();
-      const segs = m3u8.split('\n').map(l => l.trim()).filter(l => l && !l.startsWith('#'));
-      const parts = [];
-      for (const seg of segs) {
-        const r = await fetch(seg);
-        if (!r.ok) throw new Error(`Segment HTTP ${r.status}`);
-        parts.push(Buffer.from(await r.arrayBuffer()));
-      }
-      buf = Buffer.concat(parts);
+    const allCodings = (track.media && track.media.transcodings) || [];
+    if (!allCodings.length) {
+      throw new Error(track.policy === 'BLOCK'
+        ? 'Piste bloquée dans ton pays'
+        : 'Cette piste n\'expose aucun flux (retirée, privée ou supprimée)');
+    }
+    // On ÉCARTE les flux protégés par DRM : leur clé est réservée au lecteur
+    // du site (FairPlay/Widevine). Les télécharger ne donnerait que des
+    // octets chiffrés — un faux « succès » avec un fichier illisible.
+    const codings = allCodings.filter((c) => !scIsDrm(c));
+    if (!codings.length) {
+      // (rekordbox y arrive parce que Pioneer est un PARTENAIRE SOUS LICENCE
+      // de SoundCloud : leur logiciel reçoit les clés de déchiffrement par
+      // contrat. Rien à « réparer » côté code — c'est un accord commercial.)
+      throw new Error('Morceau protégé (DRM) : SoundCloud ne le déverrouille que pour ses logiciels partenaires sous licence. Utilise le fichier acheté ou un autre son.');
     }
 
-    await fsp.writeFile(dest, buf);
-    return dest;
+    // ORDRE DE PRÉFÉRENCE des flux — on ne rejette plus RIEN d'emblée :
+    // beaucoup de pistes (dont les Go+) n'exposent que de l'AAC ou de
+    // l'Opus, et l'ancien filtre « mpeg|mp3 » les déclarait illisibles.
+    const score = (c) => {
+      const p = (c.format && c.format.protocol) || '';
+      const m = (c.format && c.format.mime_type) || '';
+      if (p === 'progressive' && /mpeg/.test(m)) return 0; // mp3 direct : idéal
+      if (p === 'progressive') return 1;
+      if (p === 'hls' && /mpeg/.test(m)) return 2;
+      if (p === 'hls' && /(mp4|aac)/.test(m)) return 3;    // AAC : Chromium sait lire
+      return 4;                                            // opus & co : dernier recours
+    };
+    const ordered = [...codings].sort((a, b) => score(a) - score(b));
+    // track_authorization : jeton PAR PISTE renvoyé avec le morceau — sans
+    // lui l'API répond 401/403 sur la plupart des pistes. C'était LA cause
+    // des « erreurs de chargement » à répétition, compte payant compris.
+    const ta = track.track_authorization
+      ? `&track_authorization=${encodeURIComponent(track.track_authorization)}`
+      : '';
+
+    const getBin = async (u, what) => {
+      let r = await fetch(u);
+      for (let i = 0; i < 2 && (r.status === 429 || r.status >= 500); i++) {
+        await new Promise((ok) => setTimeout(ok, 900 * (i + 1)));
+        r = await fetch(u);
+      }
+      if (!r.ok) throw new Error(`${what} HTTP ${r.status}`);
+      return Buffer.from(await r.arrayBuffer());
+    };
+
+    // On ESSAIE CHAQUE FLUX dans l'ordre : un transcodage cassé ne condamne
+    // plus le morceau tant qu'il en reste un autre
+    let lastErr = null;
+    for (const chosen of ordered) {
+      try {
+        const sep = chosen.url.includes('?') ? '&' : '?';
+        const { url: streamUrl } = await scGetJson(
+          `${chosen.url}${sep}client_id=${cid}${ta}`, acct, { keepToken: true });
+        let buf;
+        if ((chosen.format && chosen.format.protocol) === 'progressive') {
+          buf = await getBin(streamUrl, 'Flux');
+        } else {
+          const m3u8 = await (await fetch(streamUrl)).text();
+          const segs = m3u8.split('\n').map(l => l.trim()).filter(l => l && !l.startsWith('#'));
+          if (!segs.length) throw new Error('Playlist de flux vide');
+          const parts = [];
+          for (const seg of segs) parts.push(await getBin(seg, 'Segment'));
+          buf = Buffer.concat(parts);
+        }
+        if (!buf || buf.length < 2048) throw new Error('Flux vide');
+        await fsp.writeFile(dest, buf);
+        // Piste « extrait » : SoundCloud ne sert que 30 s quand le compte
+        // n'a pas les droits. On le SIGNALE et on le note dans le cache —
+        // sinon l'extrait était rejoué éternellement, même après avoir
+        // connecté le compte abonné.
+        return {
+          dest,
+          bytes: buf.length,
+          full: !track.snipped,
+          warning: track.snipped
+            ? 'Extrait 30 s : connecte le compte SoundCloud abonné pour le morceau entier'
+            : null
+        };
+      } catch (e) {
+        lastErr = e;
+      }
+    }
+    throw new Error(track.snipped
+      ? 'Piste réservée aux abonnés (Go+) — connecte le compte abonné dans ⚙'
+      : `Aucun flux lisible : ${lastErr ? lastErr.message : 'inconnu'}`);
 }
 
 // Télécharge la piste dans le cache local (pour la lecture) — le reste du
 // pipeline (décodage, BPM) est identique aux fichiers locaux.
 // accountIdx : le compte d'où vient la piste (ses Go+/privées à lui).
+// Identité du compte qui a rempli le cache : si on connecte enfin le compte
+// abonné, un extrait de 30 s en cache DOIT être retéléchargé au lieu d'être
+// rejoué à vie.
+function scAcctKey(acct) {
+  return acct && acct.token ? `u:${acct.name || 'sans-nom'}` : 'anonyme';
+}
+
 ipcMain.handle('sc-fetch-track', async (_e, scId, accountIdx) => {
   try {
     const dir = path.join(app.getPath('userData'), 'sc-cache');
     await fsp.mkdir(dir, { recursive: true });
     const dest = path.join(dir, `${scId}.mp3`);
+    const meta = path.join(dir, `${scId}.json`);
+    const acct = scAcctOrDefault(accountIdx);
+    const key = scAcctKey(acct);
+    // Le cache n'est réutilisé que s'il est PROUVÉ complet, ou s'il vient du
+    // MÊME compte. Un fichier sans fiche vient d'une version qui ne savait
+    // pas repérer les extraits : on le retélécharge une fois — c'est la
+    // purge automatique des extraits déjà sur le disque.
     try {
       const st = await fsp.stat(dest);
-      if (st.size > 0) return { ok: true, path: dest };
-    } catch { /* pas en cache */ }
-    await scTry(() => scDownloadToFile(scId, dest, scAcctOrDefault(accountIdx)));
-    return { ok: true, path: dest };
+      const m = JSON.parse(await fsp.readFile(meta, 'utf8'));
+      if (st.size > 0 && (m.full === true || m.acct === key)) {
+        return { ok: true, path: dest, full: m.full !== false, warning: m.warning || null };
+      }
+    } catch { /* pas en cache, extrait, ou cache d'ancienne version */ }
+    const r = await scTry(() => scDownloadToFile(scId, dest, acct));
+    try {
+      await fsp.writeFile(meta, JSON.stringify({
+        full: r.full, bytes: r.bytes, acct: key, at: Date.now(), warning: r.warning || null
+      }));
+    } catch { /* fiche non écrite : on retéléchargera, sans gravité */ }
+    return { ok: true, path: dest, full: r.full, warning: r.warning || null };
   } catch (err) {
     return { ok: false, error: String(err.message || err) };
   }
@@ -1098,17 +1288,21 @@ ipcMain.handle('sc-download-to', async (_e, scId, baseName, accountIdx) => {
       const st = await fsp.stat(dest);
       if (st.size > 0) return { ok: true, path: dest };
     } catch { /* pas encore téléchargé */ }
-    // Déjà dans le cache de lecture ? On copie au lieu de retélécharger
-    const cached = path.join(app.getPath('userData'), 'sc-cache', `${scId}.mp3`);
+    // Déjà dans le cache de lecture ? On copie — MAIS seulement si c'est le
+    // morceau ENTIER : on ne veut pas exporter un extrait de 30 s dans la
+    // discothèque de l'utilisateur.
+    const cdir = path.join(app.getPath('userData'), 'sc-cache');
+    const cached = path.join(cdir, `${scId}.mp3`);
     try {
       const st = await fsp.stat(cached);
-      if (st.size > 0) {
+      const m = JSON.parse(await fsp.readFile(path.join(cdir, `${scId}.json`), 'utf8'));
+      if (st.size > 0 && m.full === true) {
         await fsp.copyFile(cached, dest);
         return { ok: true, path: dest };
       }
-    } catch { /* pas en cache */ }
-    await scTry(() => scDownloadToFile(scId, dest, scAcctOrDefault(accountIdx)));
-    return { ok: true, path: dest };
+    } catch { /* pas en cache, ou extrait : on télécharge proprement */ }
+    const r = await scTry(() => scDownloadToFile(scId, dest, scAcctOrDefault(accountIdx)));
+    return { ok: true, path: dest, full: r.full, warning: r.warning || null };
   } catch (err) {
     return { ok: false, error: String(err.message || err) };
   }

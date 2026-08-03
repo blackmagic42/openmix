@@ -291,12 +291,12 @@ function buildDeckPanel(i) {
       <span class="deck-master hidden">MASTER</span>
       <span class="beat-dots" title="Position dans la mesure (1·2·3·4)"><i></i><i></i><i></i><i></i></span>
       <span class="deck-key" title="KEY : tonalité en demi-tons — compense le changement de tonalité dû au sync (double-clic sur la valeur = reset)">
+        <button class="keylock" title="KEYLOCK : garde la tonalité d'origine quand tu changes le tempo (comme sur les CDJ)">🔒</button>
         <b>KEY</b>
         <button class="key-dn">−</button>
         <span class="key-val">0</span>
         <button class="key-up">+</button>
       </span>
-      <span class="deck-bpm">--.-<small> BPM</small></span>
     </div>
     <canvas class="wave-over"></canvas>
     <div class="queue-line" title="Glisse un morceau ici : il se lancera automatiquement à la fin du son en cours (file d'attente du deck)">
@@ -319,11 +319,15 @@ function buildDeckPanel(i) {
       </div>
       <div class="pads"></div>
       <div class="stems-col">
-        <canvas class="deck-wheel" width="96" height="96" title="Platine — tourne pendant la lecture"></canvas>
-        <span class="stems-title">STEMS</span>
-        <button class="stem-btn" data-s="vocals" title="Voix">VOX</button>
-        <button class="stem-btn" data-s="drums" title="Batterie">DRM</button>
-        <button class="stem-btn" data-s="inst" title="Instrumental (basse + mélodies)">INST</button>
+        <canvas class="deck-wheel" width="96" height="96" title="Platine : BPM et écart de tempo — double-clic sur le BPM pour le corriger à la main"></canvas>
+        <div class="stems-right">
+          <span class="stems-title">STEMS</span>
+          <div class="stems-btns">
+            <button class="stem-btn" data-s="vocals" title="Voix">VOX</button>
+            <button class="stem-btn" data-s="drums" title="Batterie">DRM</button>
+            <button class="stem-btn" data-s="inst" title="Instrumental (basse + mélodies)">INST</button>
+          </div>
+        </div>
       </div>
     </div>
     <div class="deck-controls">
@@ -337,14 +341,11 @@ function buildDeckPanel(i) {
       <button class="btn-grid-half" title="Grille ÷2 : mesures deux fois plus larges (corrige une détection au double du vrai BPM)">÷2</button>
       <button class="btn-grid-dbl" title="Grille ×2 : mesures deux fois plus serrées (corrige une détection à la moitié du vrai BPM)">×2</button>
       <div class="deck-time">0:00 · -0:00</div>
-      <label class="tempo-wrap">
-        <span class="tempo-min">--</span>
+      <label class="tempo-wrap" title="Jauge de tempo — le pourcentage et le BPM sont sur la platine">
         <span class="tempo-slider">
           <input type="range" class="tempo" min="-50" max="50" value="0" step="0.1">
           <i class="tempo-zero"></i>
         </span>
-        <span class="tempo-max">--</span>
-        <span class="tempo-val" title="BPM effectif — les traits colorés sur l'échelle montrent où sont les autres decks">--.-</span>
       </label>
     </div>
   `;
@@ -388,6 +389,7 @@ function buildDeckPanel(i) {
     keyVal: el.querySelector('.key-val'),
     keyUp: el.querySelector('.key-up'),
     keyDn: el.querySelector('.key-dn'),
+    keylock: el.querySelector('.keylock'),
     padModeBtns: [...el.querySelectorAll('.pad-modes button[data-m]')],
     cueOwner: Array(10).fill(null), // joueur qui a posé chaque cue
     loopOwner: null,                // joueur qui tient la boucle
@@ -486,9 +488,10 @@ function buildDeckPanel(i) {
   // porte de sortie quand l'analyse se trompe (ex. 162 détecté pour 145).
   // La valeur saisie est SAUVEGARDÉE sur le morceau (manualBpm : la
   // ré-analyse ne l'écrasera plus), la grille est reconstruite dessus.
-  ui.bpm.style.cursor = 'pointer';
-  ui.bpm.title = 'Double-clic : corriger le BPM à la main (sauvegardé sur le morceau)';
-  ui.bpm.addEventListener('dblclick', async () => {
+  // (l'ancien affichage BPM de l'en-tête a été retiré : le BPM vit
+  // maintenant dans le cadran du disque — c'est LUI qu'on double-clique)
+  ui.wheelCv.style.cursor = 'pointer';
+  ui.wheelCv.addEventListener('dblclick', async () => {
     if (!deck.buffer || !deck.bpm) return;
     const val = await askText(`BPM réel du deck ${i + 1} (détecté : ${deck.bpm.toFixed(1)})`, deck.bpm.toFixed(1));
     const nb = Number(String(val).replace(',', '.'));
@@ -607,6 +610,18 @@ function buildDeckPanel(i) {
   };
   ui.keyUp.addEventListener('click', () => applyKey(1));
   ui.keyDn.addEventListener('click', () => applyKey(-1));
+  // KEYLOCK : mémorisé, et rétabli au prochain lancement
+  const setLock = (on) => {
+    deck.setKeylock(on);
+    ui.keylock.classList.toggle('on', on);
+    localStorage.setItem(`keylock${i}`, on ? '1' : '0');
+  };
+  ui.keylock.addEventListener('click', () => {
+    const on = !deck.keylock;
+    setLock(on);
+    flashStatus(`Deck ${i + 1} — KEYLOCK ${on ? 'ON : la tonalité ne bougera plus avec le tempo' : 'OFF'}`);
+  });
+  setLock(localStorage.getItem(`keylock${i}`) === '1');
   ui.keyVal.addEventListener('dblclick', () => applyKey(-deck.keyShift));
   ui.applyKey = applyKey; // utilisé par les pads du mode KEY
 
@@ -759,6 +774,8 @@ const PADFX = [
   { label: 'BACKSPIN', spin: 'backspin' }
 ];
 const PAD_COUNT = 10;
+// Niveau du son SEC pendant qu'un pad FX est TENU (par type d'effet)
+const PADFX_DRY = { roll: 0, filter: 0, trans: 0, echo: 0.2, mtdelay: 0.25, reverb: 0.45, flanger: 1 };
 const padForSide = (row, side) => (side > 0 ? 10 - row : row - 1);
 // Couleur NÉON propre à chaque JOUEUR — volontairement DIFFÉRENTES des
 // couleurs de pistes (bleu/orange/vert/rose) pour toujours savoir qui est où
@@ -779,6 +796,7 @@ function formatMeasures(v) {
 function renderPads(i) {
   const ui = deckUI[i];
   ui._padViewSig = null; // force les vues par joueur à se reposer si besoin
+  ui._padSig = null;     // le contenu des pads est refait : repeint l'état
   ui.pads.forEach((p) => {
     p.classList.remove('pad-tinted', 'set-any');
     p.style.background = '';
@@ -854,15 +872,61 @@ function snapToBeat(deck, t) {
 
 // Boucle MANUELLE façon Rekordbox : IN pose le départ (calé sur le temps le
 // plus proche), OUT ferme la boucle et l'active — ✕ / EXIT pour sortir
+// Longueur de boucle en « temps » lisible (8 temps, 1/2 temps…)
+function loopLenLabel(deck) {
+  if (!deck.bpm) return '';
+  const b = (deck.loopEnd - deck.loopStart) / (60 / deck.bpm);
+  return b >= 0.94 ? `${Math.round(b)} temps` : `1/${Math.round(1 / b)} temps`;
+}
+// Boutons DÉDIÉS de la FLX6 (capturés : ÷2 = note 81, ×2 = note 83)
+function loopHalve(i) {
+  const deck = engine.decks[i];
+  if (!deck.looping) {
+    flashStatus(`Deck ${i + 1} — aucune boucle active`);
+    return;
+  }
+  const len = deck.loopEnd - deck.loopStart;
+  const minLen = deck.bpm ? (60 / deck.bpm) / 8 : 0.05;
+  if (len / 2 < minLen) {
+    flashStatus(`Deck ${i + 1} — boucle minimale atteinte`);
+    return;
+  }
+  deck.setLoop(deck.loopStart, deck.loopStart + len / 2);
+  flashStatus(`Deck ${i + 1} — 🔁 boucle ÷2 → ${loopLenLabel(deck)}`);
+}
+function loopDouble(i) {
+  const deck = engine.decks[i];
+  if (!deck.looping) {
+    flashStatus(`Deck ${i + 1} — aucune boucle active`);
+    return;
+  }
+  const end = deck.loopStart + (deck.loopEnd - deck.loopStart) * 2;
+  if (end > deck.duration) {
+    flashStatus(`Deck ${i + 1} — la boucle dépasserait la fin du morceau`);
+    return;
+  }
+  deck.setLoop(deck.loopStart, end);
+  flashStatus(`Deck ${i + 1} — 🔁 boucle ×2 → ${loopLenLabel(deck)}`);
+}
 function loopIn(i) {
   const deck = engine.decks[i];
   if (!deck.buffer) return;
+  // Pendant une boucle, IN divise aussi (sérigraphie « 1/2X »)
+  if (deck.looping) {
+    loopHalve(i);
+    return;
+  }
   deck._loopInPoint = snapToBeat(deck, deck.currentTime());
   flashStatus(`Deck ${i + 1} — LOOP IN posé à ${formatTime(deck._loopInPoint)} (OUT pour fermer)`);
 }
 function loopOut(i) {
   const deck = engine.decks[i];
   if (!deck.buffer) return;
+  // Pendant une boucle, OUT double aussi (sérigraphie « 2X »)
+  if (deck.looping) {
+    loopDouble(i);
+    return;
+  }
   if (deck._loopInPoint == null) {
     flashStatus(`Deck ${i + 1} — pose d'abord le IN`);
     return;
@@ -932,42 +996,83 @@ function drawDeckWheel(ui, deck, t) {
   const cv = ui.wheelCv;
   if (!cv) return;
   const playing = deck.playing;
+  // Écart de tempo affiché AU CENTRE du disque, comme sur un CDJ
+  const pct = ((deck.tempo || 1) - 1) * 100;
+  const pctTxt = `${pct >= 0 ? '+' : ''}${pct.toFixed(1)}%`;
   // à l'arrêt : un seul dessin (signature), en lecture : chaque frame
-  const sig = playing ? null : `stop:${deck.buffer ? 1 : 0}`;
+  const sig = playing ? null : `stop:${deck.buffer ? 1 : 0}:${pctTxt}:${deck.keylock ? 1 : 0}:${deck.bpm}`;
   if (sig && ui._wheelSig === sig) return;
   ui._wheelSig = sig;
+
+  // RÉSOLUTION RÉELLE : le canevas était figé à 96 px pour un affichage de
+  // 48 px — le texte tombait à 6 px, illisible. On dessine à la taille
+  // affichée × la densité de l'écran, dans un repère de 100 unités.
+  const dpr = window.devicePixelRatio || 1;
+  const cssW = cv.clientWidth || 86;
+  const px = Math.round(cssW * dpr);
+  if (cv.width !== px) { cv.width = px; cv.height = px; }
   const g = cv.getContext('2d');
-  g.clearRect(0, 0, 96, 96);
-  const c = 48;
+  const k = px / 100;                 // échelle : on raisonne en /100
+  g.setTransform(k, 0, 0, k, 0, 0);
+  g.clearRect(0, 0, 100, 100);
+  const c = 50;
+
+  // Anneau extérieur
   g.beginPath();
-  g.arc(c, c, 44, 0, Math.PI * 2);
+  g.arc(c, c, 46, 0, Math.PI * 2);
   g.lineWidth = 3;
   g.strokeStyle = '#2d7df1';
   g.globalAlpha = playing ? 0.95 : 0.3;
   g.stroke();
   g.globalAlpha = 1;
   g.beginPath();
-  g.arc(c, c, 40, 0, Math.PI * 2);
+  g.arc(c, c, 42, 0, Math.PI * 2);
   g.fillStyle = '#0a0b0e';
   g.fill();
   g.strokeStyle = 'rgba(255,255,255,0.05)';
   g.lineWidth = 1;
-  for (let r = 14; r < 38; r += 6) {
+  for (let r = 30; r < 42; r += 5) {
     g.beginPath();
     g.arc(c, c, r, 0, Math.PI * 2);
     g.stroke();
   }
-  const ang = (t || 0) * 3.49; // ~33 tours/minute
+  // Repère de rotation (~33 tr/min) : dans la COURONNE, il ne passe plus
+  // devant les chiffres
+  const ang = (t || 0) * 3.49;
   g.beginPath();
-  g.moveTo(c + Math.cos(ang) * 12, c + Math.sin(ang) * 12);
-  g.lineTo(c + Math.cos(ang) * 38, c + Math.sin(ang) * 38);
-  g.lineWidth = 2.5;
+  g.moveTo(c + Math.cos(ang) * 29, c + Math.sin(ang) * 29);
+  g.lineTo(c + Math.cos(ang) * 41, c + Math.sin(ang) * 41);
+  g.lineWidth = 3;
   g.strokeStyle = playing ? '#2d7df1' : '#3a4258';
   g.stroke();
+
+  // --- CADRAN CENTRAL façon CDJ ---
   g.beginPath();
-  g.arc(c, c, 4, 0, Math.PI * 2);
-  g.fillStyle = '#15171c';
+  g.arc(c, c, 30, 0, Math.PI * 2);
+  g.fillStyle = 'rgba(6,8,11,0.95)';
   g.fill();
+  g.strokeStyle = 'rgba(255,255,255,0.08)';
+  g.lineWidth = 1;
+  g.stroke();
+
+  g.textAlign = 'center';
+  g.textBaseline = 'middle';
+  const MONO = 'ui-monospace, Menlo, Consolas, monospace';
+  const bpmNow = deck.bpm ? (deck.bpm * (deck.tempo || 1)) : null;
+  g.font = `800 19px ${MONO}`;
+  g.fillStyle = deck.buffer ? '#eef2f8' : '#39414f';
+  g.fillText(bpmNow ? bpmNow.toFixed(2) : '--.--', c, c - 8);
+
+  // Écart de tempo : VERT à zéro, ORANGE dès qu'on s'écarte — on voit d'un
+  // coup d'œil où on est par rapport à la jauge, sans la regarder
+  g.font = `800 14px ${MONO}`;
+  g.fillStyle = Math.abs(pct) < 0.05 ? '#5fe08a' : '#ffb054';
+  g.fillText(pctTxt, c, c + 8);
+
+  // Tonalité verrouillée / plage du fader
+  g.font = `800 10px ${MONO}`;
+  g.fillStyle = deck.keylock ? '#ffd24a' : '#5b6478';
+  g.fillText(deck.keylock ? 'KEYLOCK' : '± 6 %', c, c + 21);
 }
 
 // Saut de N mesures (négatif = arrière). Boucle active = c'est elle qui bouge.
@@ -1310,39 +1415,23 @@ function padSpinFx(i, idx, on, kind) {
     engine.resume();
     const wasPlaying = deck.playing;
     if (wasPlaying) deck.pause();
-    deck.scrubStart();
-    const s = {
-      pos: deck.currentTime(),
+    // Son CONTINU du moteur (tranche inversée + rampe de vitesse) : propre
+    // à toutes les vitesses — plus aucun grain de scrub ici
+    deck.spinSound(kind);
+    ui._spinFx = {
       pos0: deck.currentTime(),
       start: performance.now(),
-      vel: kind === 'backspin' ? -3 : (deck.tempo || 1),
-      decel: kind === 'backspin' ? 2.4 : 1.6,
-      t: performance.now(),
-      wasPlaying,
-      raf: 0
+      padIdx: idx,
+      wasPlaying
     };
-    ui._spinFx = s;
-    const step = () => {
-      if (ui._spinFx !== s) return;
-      const now = performance.now();
-      const dt = Math.min(0.05, (now - s.t) / 1000);
-      s.t = now;
-      s.vel = s.vel > 0
-        ? Math.max(0, s.vel - s.decel * dt)
-        : Math.min(0, s.vel + s.decel * dt);
-      s.pos = Math.max(0, s.pos + s.vel * dt);
-      deck.scrubMove(s.pos);
-      s.raf = requestAnimationFrame(step);
-    };
-    s.raf = requestAnimationFrame(step);
     if (ui.pads[idx]) ui.pads[idx].classList.add('on');
     padFxChipShow(i, label);
+    ledTick();
   } else {
     const s = ui._spinFx;
     if (!s) return;
     ui._spinFx = null;
-    cancelAnimationFrame(s.raf);
-    deck.scrubEnd();
+    deck.stopSpinSound();
     if (s.wasPlaying) {
       // Reprise CALÉE : position d'origine + temps écoulé (comme si le
       // son n'avait jamais été touché) — c'était juste un effet sonore
@@ -1386,14 +1475,22 @@ function padFxPress(i, idx, on) {
     engine.resume();
     ui._padFxHeld = idx;
     engine.setPadFx(i, preset);
+    // Le son SEC du deck se dose selon la NATURE de l'effet : « c'est le
+    // son qu'on manipule », il ne s'ajoute pas par-dessus. ROLL/SWEEP/
+    // TRANS remplacent tout, ECHO/DELAY coupent avec la traînée, REVERB
+    // garde un lit, FLANGER a BESOIN du sec (c'est le peigne des deux).
+    engine.decks[i]._padDryHold = PADFX_DRY[preset.type] ?? 1;
     if (ui.pads[idx]) ui.pads[idx].classList.add('on');
     padFxChipShow(i, preset.label);
+    ledTick(); // LED du pad TENU : retour immédiat, sans attendre le tick
   } else {
     if (ui._padFxHeld !== idx) return;
     ui._padFxHeld = null;
     engine.setPadFx(i, null);
+    engine.decks[i]._padDryHold = null;
     if (ui.pads[idx]) ui.pads[idx].classList.remove('on');
     padFxChipShow(i, null);
+    ledTick();
   }
 }
 
@@ -1661,25 +1758,37 @@ function updateTempoLabel(i) {
   const ui = deckUI[i];
   const pct = (deck.tempo - 1) * 100;
   ui.tempo.value = pct;
-  if (deck.bpm) {
-    // Échelle en BPM réels : bornes atteignables + valeur actuelle
-    ui.tempoVal.textContent = (deck.bpm * deck.tempo).toFixed(1);
-    ui.tempoMin.textContent = Math.round(deck.bpm * 0.5);
-    ui.tempoMax.textContent = Math.round(deck.bpm * 1.5);
-  } else {
-    ui.tempoVal.textContent = `${pct >= 0 ? '+' : ''}${pct.toFixed(1)}%`;
-    ui.tempoMin.textContent = '--';
-    ui.tempoMax.textContent = '--';
-  }
+  // La valeur affichée près de la jauge est TOUJOURS le POURCENTAGE (la
+  // langue du fader physique) : sur un deck syncé, c'est LA valeur où
+  // amener la jauge (« je dois d'abord mettre le bouton sur le +5,5 % »)
+  // avant de reprendre la main — le BPM, lui, est affiché en haut du deck.
+  // (plus AUCUN chiffre autour de la jauge : le BPM et le % vivent sur la
+  // platine, demande de David — « laisse sur le deck avec les % »)
 }
 
 function syncDeck(i) {
   engine.resume();
+  const d = engine.decks[i];
+  const mi = engine.masterIdx !== null ? engine.masterIdx : engine.autoMasterIdx;
+  // Le MASTER peut être SYNC : on arme sans toucher à SON tempo (il est la
+  // référence) — s'il redevient esclave plus tard, la passation le re-vise
+  if (mi === i && d.bpm) {
+    d.synced = true;
+    d._syncBase = d.tempo;
+    d._syncRef = d.tempo;
+    flashStatus(`Deck ${i + 1} — MASTER + SYNC`);
+    return;
+  }
   if (engine.sync(i)) {
     updateTempoLabel(i);
     flashStatus(`Deck ${i + 1} calé sur le master`);
+  } else if (d.bpm) {
+    // Pas encore de référence ? SYNC s'ARME quand même : le verrou
+    // auto-réparant le calera dès qu'un autre son jouera
+    d.synced = true;
+    flashStatus(`Deck ${i + 1} — SYNC armé (se calera dès qu'un autre son jouera)`);
   } else {
-    flashStatus(`SYNC impossible : il faut un autre deck en lecture avec un BPM connu`);
+    flashStatus(`SYNC impossible : BPM inconnu (analyse le morceau d'abord)`);
   }
 }
 
@@ -2020,7 +2129,7 @@ function buildFxBar() {
   mWrap.className = 'fx-master';
   mWrap.innerHTML = `
     <b class="fx-master-title">MASTER</b>
-    <div class="fx-cell fxm-type" title="Effet du mix — clic : suivant"><b class="fx-cell-lbl">EFFET</b><span class="fx-cell-val">Echo</span></div>
+    <div class="fx-cell fxm-type" title="Effet du mix"><b class="fx-cell-lbl">EFFET</b><select class="fx-cell-val fxm-type-sel">${FX_TYPE_OPTIONS}</select></div>
     <div class="fx-cell fxm-beats" title="Durée — clic : ×2 (reboucle)"><b class="fx-cell-lbl">DURÉE</b><span class="fx-cell-val">1/2</span></div>
     <div class="fx-cell fxm-level" title="Niveau — clic : +25 %"><b class="fx-cell-lbl">NIVEAU</b><span class="fx-cell-val">0%</span></div>
     <div class="fx-cell fx-cell-onoff fxm-on" title="FX du MIX ENTIER on/off"><b class="fx-cell-lbl">MIX</b><span class="fx-cell-val fx-badge">OFF</span></div>
@@ -2032,10 +2141,10 @@ function buildFxBar() {
     on: mWrap.querySelector('.fxm-on .fx-cell-val')
   };
   uiRefs.masterFxEls = mfxEls;
-  mWrap.querySelector('.fxm-type').addEventListener('click', () => {
-    const u = engine.ensureMasterFx();
-    const idx = Math.max(0, MFX_TYPES.findIndex(([v]) => v === u.type));
-    u.setType(MFX_TYPES[(idx + 1) % MFX_TYPES.length][0]);
+  // MENU DÉROULANT (demande David : « voir où on va ») — remplace l'ancien
+  // « clic = effet suivant » à l'aveugle
+  mWrap.querySelector('.fxm-type-sel').addEventListener('change', (e) => {
+    engine.ensureMasterFx().setType(e.target.value);
     updateMasterFxRow();
   });
   mWrap.querySelector('.fxm-beats').addEventListener('click', () => {
@@ -2081,8 +2190,12 @@ function updateMasterFxRow() {
     els.on.classList.remove('live');
     return;
   }
-  const tt = (uiRefs.masterFxTypes || []).find(([v]) => v === u.type);
-  els.type.textContent = tt ? tt[1] : u.type;
+  // La cellule EFFET est un <select> : on synchronise sa VALEUR
+  if (els.type.tagName === 'SELECT') els.type.value = u.type;
+  else {
+    const tt = (uiRefs.masterFxTypes || []).find(([v]) => v === u.type);
+    els.type.textContent = tt ? tt[1] : u.type;
+  }
   els.beats.textContent = u.beatsMult >= 1 ? String(u.beatsMult) : `1/${Math.round(1 / u.beatsMult)}`;
   els.level.textContent = `${Math.round(u.level * 100)}%`;
   els.on.textContent = u.enabled ? 'ON' : 'OFF';
@@ -2126,6 +2239,16 @@ function drawFxLevelKnob() {
 }
 
 // Remplit les cellules FX depuis l'unité actuellement affichée (gpFxShown)
+// Codes COURTS des effets pour les vignettes de la matrice FX — jamais
+// d'espace (« MT Delay » passait sur deux lignes et cassait l'affichage)
+const FX_SHORT = {
+  delay: 'DLY', echo: 'ECHO', spiral: 'SPIR', mtdelay: 'MTDL',
+  upecho: 'ECH↑', downecho: 'ECH↓', lowcut: 'LCUT', pingpong: 'PONG',
+  reverb: 'REV', flanger: 'FLNG', phaser: 'PHSR', pan: 'PAN',
+  trans: 'TRNS', filter: 'FILT', roll: 'ROLL', robot: 'RBOT',
+  helix: 'HLX', crush: 'CRSH'
+};
+
 function updateFxPanel() {
   const p = uiRefs.fxPanel;
   if (!p) return;
@@ -2186,10 +2309,8 @@ function updateFxPanel() {
       s.classList.toggle('mine', sonsGrad[i] !== 'transparent');
     });
   };
-  badges('type', (i) => {
-    const ts = uiRefs.fxUnits[i].typeSel;
-    return ts.options[ts.selectedIndex].textContent.trim().slice(0, 4);
-  }, (i) => gpFxTypeStep(i, 1));
+  badges('type', (i) => FX_SHORT[engine.fx[i].type] || engine.fx[i].type.slice(0, 4).toUpperCase(),
+    (i) => gpFxTypeStep(i, 1));
   badges('beats', (i) => {
     const bs = uiRefs.fxUnits[i].beatsSel;
     return bs.options[bs.selectedIndex].textContent.trim();
@@ -2303,6 +2424,17 @@ function renderLibrary() {
     `;
     const isNavRow = t.plRow || t.fsRow || t.scRootRow || t.plRootRow || t.scLikes || t.fsUpRow || t.scAccountRow;
     tr.children[2].textContent = isNavRow ? t.name : title;
+    // MORCEAU PROTÉGÉ (DRM) : repéré DÈS LA LISTE — jamais de mauvaise
+    // surprise en pleine soirée. SoundCloud ne le déverrouille que pour ses
+    // logiciels partenaires sous licence.
+    if (t.drm) {
+      tr.classList.add('drm');
+      tr.title = 'Morceau protégé (DRM) : SoundCloud ne le déverrouille que pour ses logiciels partenaires — illisible ici';
+      const lock = document.createElement('span');
+      lock.className = 'drm-lock';
+      lock.textContent = '🔒';
+      tr.children[2].prepend(lock);
+    }
     tr.children[3].textContent = isNavRow ? '' : artist;
     tr.addEventListener('click', () => {
       library.selection = idx;
@@ -2652,6 +2784,11 @@ function remotePushWave(i) {
 async function loadTrackToDeck(i, track, autoplay = false) {
   const ui = deckUI[i];
   if (!track || track.scPlaylist || ui.loading) return;
+  // Protégé (DRM) : refus IMMÉDIAT, sans attendre un aller-retour réseau
+  if (track.drm) {
+    flashStatus(`🔒 « ${track.name} » est protégé (DRM) : SoundCloud ne le déverrouille que pour ses partenaires sous licence`);
+    return;
+  }
   // Refus si le MÊME son joue déjà sur un autre deck
   const dup = engine.decks.findIndex((dk, j) => j !== i && dk.playing && dk.track &&
     ((dk.track.path && track.path && dk.track.path === track.path) ||
@@ -3134,7 +3271,25 @@ ensureGpCursors();
 // Et quand une BOUCLE de la taille de la rangée tourne : anneau animé
 // autour du knob, couleur du joueur qui tient la boucle.
 const gpKnobMarks = new Map(); // "deck:rangée" -> { l, r, ring }
+let gpKnobMarkSig = ''; // garde : 3600 écritures de style/s pour rien
 function gpUpdateKnobMarks() {
+  // FLUIDITÉ : appelée 60×/s même sans manette et decks vides, elle
+  // réécrivait 60 styles par image (3600/s) pour un affichage qui ne bouge
+  // qu'en posant un cue ou une boucle. Signature d'abord, travail ensuite.
+  let sig = '';
+  for (let d = 0; d < 4; d++) {
+    const dk = engine.decks[d];
+    const u = deckUI[d];
+    let bits = 0;
+    if (dk.hotCues) {
+      for (let k = 0; k < dk.hotCues.length; k++) if (dk.hotCues[k] != null) bits |= 1 << k;
+    }
+    sig += `${bits}:${u.cueOwner ? u.cueOwner.map((o) => (o ? o.join('.') : '-')).join(',') : ''}`
+      + `:${dk.looping ? dk._loopBeats : 0}:${u.jumpScale}:${u.loopOwner}:${dk.playing ? 1 : 0}|`;
+  }
+  // la garde sur la taille laisse la 1re passe CRÉER les étiquettes
+  if (sig === gpKnobMarkSig && gpKnobMarks.size >= 4 * GP_KNOBS.length) return;
+  gpKnobMarkSig = sig;
   for (let d = 0; d < 4; d++) {
     const deck = engine.decks[d];
     const ui = deckUI[d];
@@ -4220,25 +4375,13 @@ const wavePlayhead = document.getElementById('wave-playhead');
 const MIDI_SEL_NOTES = [29, 31, 28, 20]; // channel select : decks 1-4 (canal 5)
 function midiFeedback(now) {
   if (!midi.output) return;
-  const blink = (now % 500) < 250; // clignotant 2 Hz
+  // UNIQUEMENT vumètres + channel select : les LED des BOUTONS sont pilotées
+  // par ledTick (tables de notes VALIDÉES en direct). Avant la fusion, les
+  // deux systèmes se battaient sur les mêmes LED — valeurs alternées à
+  // chaque frame = scintillement + tempête de re-déclarations de la platine
   for (let i = 0; i < 4; i++) {
-    const d = engine.decks[i];
-    // Vumètre de la tranche (rouge compris : même valeur que les mètres écran)
     midi.setVu(i, Math.min(1, stripUI[i].meterVal || 0));
-    midi.setLed(i, 11, d.playing);                       // PLAY
-    midi.setLed(i, 12, !!d.buffer && !d.playing);        // CUE (prêt, à l'arrêt)
-    midi.setLed(i, 88, d.synced);                        // SYNC
-    // Boucle : IN fixe quand un point est posé, IN+OUT clignotent en boucle
-    midi.setLed(i, 16, d.looping ? blink : d._loopInPoint != null);
-    midi.setLed(i, 17, d.looping ? blink : false);
-    midi.setLed(i, 77, d.looping);                       // RELOOP/EXIT
   }
-  // FX : le bouton clignote dès qu'un FX est actif quelque part — la LED de
-  // la FLX6 (MERGE FX) n'écoute peut-être pas le canal du bouton : on émet
-  // la note 71 sur TOUS les canaux plausibles
-  const fxOn = engine.fx.some((u) => u.enabled) ||
-    engine.padFx.some((u) => u && u.enabled);
-  for (let ch = 0; ch < 8; ch++) midi.setLed(ch, 71, fxOn && blink);
   // Channel select : la position du deck ACTIF reste allumée
   MIDI_SEL_NOTES.forEach((n, i) => midi.setLed(5, n, i === activeDeck));
 }
@@ -4266,10 +4409,18 @@ function frameBody(now) {
   for (let i = 0; i < 4; i++) {
     const deck = engine.decks[i];
     const ui = deckUI[i];
-    const t = deck.currentTime();
+    // Pendant un V.BRAKE / BACKSPIN, le son « continue » virtuellement en
+    // dessous : l'AFFICHAGE suit cette vraie avancée, pas le rembobinage
+    // sonore — on voit où on en est et où la lecture va reprendre, donc on
+    // peut DOSER l'effet au temps près (David)
+    const sfx = ui._spinFx;
+    const t = (sfx && sfx.wasPlaying)
+      ? Math.min(deck.duration || 0, sfx.pos0 + ((now - sfx.start) / 1000) * (deck.tempo || 1))
+      : deck.currentTime();
 
     // Optimisation : ne redessine que si quelque chose a bougé
-    const cueSig = deck.hotCues ? deck.hotCues.map(c => (c == null ? '' : Math.round(c * 20))).join(',') : '';
+    const cueSig = (deck.hotCues ? deck.hotCues.map(c => (c == null ? '' : Math.round(c * 20))).join(',') : '')
+      + '|' + Math.round((deck.cuePoint || 0) * 50);
     // La fenêtre visible est en TEMPS RÉEL : on la convertit en temps du fichier
     // selon le tempo du deck. Ainsi, deux decks au même BPM effectif affichent
     // des mesures de la même largeur, quelle que soit leur vitesse de lecture.
@@ -4278,17 +4429,25 @@ function frameBody(now) {
     const dispTempo = gpBend[i] ? gpBend[i].tempo : (deck.tempo || 1);
     const deckWindow = waveWindowSec * dispTempo;
     const zoomSig = `${t.toFixed(3)}|${deckWindow.toFixed(3)}|${deck.looping ? deck.loopStart + '-' + deck.loopEnd : ''}|${deck._loopInPoint ?? ''}|${deck.peaks ? deck.peaks.duration : 0}|${deck.beatOffset}|${deck.bpm}|${deck.gridShift}|${deck.barAnchor}|${deck.beats ? deck.beats.length : 0}|${getGlobalGridOffset()}|${cueSig}`;
-    if (ui._zoomSig !== zoomSig) {
+    // PERF : le tracé de la vague zoomée est LE plus gros poste CPU — il
+    // est plafonné à ~30 images/s (invisible à l'œil sur un défilement,
+    // et divise par deux le coût sur les machines modestes)
+    if (ui._zoomSig !== zoomSig && now - (ui._zoomAt || 0) >= 32) {
+      ui._zoomAt = now;
       ui._zoomSig = zoomSig;
       // FENÊTRE FIXE, délibérément : l'échelle × tempo (tentée puis
       // RETIRÉE) faisait BOUGER tout le tracé à chaque mise à jour interne
       // de vitesse — « tu l'as rendu mobile, encore pire ». L'alignement
       // visuel des beats est garanti par l'aimant à zéro du calage +
       // le servo, PAS par l'échelle. Ne pas re-tenter.
-      drawZoom(ui.wave.canvas, deck, deckWindow);
+      // t = position affichée (virtuelle pendant un V.BRAKE/BACKSPIN)
+      drawZoom(ui.wave.canvas, deck, deckWindow, t);
     }
     const overSig = deck.peaks
-      ? `${Math.round((t / deck.peaks.duration) * ui.over.clientWidth)}|${deck.looping ? deck.loopStart : ''}|${deck.peaks.duration}|${cueSig}`
+      // ui.over.width (attribut du canvas) et NON clientWidth : lire une
+      // dimension CSS force le navigateur à recalculer la mise en page au
+      // milieu de la boucle de rendu — l'attribut ne coûte rien
+      ? `${Math.round((t / deck.peaks.duration) * ui.over.width)}|${deck.looping ? deck.loopStart : ''}|${deck.peaks.duration}|${cueSig}`
       : 'vide';
     if (ui._overSig !== overSig) {
       ui._overSig = overSig;
@@ -4324,8 +4483,21 @@ function frameBody(now) {
       return { active: false, owners: [] };
     };
     const gpModes = new Map();
-    for (const [g, s2] of gamepad.pads) gpModes.set(String(g), s2.mode);
-    ui.pads.forEach((p, idx) => {
+    let gpModesSig = '';
+    for (const [g, s2] of gamepad.pads) {
+      gpModes.set(String(g), s2.mode);
+      gpModesSig += `${g}:${s2.mode},`;
+    }
+    // SIGNATURE DU BLOC PADS : c'était le seul morceau de la boucle sans
+    // garde — 40 interrogations du DOM + ~120 écritures de classes par
+    // image, pour un état qui ne bouge qu'à l'action de l'utilisateur.
+    const padSig = `${ui.padMode}|${ui._mergedMode || ''}|${ui._padViewSig}|${ui.jumpScale}`
+      + `|${deck.keyShift}|${deck.looping ? deck._loopBeats : ''}|${ui.loopOwner}`
+      + `|${ui.cueOwner ? ui.cueOwner.map((o) => (o ? o.join('.') : '-')).join(',') : ''}`
+      + `|${cueSig}|${gpModesSig}|${ui._padFxHeld}|${ui._spinFx ? 1 : 0}`;
+    if (ui._padSig !== padSig) {
+      ui._padSig = padSig;
+      ui.pads.forEach((p, idx) => {
       const segs = p.querySelectorAll('.pad-seg, .pad-band');
       if (segs.length) {
         // Pad divisé (segments ou bandes) : seule la PARTIE du propriétaire
@@ -4351,7 +4523,8 @@ function frameBody(now) {
       if (stt.active) p.classList.add(mode === 'hotcue' ? 'set' : 'on');
       // Cue d'un JOUEUR = rempli de sa couleur · cue souris/ancien = repère discret
       p.classList.toggle('set-owned', !!own);
-    });
+      });
+    }
 
     drawDeckWheel(ui, deck, t); // la platine tourne pendant la lecture
     if (deck.buffer) {
@@ -4381,11 +4554,16 @@ function frameBody(now) {
         if (mstr && mstr.bpm && mstr.playing) ebpm = mstr.bpm * mstr.tempo;
       }
       const bpmText = ebpm ? ebpm.toFixed(1) : '--.-';
-      if (ui._bpmText !== bpmText) {
-        ui._bpmText = bpmText;
-        ui.bpm.innerHTML = `${bpmText}<small> BPM</small>`;
+      // % du tempo = la POSITION DE JAUGE correspondante (toujours visible :
+      // sur un deck syncé c'est là qu'il faut amener le fader physique
+      // pour reprendre la main sans saut)
+      const pctT = ((deck.tempo || 1) - 1) * 100;
+      const pctText = deck.bpm ? `${pctT >= 0 ? '+' : ''}${pctT.toFixed(1)}%` : '';
+      if (ui._bpmText !== bpmText + pctText) {
+        ui._bpmText = bpmText + pctText;
+        if (ui.bpm) ui.bpm.innerHTML = `${bpmText}<small> BPM</small>`;
         ui.wave.bpm.textContent = bpmText;
-        if (deck.bpm) ui.tempoVal.textContent = bpmText;
+        if (pctText && ui.tempoVal) ui.tempoVal.textContent = pctText;
       }
     }
 
@@ -4609,7 +4787,51 @@ function masterFxBeatsStep(dir) {
   flashStatus(`FX MASTER — durée ${b >= 1 ? b : `1/${Math.round(1 / b)}`} temps`);
   return true;
 }
+// Liste canonique des effets (celle des menus déroulants) : sert à la
+// navigation SHIFT+BEAT ◄/► — parcourir les effets depuis la platine
+const FX_TYPES_LIST = [...FX_TYPE_OPTIONS.matchAll(/value="([^"]+)"[^>]*>([^<]+)/g)]
+  .map((m2) => [m2[1], m2[2].trim()]);
+function fxCycleType(dir) {
+  const step = (u) => {
+    const idx = Math.max(0, FX_TYPES_LIST.findIndex(([v]) => v === u.type));
+    const nt = FX_TYPES_LIST[(idx + dir + FX_TYPES_LIST.length) % FX_TYPES_LIST.length];
+    u.setType(nt[0]);
+    return nt;
+  };
+  if (midiFxTarget === 'master') {
+    const nt = step(engine.ensureMasterFx());
+    updateMasterFxRow();
+    flashStatus(`FX MASTER — effet : ${nt[1]}`);
+  } else {
+    const uI = midiFxUnit();
+    const nt = step(engine.fx[uI]);
+    if (uiRefs.fxUnits[uI] && uiRefs.fxUnits[uI].typeSel) uiRefs.fxUnits[uI].typeSel.value = nt[0];
+    flashStatus(`FX ${uI + 1} — effet : ${nt[1]}`);
+  }
+}
+
 const tempoHintAt = [0, 0, 0, 0]; // limiteur de l'indicateur de reprise tempo
+// Note de la position COURANTE du sélecteur FX de chaque section (gauche,
+// droite) — apprise au dernier appui du bouton FX : c'est l'adresse de sa lampe
+const midiFxSlotNote = [71, 71];
+// Bouton FX platine : UN SEUL effet à la fois, sur la cible du channel
+// select. Re-appui = coupé. Le NIVEAU vient de la jauge, jamais d'un défaut.
+function midiFxToggle() {
+  const targetOn = midiFxTarget === 'master'
+    ? !!(engine.masterFx && engine.masterFx.enabled)
+    : engine.fx[midiFxUnit()].enabled;
+  if (targetOn) {
+    platineFxOff();
+    flashStatus('FX coupé (platine)');
+  } else {
+    const cur = platineFxCurrent();
+    const src = cur ? { type: cur.fx.type, beatsMult: cur.fx.beatsMult, level: cur.fx.level } : null;
+    platineFxOff();
+    const where = platineFxOnTarget(src);
+    const lvl = midiFxTarget === 'master' ? engine.masterFx.level : engine.fx[midiFxUnit()].level;
+    flashStatus(`FX ACTIVÉ → ${where}${lvl === 0 ? ' — monte la jauge pour l\'entendre' : ''}`);
+  }
+}
 const midi = new MidiManager({
   press(action, deck, on) {
     const i = deck == null ? activeDeck : deck;
@@ -4656,7 +4878,7 @@ const midi = new MidiManager({
             if (!s2) return;
             if (s2.raf) cancelAnimationFrame(s2.raf);
             d.scrubEnd();
-            d.seek(Math.max(0, s2.pos));
+            d.seek(Math.max(-3600, s2.pos));
             if (s2.wasPlaying) d.play();
             engine.jogHold = false;
             for (let k = 0; k < 4; k++) engine.reanchorSync(k);
@@ -4807,26 +5029,29 @@ const midi = new MidiManager({
           }
         }
         break;
-      case 'fxOn':
-        // Bouton FX platine : UN SEUL effet à la fois, sur la cible du
-        // sélecteur. Re-appui sur la même cible = coupé. Le NIVEAU vient
-        // de la jauge, jamais d'une valeur par défaut.
+      case 'loopHalf': if (on) loopHalve(i); break;
+      case 'loopDouble': if (on) loopDouble(i); break;
+      case 'cuePfl':
+        // CUE casque de la tranche : envoie/coupe ce deck dans le casque
         if (on) {
-          const targetOn = midiFxTarget === 'master'
-            ? !!(engine.masterFx && engine.masterFx.enabled)
-            : engine.fx[midiFxUnit()].enabled;
-          if (targetOn) {
-            platineFxOff();
-            flashStatus('FX coupé (platine)');
-          } else {
-            const cur = platineFxCurrent();
-            const src = cur ? { type: cur.fx.type, beatsMult: cur.fx.beatsMult, level: cur.fx.level } : null;
-            platineFxOff();
-            const where = platineFxOnTarget(src);
-            const lvl = midiFxTarget === 'master' ? engine.masterFx.level : engine.fx[midiFxUnit()].level;
-            flashStatus(`FX ACTIVÉ → ${where}${lvl === 0 ? ' — monte la jauge pour l\'entendre' : ''}`);
-          }
+          const now2 = !engine.decks[i].cueOn;
+          engine.setCuePfl(i, now2);
+          flashStatus(engine.phonesOk
+            ? `🎧 Deck ${i + 1} — casque ${now2 ? 'ON' : 'OFF'}`
+            : `🎧 Deck ${i + 1} — casque ${now2 ? 'ON' : 'OFF'} (sortie stéréo : pas de canal casque séparé)`);
         }
+        break;
+      case 'fxSlot':
+        // Bouton FX (toutes positions du sélecteur) : mémorise l'adresse
+        // de la LAMPE de cette position, puis toggle l'effet
+        if (on) {
+          midiFxSlotNote[deck >= 3 ? 1 : 0] = 71 + (deck % 3);
+          midiFxToggle();
+        }
+        break;
+      case 'fxOn':
+        // (action générique, gardée pour l'apprentissage ⚙)
+        if (on) midiFxToggle();
         break;
       case 'keyUp': if (on && deckUI[i].applyKey) deckUI[i].applyKey(1); break;
       case 'keyDn': if (on && deckUI[i].applyKey) deckUI[i].applyKey(-1); break;
@@ -4834,14 +5059,20 @@ const midi = new MidiManager({
       case 'bpmDn': if (on) masterBpmNudge(-1); break;
       // BEAT ◄ / ► de la section FX : durée de l'effet du deck choisi au
       // CHANNEL SELECT ÷2 / ×2 (position MASTER = FX du mix)
+      case 'fxPrev': if (on) fxCycleType(-1); break;
+      case 'fxNext': if (on) fxCycleType(1); break;
       case 'fxBeatsDn':
         if (on) {
+          // SHIFT + BEAT ◄ = effet PRÉCÉDENT dans la liste (parcours rapide)
+          if (midiShiftHeld) { fxCycleType(-1); break; }
           const ok = midiFxTarget === 'master' ? masterFxBeatsStep(-1) : gpFxBeatsStep(midiFxUnit(), -1) !== false;
           midiBeatFlash(6, ok);
         }
         break;
       case 'fxBeatsUp':
         if (on) {
+          // SHIFT + BEAT ► = effet SUIVANT dans la liste
+          if (midiShiftHeld) { fxCycleType(1); break; }
           const ok = midiFxTarget === 'master' ? masterFxBeatsStep(1) : gpFxBeatsStep(midiFxUnit(), 1) !== false;
           midiBeatFlash(7, ok);
         }
@@ -4856,18 +5087,7 @@ const midi = new MidiManager({
         if (action.startsWith('pad')) {
           let idx = Number(action.slice(3)) - 1;
           if (Number.isNaN(idx)) break;
-          // SÉRIGRAPHIE FLX6 : les 8 pads physiques suivent ce qui est
-          // IMPRIMÉ sur la platine, pas l'ordre des 10 pads de l'écran.
-          // BEAT JUMP en PAIRES ◄1► ◄2► ◄4► ◄8► (en temps) ; PAD FX =
-          // ROLL½, SWEEP, FLANGER, V.BRAKE / ECHO¼, ECHO½, REVERB,
-          // BACKSPIN ; BEAT LOOP = tailles 1-16 puis IN/OUT/✕ ; KEY = ±4.
-          const HW_PAD_MAP = {
-            jump: [3, 6, 2, 7, 1, 8, 0, 9],
-            fx: [0, 1, 2, 4, 5, 6, 8, 9],
-            loop: [5, 6, 7, 8, 9, 0, 1, 2],
-            key: [1, 2, 3, 4, 5, 6, 7, 8]
-          };
-          const hw = HW_PAD_MAP[deckUI[i].padMode];
+          const hw = MIDI_HW_PAD_MAP[deckUI[i].padMode];
           if (hw && idx < 8) idx = hw[idx];
           // Mode PAD FX : le pad physique TIENT l'effet (appui/relâcher),
           // comme sur Rekordbox — les autres modes déclenchent à l'appui
@@ -5034,7 +5254,9 @@ const midi = new MidiManager({
             const dt2 = Math.min(0.05, (now2 - st.t) / 1000);
             st.t = now2;
             if (Math.abs(st.vel) > 0.02) {
-              st.pos = Math.max(0, Math.min(d.duration, st.pos + st.vel * dt2));
+              // position négative AUTORISÉE : on peut tirer le son avant
+              // son début (il démarrera plus tard) — comme à la souris
+              st.pos = Math.max(-3600, Math.min(d.duration, st.pos + st.vel * dt2));
               if (scratchSound) d.scrubMove(st.pos);
               else d.seek(st.pos);
             }
@@ -5051,7 +5273,7 @@ const midi = new MidiManager({
       // changes le BPM pour avancer ou reculer » — corrigé). Les crans
       // s'accumulent et la position saute par petits pas réguliers.
       if (!d.playing) {
-        d.seek(Math.max(0, d.currentTime() + delta * 0.005));
+        d.seek(Math.max(-3600, d.currentTime() + delta * 0.005));
         return;
       }
       engine.jogHold = true;
@@ -5061,7 +5283,7 @@ const midi = new MidiManager({
           midiSeekTimer[i] = null;
           const off = midiSeekAcc[i];
           midiSeekAcc[i] = 0;
-          if (off) d.seek(Math.max(0, d.currentTime() + off));
+          if (off) d.seek(Math.max(-3600, d.currentTime() + off));
           engine.jogHold = false;
           for (let k = 0; k < 4; k++) engine.reanchorSync(k);
         }, 70);
@@ -5073,7 +5295,8 @@ const midi = new MidiManager({
 midi.onStatus = (name) => {
   const chip = document.getElementById('midi-status');
   if (!chip) return;
-  chip.textContent = name ? `🎹 ${name}` : '🎹 Aucun contrôleur';
+  // (la pastille verte/grise est en CSS — plus d'emoji dans la barre)
+  chip.textContent = name || 'Aucun contrôleur';
   chip.className = name ? 'pad-on' : 'pad-off';
   renderMidiTable();
 };
@@ -5083,6 +5306,17 @@ midi.init();
 // Protocole Pioneer : chaque bouton s'allume en recevant SA note. Rafraîchi
 // 10×/s ; setLed n'émet que les CHANGEMENTS (cache) et l'anti-écho avale
 // les retours — zéro appui fantôme possible.
+// SÉRIGRAPHIE FLX6 : les 8 pads physiques suivent ce qui est IMPRIMÉ sur
+// la platine, pas l'ordre des 10 pads de l'écran. BEAT JUMP en PAIRES
+// ◄1► ◄2► ◄4► ◄8► (en temps) ; PAD FX = ROLL½, SWEEP, FLANGER, V.BRAKE /
+// ECHO¼, ECHO½, REVERB, BACKSPIN ; BEAT LOOP = tailles 1-16 puis IN/OUT/✕ ;
+// KEY = ±4. (partagée entre le dispatch des appuis et les LED)
+const MIDI_HW_PAD_MAP = {
+  jump: [3, 6, 2, 7, 1, 8, 0, 9],
+  fx: [0, 1, 2, 4, 5, 6, 8, 9],
+  loop: [5, 6, 7, 8, 9, 0, 1, 2],
+  key: [1, 2, 3, 4, 5, 6, 7, 8]
+};
 const LED_PAD_CH = [7, 9, 11, 13];
 const LED_MODE_NOTES = { hotcue: 27, fx: 30, jump: 32, smp: 34, loop: 109, key: 111 };
 const LED_PAD_BASE = { hotcue: 0, fx: 16, jump: 32, smp: 48, loop: 96 };
@@ -5101,7 +5335,13 @@ function ledTick() {
     midi.setLed(i, 14, loaded);            // CUE (note 14 — table finale)
     midi.setLed(i, 12, loaded);            // CUE (ancienne supposition)
     midi.setLed(i, 88, !!d.synced);        // BEAT SYNC
-    midi.setLed(i, 16, !!d.looping);       // LOOP IN
+    // BOUTON MASTER (note 92, capturée) : allumé sur le deck qui EST master
+    const iMaster = engine.masterIdx === i ||
+      (engine.masterIdx === null && engine.autoMasterIdx === i);
+    midi.setLed(i, 92, iMaster);
+    midi.setLed(i, 84, !!d.cueOn); // CUE CASQUE de la tranche
+    // LOOP IN : aussi allumé quand un point IN attend son OUT
+    midi.setLed(i, 16, d.looping || d._loopInPoint != null);
     midi.setLed(i, 17, !!d.looping);       // LOOP OUT
     midi.setLed(i, 77, !!d.looping);       // RELOOP
     midi.setLed(15, i, loaded);            // « track loaded » (canal 15)
@@ -5110,28 +5350,75 @@ function ledTick() {
       midi.setLed(i, LED_MODE_NOTES[mode], ui.padMode === mode);
     }
     // PADS : allumés selon le CONTENU du mode (hot cue posé, sample chargé,
-    // sinon pad disponible)
+    // sinon pad disponible). En mode FX, le pad TENU s'affiche seul : tous
+    // allumés au repos, et pendant l'appui SEUL le pad actif reste allumé
     const base = LED_PAD_BASE[ui.padMode];
     if (base != null) {
+      const fxHeld = ui.padMode === 'fx'
+        ? (ui._padFxHeld != null ? ui._padFxHeld : (ui._spinFx ? ui._spinFx.padIdx : null))
+        : null;
       for (let p = 0; p < 8; p++) {
         let on = true;
         if (ui.padMode === 'hotcue') on = !!(d.hotCues && d.hotCues[p] != null);
         else if (ui.padMode === 'smp') on = !!samplerBank[p];
+        else if (fxHeld != null) on = MIDI_HW_PAD_MAP.fx[p] === fxHeld;
         midi.setLed(LED_PAD_CH[i], base + p, on);
       }
     }
   }
-  // FX : les sections CLIGNOTENT AU TEMPS du master quand un effet est
-  // actif — la « magie de la platine »
-  const mi2 = engine.masterIdx !== null ? engine.masterIdx : engine.autoMasterIdx;
-  const md = mi2 != null ? engine.decks[mi2] : null;
-  const ph = md && md.playing ? engine._beatPhase(md) : null;
-  const fxActive = engine.fx.some((u) => u && u.enabled)
-    || !!(engine.masterFx && engine.masterFx.enabled);
-  const fxLed = fxActive && (ph != null ? ph < 0.5 : blink);
-  midi.setLed(4, 71, fxLed);
-  midi.setLed(5, 71, fxLed);
 }
+
+// Bouton FX ON/OFF : CLIGNOTE au temps du master dès qu'un effet est actif
+// (panneau, pad FX ou master) — cadence dédiée 60 ms : le tick 4 Hz des
+// autres LED échantillonnait le battement trop lentement, le clignotement
+// « au temps » était invisible. setLed n'émet que les changements : coût nul.
+function fxLedTick() {
+  if (!midi.outputs || !midi.outputs.length) return;
+  const fxActive = engine.fx.some((u) => u && u.enabled)
+    || !!(engine.masterFx && engine.masterFx.enabled)
+    || (engine.padFx || []).some((u) => u && u.enabled);
+  let onLed = false;
+  if (fxActive) {
+    const mi2 = engine.masterIdx !== null ? engine.masterIdx : engine.autoMasterIdx;
+    const md = mi2 != null ? engine.decks[mi2] : null;
+    const ph = md && md.playing ? engine._beatPhase(md) : null;
+    // au temps si le master joue, sinon clignotant simple 2 Hz
+    onLed = ph != null ? ph < 0.5 : (Math.floor(performance.now() / 250) % 2 === 0);
+  }
+  // RÉSOLU AVEC DAVID : la lampe du bouton FX écoute la note de la
+  // POSITION du sélecteur FX SELECT (71/72/73 = positions 1/2/3, canal 4
+  // = FX1, canal 5 = FX2) — et la DERNIÈRE adresse reçue « arme » la
+  // zone (envoyer les six n'allumait que la dernière). On ne vise donc
+  // QUE la position apprise au dernier appui du bouton, par section,
+  // en éteignant les anciennes adresses quand elle change. Réaffirmé
+  // toutes les 200 ms ; JAMAIS de CC16 (bascule la zone en mode merge).
+  const vv = onLed ? 0x7f : 0;
+  const sig = `${vv}:${midiFxSlotNote[0]}:${midiFxSlotNote[1]}`;
+  const nowF = performance.now();
+  if (sig !== _fxLedSig || nowF - _fxLedSentAt > 200) {
+    const slotChanged = _fxLedSig != null && _fxLedSig.slice(_fxLedSig.indexOf(':')) !== sig.slice(sig.indexOf(':'));
+    _fxLedSig = sig;
+    _fxLedSentAt = nowF;
+    if (slotChanged) {
+      // position changée : éteindre les AUTRES adresses d'abord (la
+      // dernière envoyée doit rester la position courante)
+      for (const st of [0x94, 0x95]) {
+        for (const n of [71, 72, 73]) {
+          if ((st === 0x94 && n === midiFxSlotNote[0]) || (st === 0x95 && n === midiFxSlotNote[1])) continue;
+          midi._pushEcho([st, n, 0]);
+          midi._sendRaw([st, n, 0]);
+        }
+      }
+    }
+    midi._pushEcho([0x94, midiFxSlotNote[0], vv]);
+    midi._sendRaw([0x94, midiFxSlotNote[0], vv]);
+    midi._pushEcho([0x95, midiFxSlotNote[1], vv]);
+    midi._sendRaw([0x95, midiFxSlotNote[1], vv]);
+  }
+}
+let _fxLedSig = null;
+let _fxLedSentAt = 0;
+setInterval(fxLedTick, 60);
 // 4 Hz suffisent (et la platine répond à CHAQUE émission par une rafale
 // de re-déclarations : moins on parle, mieux elle écoute les boutons)
 setInterval(ledTick, 250);
@@ -5163,7 +5450,7 @@ function renderGuestPanel() {
   guestPanel.textContent = '';
   const head = document.createElement('div');
   head.className = 'gp-head';
-  head.innerHTML = '<b>DEMANDES DU PUBLIC</b><span id="gp-url"></span>';
+  head.innerHTML = '<b>DEMANDES DU PUBLIC</b><a id="gp-url" href="#" title="Clic : ouvrir dans le navigateur · clic droit : copier"></a>';
   const bClear = document.createElement('button');
   bClear.textContent = 'Vider';
   bClear.addEventListener('click', async () => {
@@ -5180,9 +5467,25 @@ function renderGuestPanel() {
   qrWrap.className = 'gp-qr';
   guestPanel.appendChild(qrWrap);
   window.api.remoteStart().then(async (r) => {
+    const guestUrl = `${r.url}/guest`;
     const u = document.getElementById('gp-url');
-    if (u) u.textContent = `Invités : ${r.url}/guest`;
-    const qr = await window.api.guestQr(`${r.url}/guest`);
+    if (u) {
+      // LIEN CLIQUABLE : ouvre la page invités dans le navigateur (pour la
+      // tester ou l'envoyer), clic droit = copier dans le presse-papiers
+      u.textContent = `🔗 ${guestUrl}`;
+      u.addEventListener('click', (e) => {
+        e.preventDefault();
+        window.api.openExternal(guestUrl);
+        flashStatus(`Page invités ouverte : ${guestUrl}`);
+      });
+      u.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        navigator.clipboard.writeText(guestUrl)
+          .then(() => flashStatus('Lien invités copié — colle-le dans ton groupe 📋'))
+          .catch(() => flashStatus(guestUrl));
+      });
+    }
+    const qr = await window.api.guestQr(guestUrl);
     if (qr) {
       qrWrap.innerHTML = `<img src="${qr}" alt="QR invités">
         <span>Scanne-moi pour demander ton son</span>`;
@@ -5191,31 +5494,76 @@ function renderGuestPanel() {
   if (!guestData.votes.length && !guestData.msgs.length) {
     const e = document.createElement('div');
     e.className = 'gp-empty';
-    e.textContent = 'Aucune demande pour l\'instant — fais scanner le QR code à tes potes !';
+    e.textContent = 'Aucune demande pour l\'instant — fais scanner le QR code à tes potes, ou envoie-leur le lien ci-dessus.';
     guestPanel.appendChild(e);
+  }
+  // Titres de section : on sépare clairement les demandes des messages
+  const gpSection = (txt) => {
+    const s = document.createElement('div');
+    s.className = 'gp-sect';
+    s.textContent = txt;
+    guestPanel.appendChild(s);
+  };
+  if (guestData.votes.length) {
+    gpSection(`DEMANDES · ${guestData.votes.length}`);
   }
   guestData.votes.forEach((v) => {
     const row = document.createElement('div');
     row.className = 'gp-row';
-    row.innerHTML = `<span class="gp-votes">${v.votes} ▲</span><span class="gp-name"></span><span class="gp-bpm">${v.bpm ?? ''}</span>`;
+    row.innerHTML = `<span class="gp-votes">${v.votes} ▲</span>`
+      + (v.art ? `<img class="gp-art" src="${v.art}" alt="">` : '')
+      + '<span class="gp-name"></span>'
+      + (v.url ? '<span class="gp-sc">SC</span>' : '')
+      + `<span class="gp-bpm">${v.bpm ?? ''}</span>`;
     row.querySelector('.gp-name').textContent = v.name;
-    row.title = 'Clic : charger sur le deck actif';
-    row.addEventListener('click', () => {
+    row.title = v.url
+      ? 'Demande SoundCloud — clic : ouvrir le morceau et le charger'
+      : 'Clic : charger sur le deck actif';
+    row.addEventListener('click', async () => {
+      // Demande venue de la RECHERCHE SOUNDCLOUD des invités : on ouvre le
+      // lien dans la bibliothèque puis on charge le morceau sur le deck actif
+      // Un vote qui n'aboutit pas ne doit pas disparaître en silence : la
+      // ligne reste, marquée, avec la raison — le DJ sait quoi faire
+      const echec = (raison) => {
+        row.classList.add('gp-fail');
+        const b = row.querySelector('.gp-warn') || document.createElement('span');
+        b.className = 'gp-warn';
+        b.textContent = '⚠';
+        b.title = raison;
+        if (!row.querySelector('.gp-warn')) row.insertBefore(b, row.querySelector('.gp-bpm'));
+        row.title = raison;
+        flashStatus(raison);
+      };
+      if (v.url) {
+        flashStatus(`Chargement SoundCloud : ${v.name}…`);
+        const ok = await library.loadScUrl(v.url);
+        if (ok !== false && library.scTracks && library.scTracks.length) {
+          const t0 = library.scTracks.find((t) => !t.scPlaylist && !t.scAccountRow);
+          if (t0) {
+            loadTrackToDeck(activeDeck, t0);
+            guestPanel.classList.add('hidden');
+            return;
+          }
+        }
+        echec(`« ${v.name} » n'a pas pu être chargé depuis SoundCloud — vérifie le compte connecté dans ⚙`);
+        return;
+      }
       const tr = [...library.tracks, ...library.scTracks].find(
         (t) => !t.scPlaylist && !t.scAccountRow && t.name === v.name);
       if (tr) {
         loadTrackToDeck(activeDeck, tr);
         guestPanel.classList.add('hidden');
       } else {
-        flashStatus(`« ${v.name} » introuvable dans la bibliothèque actuelle`);
+        echec(`« ${v.name} » est introuvable dans ta bibliothèque — cherche-le sur SoundCloud`);
       }
     });
     guestPanel.appendChild(row);
   });
+  if (guestData.msgs.length) gpSection(`MESSAGES · ${guestData.msgs.length}`);
   guestData.msgs.slice().reverse().forEach((m) => {
     const row = document.createElement('div');
     row.className = 'gp-msg';
-    row.textContent = `» ${m.msg}`;
+    row.textContent = m.msg;
     guestPanel.appendChild(row);
   });
 }
@@ -5432,6 +5780,7 @@ function invalidateWaves() {
     ui._zoomSig = null;
     ui._overSig = null;
     ui.over._cache = null;
+    ui.wave.canvas._strip = null; // bande pré-rendue : à repeindre
   });
 }
 
@@ -5529,6 +5878,7 @@ async function refreshDevices() {
 document.getElementById('set-output').addEventListener('change', async (e) => {
   try {
     await engine.ctx.setSinkId(e.target.value || '');
+    engine._wireOutput(); // le nombre de canaux (casque !) dépend du périphérique
     localStorage.setItem('audioOutput', e.target.value);
     flashStatus('Sortie audio changée');
   } catch (err) {
@@ -5598,7 +5948,9 @@ document.getElementById('btn-close-settings').addEventListener('click', () => {
 
 // Restaure la sortie audio choisie précédemment
 if (localStorage.getItem('audioOutput')) {
-  engine.ctx.setSinkId(localStorage.getItem('audioOutput')).catch(() => {});
+  engine.ctx.setSinkId(localStorage.getItem('audioOutput'))
+    .then(() => engine._wireOutput())
+    .catch(() => {});
 }
 
 // --- Console téléphone : exécution des commandes reçues du téléphone ---
@@ -6221,6 +6573,10 @@ refreshScStatus().then((connected) => {
 window.addEventListener('resize', () => {
   stripUI.forEach((_, i) => refreshStrip(i));
   if (xfFader) xfFader.update();
+  // OBLIGATOIRE depuis que la signature d'aperçu utilise la largeur du
+  // canvas : sans ça, redimensionner avec un deck en pause laissait la
+  // vague à l'ancienne taille
+  invalidateWaves();
 });
 
 library.init().then(() => {

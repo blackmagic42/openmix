@@ -159,6 +159,17 @@ export class MidiManager {
     this._sendRaw(bytes);
   }
 
+  // LED pilotée par CC : certaines lampes FLX6 ne sont PAS des notes —
+  // ex. MERGE FX ILLUMINATION = CC 16 canaux 4/5 (spec officielle Pioneer,
+  // « 0xB4/0xB5 0x10, Off=0x00 On=0x7F »). Même cache que setLed.
+  setLedCC(ch, cc, on) {
+    const k = `cc${ch}:${cc}`;
+    const v = on ? 1 : 0;
+    if (this._ledState.get(k) === v) return;
+    this._ledState.set(k, v);
+    this._sendRaw([0xB0 | ch, cc, on ? 0x7f : 0]);
+  }
+
   // Vumètre d'une tranche (Pioneer DDJ : CC 2 du canal du deck, 0-127).
   // SEUL retour autorisé vers la platine : un CC (pas une note), et CC2
   // entrant n'est mappé sur AUCUNE action — même si la platine l'écho-ait,
@@ -424,7 +435,7 @@ export class MidiManager {
   }
 
   // Version du préréglage : l'augmenter régénère le mapping des appareils
-  static PRESET_V = 38;
+  static PRESET_V = 45;
 
   // Base Pioneer DDJ 4 VOIES — relevée EN DIRECT sur la DDJ-FLX6 de David :
   // canaux 0-3 = decks 1-4 (transport, EQ, volume, tempo), canal 6 = mixer
@@ -444,6 +455,11 @@ export class MidiManager {
       m[`144:${d}:16`] = { action: 'loopIn', deck: d };
       m[`144:${d}:17`] = { action: 'loopOut', deck: d };
       m[`144:${d}:77`] = { action: 'reloop', deck: d };
+      // Boutons dédiés ÷2 / ×2 de la boucle (capturés : notes 81 / 83)
+      m[`144:${d}:81`] = { action: 'loopHalf', deck: d };
+      m[`144:${d}:83`] = { action: 'loopDouble', deck: d };
+      // CUE CASQUE de la tranche (spec 3-8 : note 84, LED sur la même note)
+      m[`144:${d}:84`] = { action: 'cuePfl', deck: d };
       m[`176:${d}:0`] = { action: 'tempo', deck: d };
       m[`176:${d}:19`] = { action: 'volume', deck: d };
       m[`176:${d}:4`] = { action: 'trim', deck: d };
@@ -472,7 +488,13 @@ export class MidiManager {
     // Sections FX (canal 4 = gauche, canal 5 = droite) : ON + niveau —
     // la note 71 des DEUX canaux est bien le bouton FX (confirmé par David)
     for (const fc of [4, 5]) {
-      m[`144:${fc}:71`] = { action: 'fxOn', deck: null };
+      // Le bouton FX émet LA NOTE DE LA POSITION du sélecteur FX SELECT :
+      // 71/72/73 = positions 1/2/3 (canal 4 = FX1, canal 5 = FX2). Le code
+      // deck encode le slot (0-5) pour que l'app retienne l'adresse de la
+      // LAMPE et toggle l'effet quelle que soit la position.
+      m[`144:${fc}:71`] = { action: 'fxSlot', deck: (fc - 4) * 3 };
+      m[`144:${fc}:72`] = { action: 'fxSlot', deck: (fc - 4) * 3 + 1 };
+      m[`144:${fc}:73`] = { action: 'fxSlot', deck: (fc - 4) * 3 + 2 };
       // Niveau FX : le gros knob MERGE FX émet une PAIRE 14 bits —
       // CC2 = valeur (128 crans, largement assez) et CC34 = fraction fine
       // qui défile en DENTS DE SCIE (77→1→28…). Ne mapper QUE CC2 :
@@ -481,6 +503,10 @@ export class MidiManager {
       // BEAT ◄ / ► (relevé FLX6 : notes 6 et 7) : durée du FX ÷2 / ×2
       m[`144:${fc}:6`] = { action: 'fxBeatsDn', deck: null };
       m[`144:${fc}:7`] = { action: 'fxBeatsUp', deck: null };
+      // SHIFT+BEAT ◄ / ► (couche matérielle capturée : notes 102 / 107) :
+      // effet PRÉCÉDENT / SUIVANT dans la liste
+      m[`144:${fc}:102`] = { action: 'fxPrev', deck: null };
+      m[`144:${fc}:107`] = { action: 'fxNext', deck: null };
     }
     // CHANNEL SELECT (relevé FLX6) : un bouton par section (gauche = canal 4,
     // droite = canal 5), mêmes notes — la platine envoie une note DIFFÉRENTE
@@ -521,6 +547,13 @@ export class MidiManager {
       m[`144:${d}:63`] = { action: 'shift', deck: d };
       // SHIFT+CUE (couche matérielle, capturée : note 72) = retour au début
       m[`144:${d}:72`] = { action: 'cueBack', deck: d };
+      // SHIFT+PLAY (couche matérielle, spec : note 71 sur le canal du deck)
+      // = RECALER LA GRILLE sur la position courante
+      m[`144:${d}:71`] = { action: 'grid', deck: d };
+      // BOUTON MASTER dédié (capturé : note 92) = devenir master — sa LED
+      // s'allume sur la même note. (SHIFT+BEAT SYNC émet 93 : même action)
+      m[`144:${d}:92`] = { action: 'master', deck: d };
+      m[`144:${d}:93`] = { action: 'master', deck: d };
       m[`144:${d}:27`] = { action: 'padHotcue', deck: d };
       m[`144:${d}:30`] = { action: 'padFx', deck: d };
       m[`144:${d}:107`] = { action: 'padFx', deck: d };

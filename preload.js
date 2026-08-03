@@ -17,6 +17,7 @@ contextBridge.exposeInMainWorld('api', {
   scDownloadTo: (scId, name, acctIdx) => ipcRenderer.invoke('sc-download-to', scId, name, acctIdx),
   stemsSeparate: (p) => ipcRenderer.invoke('stems-separate', p),
   remoteStart: () => ipcRenderer.invoke('remote-start'),
+  openExternal: (url) => ipcRenderer.invoke('open-external', url),
   remoteState: (s) => ipcRenderer.send('remote-state', s),
   onRemoteCmd: (cb) => ipcRenderer.on('remote-cmd', (_e, d) => cb(d)),
   fsRoots: () => ipcRenderer.invoke('fs-roots'),

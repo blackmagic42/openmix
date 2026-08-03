@@ -4,7 +4,7 @@
 
 import { gridIndexFracAt, gridTimeAtIndex } from './engine.js';
 
-export async function computeBandPeaks(buffer, perSecond = 400) {
+export async function computeBandPeaks(buffer, perSecond = 400, opts = {}) {
   // Rendu des 3 bandes à 16 kHz : suffisant pour la couleur, 3x moins de mémoire
   const bandSr = 16000;
   const off = new OfflineAudioContext(3, Math.ceil(buffer.duration * bandSr), bandSr);
@@ -88,7 +88,10 @@ export async function computeBandPeaks(buffer, perSecond = 400) {
   // échantillons bruts à chaque frame (ça mettait les vieilles machines à
   // genoux : vagues saccadées, son qui accroche)
   const FINE_PPS = 4000;
-  const fineTotal = Math.max(1, Math.ceil(buffer.duration * FINE_PPS));
+  // opts.fine === false : l'appelant (vignette de la bibliothèque, 150 px)
+  // ne s'en sert PAS — on économise ~1 million de tranches et 2 Mo par
+  // morceau pendant le scan
+  const fineTotal = opts.fine === false ? 0 : Math.max(1, Math.ceil(buffer.duration * FINE_PPS));
   const fineTop = new Int8Array(fineTotal);
   const fineBottom = new Int8Array(fineTotal);
   for (let b = 0; b < fineTotal; b++) {
@@ -114,7 +117,7 @@ export async function computeBandPeaks(buffer, perSecond = 400) {
   return {
     top, bottom,
     low: bands[0], mid: bands[1], high: bands[2],
-    fineTop, fineBottom, finePps: FINE_PPS,
+    fineTop, fineBottom, finePps: fineTotal ? FINE_PPS : 0,
     perSecond,
     duration: buffer.duration
   };
@@ -214,7 +217,10 @@ function drawColumn(ctx, peaks, b0, b1, x, mid, scaleY) {
 }
 
 // Vue zoomée défilante : fenêtre de `windowSec` s, dessinée par colonne de pixel.
-export function drawZoom(canvas, deck, windowSec = 8) {
+// timeOverride : position à afficher SI différente de la tête de lecture —
+// pendant un V.BRAKE/BACKSPIN, on montre la position VIRTUELLE (le son
+// « continue » en dessous), pas le rembobinage sonore.
+export function drawZoom(canvas, deck, windowSec = 8, timeOverride) {
   fitCanvas(canvas);
   const ctx = canvas.getContext('2d');
   const { width: W, height: H } = canvas;
@@ -223,7 +229,7 @@ export function drawZoom(canvas, deck, windowSec = 8) {
   const peaks = deck.peaks;
   if (!peaks) return;
 
-  const time = deck.currentTime();
+  const time = timeOverride != null ? timeOverride : deck.currentTime();
   const pps = peaks.perSecond;
   const t0 = time - windowSec / 2;
   const spx = windowSec / W; // secondes par pixel
@@ -239,79 +245,113 @@ export function drawZoom(canvas, deck, windowSec = 8) {
   const useFine = finePps && spx * pps < 1 && spx * finePps >= 1;
   const useSamples = !useFine && spx * (finePps || pps) < 1 && deck.buffer;
 
-  if (useFine) {
-    const fTop = peaks.fineTop;
-    const fBot = peaks.fineBottom;
-    const fLen = fTop.length;
-    for (let x = 0; x < W; x++) {
-      const tA = t0 + x * spx;
-      let b0 = Math.floor(tA * finePps);
-      let b1 = Math.max(b0 + 1, Math.ceil((tA + spx) * finePps));
-      if (b1 <= 0 || b0 >= fLen) continue;
-      if (b0 < 0) b0 = 0;
-      if (b1 > fLen) b1 = fLen;
-      let hi = -127;
-      let lo = 127;
-      for (let b = b0; b < b1; b++) {
-        if (fTop[b] > hi) hi = fTop[b];
-        if (fBot[b] < lo) lo = fBot[b];
+  // ====================================================================
+  // BANDE PRÉ-RENDUE : la vague DÉFILE, son contenu ne change pas. On la
+  // dessine UNE FOIS sur 3 largeurs d'écran, puis chaque image se contente
+  // d'en RECOPIER la tranche visible — une opération accélérée par la carte
+  // graphique. On passe de ~1200 colonnes calculées 30 fois par seconde à
+  // un tracé complet toutes les ~8 s : c'est LE gain pour les machines
+  // modestes. Le rendu à l'écran est rigoureusement identique.
+  // ====================================================================
+  const peintureColonnes = (g, gt0, gW) => {
+    if (useFine) {
+      const fTop = peaks.fineTop;
+      const fBot = peaks.fineBottom;
+      const fLen = fTop.length;
+      for (let x = 0; x < gW; x++) {
+        const tA = gt0 + x * spx;
+        let b0 = Math.floor(tA * finePps);
+        let b1 = Math.max(b0 + 1, Math.ceil((tA + spx) * finePps));
+        if (b1 <= 0 || b0 >= fLen) continue;
+        if (b0 < 0) b0 = 0;
+        if (b1 > fLen) b1 = fLen;
+        let hi = -127;
+        let lo = 127;
+        for (let b = b0; b < b1; b++) {
+          if (fTop[b] > hi) hi = fTop[b];
+          if (fBot[b] < lo) lo = fBot[b];
+        }
+        if (hi < lo) continue;
+        const cb = Math.min(len - 1, Math.max(0, Math.floor(tA * pps)));
+        g.fillStyle = waveColor(peaks.low[cb], peaks.mid[cb], peaks.high[cb]);
+        const y0 = mid - (hi / 127) * scaleY;
+        const y1 = mid - (lo / 127) * scaleY;
+        g.fillRect(x, y0, 1, Math.max(1, y1 - y0));
       }
-      if (hi < lo) continue;
-      const cb = Math.min(len - 1, Math.max(0, Math.floor(tA * pps)));
-      ctx.globalAlpha = x < playedX ? 1 : 0.5;
-      ctx.fillStyle = waveColor(peaks.low[cb], peaks.mid[cb], peaks.high[cb]);
-      const y0 = mid - (hi / 127) * scaleY;
-      const y1 = mid - (lo / 127) * scaleY;
-      ctx.fillRect(x, y0, 1, Math.max(1, y1 - y0));
-    }
-  } else if (useSamples) {
-    const buf = deck.buffer;
-    const sr = buf.sampleRate;
-    const ch0 = buf.getChannelData(0);
-    const ch1 = buf.numberOfChannels > 1 ? buf.getChannelData(1) : ch0;
-    const total = ch0.length;
-    for (let x = 0; x < W; x++) {
-      const tA = t0 + x * spx;
-      let i0 = Math.floor(tA * sr);
-      let i1 = Math.max(i0 + 1, Math.ceil((tA + spx) * sr));
-      if (i1 <= 0 || i0 >= total) continue;
-      if (i0 < 0) i0 = 0;
-      if (i1 > total) i1 = total;
-      // TOUS les échantillons de la colonne : un stride qui en saute crée
-      // des ondes FANTÔMES par repliement (aliasing) — la « démultiplication »
-      // des ondes au zoom. Le min/max exact donne la vraie enveloppe,
-      // identique à tous les niveaux de zoom.
-      let hi = -1;
-      let lo = 1;
-      for (let s = i0; s < i1; s++) {
-        const a = ch0[s];
-        const b2 = ch1[s];
-        const mx = a > b2 ? a : b2;
-        const mn = a < b2 ? a : b2;
-        if (mx > hi) hi = mx;
-        if (mn < lo) lo = mn;
+    } else if (useSamples) {
+      const buf = deck.buffer;
+      const sr = buf.sampleRate;
+      const ch0 = buf.getChannelData(0);
+      const ch1 = buf.numberOfChannels > 1 ? buf.getChannelData(1) : ch0;
+      const total = ch0.length;
+      for (let x = 0; x < gW; x++) {
+        const tA = gt0 + x * spx;
+        let i0 = Math.floor(tA * sr);
+        let i1 = Math.max(i0 + 1, Math.ceil((tA + spx) * sr));
+        if (i1 <= 0 || i0 >= total) continue;
+        if (i0 < 0) i0 = 0;
+        if (i1 > total) i1 = total;
+        // TOUS les échantillons de la colonne : un stride qui en saute crée
+        // des ondes FANTÔMES par repliement (aliasing) — la « démultiplication »
+        // des ondes au zoom. Le min/max exact donne la vraie enveloppe,
+        // identique à tous les niveaux de zoom.
+        let hi = -1;
+        let lo = 1;
+        for (let s = i0; s < i1; s++) {
+          const a = ch0[s];
+          const b2 = ch1[s];
+          const mx = a > b2 ? a : b2;
+          const mn = a < b2 ? a : b2;
+          if (mx > hi) hi = mx;
+          if (mn < lo) lo = mn;
+        }
+        if (hi < lo) continue;
+        const b = Math.min(len - 1, Math.max(0, Math.floor(tA * pps)));
+        g.fillStyle = waveColor(peaks.low[b], peaks.mid[b], peaks.high[b]);
+        const y0 = mid - hi * scaleY;
+        const y1 = mid - lo * scaleY;
+        g.fillRect(x, y0, 1, Math.max(1, y1 - y0));
       }
-      if (hi < lo) continue;
-      const b = Math.min(len - 1, Math.max(0, Math.floor(tA * pps)));
-      ctx.globalAlpha = x < playedX ? 1 : 0.5;
-      ctx.fillStyle = waveColor(peaks.low[b], peaks.mid[b], peaks.high[b]);
-      const y0 = mid - hi * scaleY;
-      const y1 = mid - lo * scaleY;
-      ctx.fillRect(x, y0, 1, Math.max(1, y1 - y0));
+    } else {
+      for (let x = 0; x < gW; x++) {
+        const tA = gt0 + x * spx;
+        let b0 = Math.floor(tA * pps);
+        let b1 = Math.max(b0 + 1, Math.ceil((tA + spx) * pps));
+        if (b1 <= 0 || b0 >= len) continue;
+        if (b0 < 0) b0 = 0;
+        if (b1 > len) b1 = len;
+        drawColumn(g, peaks, b0, b1, x, mid, scaleY);
+      }
     }
-  } else {
-    for (let x = 0; x < W; x++) {
-      const tA = t0 + x * spx;
-      ctx.globalAlpha = x < playedX ? 1 : 0.5;
-      let b0 = Math.floor(tA * pps);
-      let b1 = Math.max(b0 + 1, Math.ceil((tA + spx) * pps));
-      if (b1 <= 0 || b0 >= len) continue;
-      if (b0 < 0) b0 = 0;
-      if (b1 > len) b1 = len;
-      drawColumn(ctx, peaks, b0, b1, x, mid, scaleY);
-    }
+  };
+
+  // La bande couvre 3 écrans : tant que la fenêtre visible reste dedans,
+  // on ne recalcule RIEN. Signature : tout ce qui change le dessin.
+  const sig = `${W}x${H}|${windowSec}|${PALETTE}|${useFine ? 'f' : useSamples ? 's' : 'b'}|${len}|${peaks.duration}`;
+  let strip = canvas._strip;
+  // peaks : IDENTITÉ du morceau — un nouveau son doit toujours repeindre
+  if (!strip || strip.sig !== sig || strip.peaks !== peaks) {
+    const cv = strip && strip.cv ? strip.cv : document.createElement('canvas');
+    cv.width = W * 3;
+    cv.height = H;
+    strip = canvas._strip = { cv, g: cv.getContext('2d'), sig, peaks, t0: NaN };
   }
-  ctx.globalAlpha = 1;
+  // Hors bande (démarrage, saut, scratch rapide) : on la recentre
+  if (!(t0 >= strip.t0 && t0 + windowSec <= strip.t0 + windowSec * 3)) {
+    strip.t0 = t0 - windowSec;                 // fenêtre visible au centre
+    strip.g.clearRect(0, 0, W * 3, H);
+    peintureColonnes(strip.g, strip.t0, W * 3);
+  }
+  // Recopie GPU : partie DÉJÀ JOUÉE en pleine opacité, partie à venir en
+  // demi-teinte — exactement l'ancien rendu, en deux appels au lieu de 1200
+  const sx = Math.round((t0 - strip.t0) / spx);
+  const pw = Math.max(0, Math.min(W, playedX));
+  if (pw > 0) ctx.drawImage(strip.cv, sx, 0, pw, H, 0, 0, pw, H);
+  if (pw < W) {
+    ctx.globalAlpha = 0.5;
+    ctx.drawImage(strip.cv, sx + pw, 0, W - pw, H, pw, 0, W - pw, H);
+    ctx.globalAlpha = 1;
+  }
 
   // Boucle active : bande orange + drapeaux IN / OUT bien visibles
   if (deck.looping) {
@@ -345,6 +385,27 @@ export function drawZoom(canvas, deck, windowSec = 8) {
       ctx.textAlign = 'left';
       ctx.fillStyle = '#ffb054';
       ctx.fillText('IN', xi + 3, 9);
+    }
+  }
+
+  // POINT CUE principal (pas les hot cues) : marqueur ORANGE bien visible,
+  // fanion en BAS (les hot cues occupent le haut) — « on ne voit pas bien
+  // le point de cue » (David)
+  if (deck.buffer && deck.cuePoint != null && deck.cuePoint > 0.005) {
+    const xc = (deck.cuePoint - t0) / windowSec * W;
+    if (xc > -14 && xc < W + 14) {
+      ctx.fillStyle = '#ff9500';
+      ctx.fillRect(xc - 1, 0, 2, H);
+      ctx.beginPath();
+      ctx.moveTo(xc - 7, H);
+      ctx.lineTo(xc + 7, H);
+      ctx.lineTo(xc, H - 10);
+      ctx.closePath();
+      ctx.fill();
+      ctx.font = '900 8px system-ui';
+      ctx.textAlign = 'left';
+      ctx.fillStyle = '#ff9500';
+      ctx.fillText('CUE', xc + 5, H - 3);
     }
   }
 

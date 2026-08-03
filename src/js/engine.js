@@ -178,8 +178,19 @@ export class Deck {
     this.eqMid.connect(this.eqHigh);
     this.eqHigh.connect(this.filter);
     this.filter.connect(this.fader);
+    // Envoi PRÉ-FADER vers le bus casque (bouton CUE casque de la tranche) :
+    // on entend le deck dans le casque même fader baissé — le vrai PFL
+    this.cueSend = ctx.createGain();
+    this.cueSend.gain.value = 0;
+    this.cueOn = false;
+    this.filter.connect(this.cueSend);
     this.fader.connect(this.xf);
-    this.xf.connect(destination);
+    // Sortie SÈCHE du deck, dosable : pendant un PAD FX tenu, l'effet
+    // MANIPULE le son (le sec se coupe) au lieu de s'additionner par-dessus.
+    // Les envois FX piquent sur xf AVANT ce gain : le wet n'est jamais coupé.
+    this.dryOut = ctx.createGain();
+    this.xf.connect(this.dryOut);
+    this.dryOut.connect(destination);
 
     // TRIM : gain d'entrée de la piste (±12 dB), avant l'EQ
     this.trim = ctx.createGain();
@@ -193,12 +204,18 @@ export class Deck {
     this.filter.connect(this.analyser);
     this.meterBuf = new Float32Array(this.analyser.fftSize);
 
-    // Point d'entrée du deck : direct vers l'EQ (via TRIM), ou via le pitch-shifter (KEY)
+    // Point d'entrée du deck : direct vers l'EQ (via TRIM), ou via le
+    // transpositeur (KEY ± et KEYLOCK). Le moteur WSOLA (AudioWorklet) est
+    // branché dès qu'il est chargé ; l'ancien décalage à deux prises reste
+    // en secours si le navigateur refuse les worklets.
     this.preIn = ctx.createGain();
     this.shifter = new PitchShifter(ctx);
     this.shifter.output.connect(this.trim);
     this.preIn.connect(this.trim);
     this.keyShift = 0;
+    this.keylock = false;   // conserver la tonalité quand le tempo change
+    this.wsola = null;      // AudioWorkletNode, posé par AudioEngine
+    this._pitchOn = false;  // le son passe-t-il actuellement par le transpositeur ?
 
     // Stems (voix / batterie / basse / instru) : 4 sources synchronisées
     this.stems = null;
@@ -345,15 +362,38 @@ export class Deck {
 
   // Tonalité en demi-tons (-7..+7), sans changer la vitesse
   setKey(semi) {
-    semi = clamp(Math.round(semi), -7, 7);
-    this.keyShift = semi;
-    try { this.preIn.disconnect(); } catch { /* rien */ }
-    if (semi === 0) {
-      this.preIn.connect(this.trim);
-    } else {
-      this.preIn.connect(this.shifter.input);
-      this.shifter.setRatio(Math.pow(2, semi / 12));
+    this.keyShift = clamp(Math.round(semi), -7, 7);
+    this._applyPitch();
+  }
+
+  // KEYLOCK : garder la tonalité d'origine quand le tempo change
+  setKeylock(on) {
+    this.keylock = !!on;
+    this._applyPitch();
+  }
+
+  // Rapport de transposition TOTAL = tonalité choisie × compensation du
+  // tempo (keylock). Un tempo à 1,06 monte le son de ~1 demi-ton : le
+  // keylock applique l'inverse pour annuler exactement cette montée.
+  _applyPitch() {
+    const key = Math.pow(2, this.keyShift / 12);
+    const lock = this.keylock && this.tempo > 0 ? 1 / this.tempo : 1;
+    const ratio = clamp(key * lock, 0.4, 2.5);
+    const need = Math.abs(ratio - 1) > 0.0015;
+    const node = this.wsola;
+    // On ne RE-ROUTE que si l'état change : rebrancher en continu ferait
+    // claquer le son à chaque micro-ajustement du servo de synchro
+    if (need !== this._pitchOn || (need && this._pitchNode !== (node ? 'w' : 'f'))) {
+      this._pitchOn = need;
+      this._pitchNode = node ? 'w' : 'f';
+      try { this.preIn.disconnect(); } catch { /* rien */ }
+      if (!need) this.preIn.connect(this.trim);
+      else if (node) this.preIn.connect(node);
+      else this.preIn.connect(this.shifter.input);
     }
+    if (!need) return;
+    if (node) node.parameters.get('ratio').setTargetAtTime(ratio, this.ctx.currentTime, 0.02);
+    else this.shifter.setRatio(ratio);
   }
 
   // TRIM : -1 -> -12 dB, 0 -> neutre, +1 -> +12 dB
@@ -565,6 +605,68 @@ export class Deck {
   }
 
   // Comportement CDJ : en pause -> pose le point cue ; en lecture -> retour au cue + pause.
+  // V.BRAKE / BACKSPIN « qualité rekordbox » : une LECTURE CONTINUE d'une
+  // tranche du morceau (inversée pour le backspin) dont la VITESSE descend
+  // en rampe native WebAudio — zéro grain, zéro hachage, le vrai son de
+  // bande qui freine / rembobine. (l'ancien moteur à grains de scrub
+  // « crachotait » à haute vitesse : des grains, ça hache par nature)
+  spinSound(kind) {
+    this.stopSpinSound();
+    if (!this.buffer) return;
+    const pos = this.currentTime();
+    const back = kind === 'backspin';
+    // BACKSPIN : départ à 7× (le « vvviiip » aigu façon rekordbox — à 3×
+    // ce n'était « pas assez backspineux ») qui retombe en ~1,5 s
+    const v0 = back ? 7 : Math.max(0.2, this.tempo || 1);
+    const decel = back ? 4.5 : 1.6;
+    const spinDur = v0 / decel;
+    const dist = (v0 * v0) / (2 * decel) + 0.15;
+    const sr = this.buffer.sampleRate;
+    const a = back ? Math.max(0, pos - dist) : Math.max(0, Math.min(pos, this.buffer.duration - 0.05));
+    const b = back ? pos : Math.min(this.buffer.duration, pos + dist);
+    const n = Math.max(sr >> 4, Math.floor((b - a) * sr));
+    const nCh = Math.min(2, this.buffer.numberOfChannels);
+    const slice = this.ctx.createBuffer(nCh, n, sr);
+    const i0 = Math.floor(a * sr);
+    for (let c = 0; c < nCh; c++) {
+      const src = this.buffer.getChannelData(c);
+      const dst = slice.getChannelData(c);
+      if (back) {
+        // inversé : le 1er échantillon de la tranche = la position actuelle
+        for (let j = 0; j < n; j++) dst[j] = src[i0 + n - 1 - j] || 0;
+      } else {
+        for (let j = 0; j < n; j++) dst[j] = src[i0 + j] || 0;
+      }
+    }
+    const s = this.ctx.createBufferSource();
+    s.buffer = slice;
+    const now = this.ctx.currentTime;
+    s.playbackRate.setValueAtTime(v0, now);
+    s.playbackRate.linearRampToValueAtTime(0.001, now + spinDur);
+    const g = this.ctx.createGain();
+    g.gain.setValueAtTime(1, now);
+    g.gain.setValueAtTime(1, now + Math.max(0.01, spinDur - 0.04));
+    g.gain.linearRampToValueAtTime(0, now + spinDur);
+    s.connect(g);
+    g.connect(this.preIn);
+    s.start(now);
+    s.stop(now + spinDur + 0.05);
+    this._spinSrc = { s, g };
+  }
+
+  stopSpinSound() {
+    if (!this._spinSrc) return;
+    const { s, g } = this._spinSrc;
+    this._spinSrc = null;
+    try {
+      const now = this.ctx.currentTime;
+      g.gain.cancelScheduledValues(now);
+      g.gain.setValueAtTime(g.gain.value, now);
+      g.gain.linearRampToValueAtTime(0, now + 0.02);
+      s.stop(now + 0.03);
+    } catch { /* déjà terminé */ }
+  }
+
   cue() {
     if (!this.buffer) return;
     if (this.playing) {
@@ -593,6 +695,9 @@ export class Deck {
     this.tempo = r;
     if (this.source) this.source.playbackRate.value = r;
     for (const s of this._extraSources) s.playbackRate.value = r;
+    // KEYLOCK : la compensation suit le tempo en direct (y compris les
+    // micro-corrections du servo de synchro, inaudibles mais exactes)
+    if (this.keylock) this._applyPitch();
   }
 
   setVolume(v) {
@@ -646,8 +751,16 @@ export class Deck {
   }
 }
 
-// Réponse impulsionnelle synthétique pour la réverb (bruit à décroissance exponentielle)
+// Réponse impulsionnelle synthétique pour la réverb (bruit à décroissance
+// exponentielle). MÉMOÏSÉE : un AudioBuffer est en lecture seule côté Web
+// Audio, toutes les unités FX peuvent partager le MÊME — on en fabriquait
+// jusqu'à 9 identiques (4 unités + master + pad FX), soit ~6,8 Mo et 25 ms
+// de calcul pour rien.
+const _impCache = new Map();
 function makeImpulse(ctx, seconds, decay) {
+  const key = `${seconds}|${decay}|${ctx.sampleRate}`;
+  const hit = _impCache.get(key);
+  if (hit) return hit;
   const sr = ctx.sampleRate;
   const len = Math.floor(sr * seconds);
   const buf = ctx.createBuffer(2, len, sr);
@@ -657,6 +770,7 @@ function makeImpulse(ctx, seconds, decay) {
       d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, decay);
     }
   }
+  _impCache.set(key, buf);
   return buf;
 }
 
@@ -722,33 +836,10 @@ export class FxUnit {
     this.shaper = ctx.createWaveShaper();
     this.shaper.curve = crushCurve(8);
 
-    // Delay simple (peu de répétitions)
-    this.dlyDelay = ctx.createDelay(4);
-    this.dlyDelay.delayTime.value = 0.25;
-    this.dlyFb = ctx.createGain();
-    this.dlyFb.gain.value = 0.22;
-    this.dlyDelay.connect(this.dlyFb);
-    this.dlyFb.connect(this.dlyDelay);
-
-    // Ping Pong (écho qui rebondit gauche/droite)
-    this.ppL = ctx.createDelay(4);
-    this.ppR = ctx.createDelay(4);
-    this.ppL.delayTime.value = 0.25;
-    this.ppR.delayTime.value = 0.25;
-    this.ppFb = ctx.createGain();
-    this.ppFb.gain.value = 0.42;
-    this.ppPanL = ctx.createStereoPanner();
-    this.ppPanL.pan.value = -0.85;
-    this.ppPanR = ctx.createStereoPanner();
-    this.ppPanR.pan.value = 0.85;
-    this.ppOut = ctx.createGain();
-    this.ppL.connect(this.ppPanL);
-    this.ppPanL.connect(this.ppOut);
-    this.ppL.connect(this.ppR);
-    this.ppR.connect(this.ppPanR);
-    this.ppPanR.connect(this.ppOut);
-    this.ppR.connect(this.ppFb);
-    this.ppFb.connect(this.ppL);
+    // (Delay simple, Ping Pong, Low Cut, variantes d'écho et MT Delay sont
+    // bâtis AU PREMIER USAGE — voir _chain/_mk plus bas : chaque
+    // createDelay(4) réserve ~1 Mo dès sa création, et une seule chaîne
+    // tourne à la fois. C'était ~50 Mo de tampon mort au démarrage.)
 
     // Phaser (4 filtres passe-tout modulés)
     this.phStages = [350, 700, 1100, 1600].map((f) => {
@@ -785,39 +876,6 @@ export class FxUnit {
     this.trOscGain.connect(this.trGain.gain);
     this.trOsc.start();
 
-    // Low Cut Echo (écho sans les basses)
-    this.lcDelay = ctx.createDelay(4);
-    this.lcDelay.delayTime.value = 0.25;
-    this.lcHp = ctx.createBiquadFilter();
-    this.lcHp.type = 'highpass';
-    this.lcHp.frequency.value = 700;
-    this.lcFb = ctx.createGain();
-    this.lcFb.gain.value = 0.5;
-    this.lcDelay.connect(this.lcHp);
-    this.lcHp.connect(this.lcFb);
-    this.lcFb.connect(this.lcDelay);
-
-    // Variantes d'écho (fabrique commune)
-    this.spiral = buildEchoLoop(ctx, { fb: 0.72, filter: { type: 'bandpass', freq: 900, q: 0.9 } });
-    this.upecho = buildEchoLoop(ctx, { fb: 0.5, filter: { type: 'highpass', freq: 500 } });
-    this.downecho = buildEchoLoop(ctx, { fb: 0.5, filter: { type: 'lowpass', freq: 1200 } });
-    this.roll = buildEchoLoop(ctx, { fb: 0.93 });
-    this.helix = buildEchoLoop(ctx, { fb: 0.97 });
-
-    // MT Delay : 3 répétitions étagées
-    this.mt1 = ctx.createDelay(4);
-    this.mt2 = ctx.createDelay(4);
-    this.mt3 = ctx.createDelay(4);
-    this.mtOut = ctx.createGain();
-    const mtG1 = ctx.createGain(); mtG1.gain.value = 0.8;
-    const mtG2 = ctx.createGain(); mtG2.gain.value = 0.55;
-    const mtG3 = ctx.createGain(); mtG3.gain.value = 0.35;
-    this.mt1.connect(mtG1); mtG1.connect(this.mtOut);
-    this.mt1.connect(this.mt2);
-    this.mt2.connect(mtG2); mtG2.connect(this.mtOut);
-    this.mt2.connect(this.mt3);
-    this.mt3.connect(mtG3); mtG3.connect(this.mtOut);
-
     // Pan automatique (gauche/droite en rythme)
     this.panNode = ctx.createStereoPanner();
     this.panLfo = ctx.createOscillator();
@@ -849,26 +907,123 @@ export class FxUnit {
     this.rmOsc.connect(this.rmGain.gain);
     this.rmOsc.start();
 
+    // Lignes de délai à mettre à l'heure du tempo : celles qui EXISTENT
+    // (les autres naissent déjà à l'heure, voir _timeNow)
+    this._delays = [this.echoDelay];
+    this._lazy = {};
+
     this._out = null;
     this._route();
   }
 
+  // Temps de délai COURANT, sans rampe : une chaîne neuve doit naître à
+  // l'heure, sinon sa 1re répétition part de 0,25 s et « glisse » vers le
+  // tempo (effet doppler audible).
+  _timeNow() { return clamp(this.beatDur * this.beatsMult, 0.02, 3.9); }
+
+  // Fabrique paresseuse : construit la chaîne au premier usage, la garde
+  _mk(key, build) {
+    let v = this._lazy[key];
+    if (!v) v = this._lazy[key] = build();
+    return v;
+  }
+
+  _echo(opts) {
+    const c = buildEchoLoop(this.ctx, { ...opts, time: this._timeNow() });
+    this._delays.push(c.delay);
+    return c;
+  }
+
   _chain() {
     switch (this.type) {
-      case 'delay': return [this.dlyDelay, this.dlyDelay];
-      case 'pingpong': return [this.ppL, this.ppOut];
+      case 'delay': {
+        const d = this._mk('delay', () => {
+          const n = this.ctx.createDelay(4);
+          n.delayTime.value = this._timeNow();
+          const fb = this.ctx.createGain();
+          fb.gain.value = 0.22;
+          n.connect(fb);
+          fb.connect(n);
+          this._delays.push(n);
+          return n;
+        });
+        return [d, d];
+      }
+      case 'pingpong': {
+        const p = this._mk('pingpong', () => {
+          const t = this._timeNow();
+          const L = this.ctx.createDelay(4);
+          const R = this.ctx.createDelay(4);
+          L.delayTime.value = t;
+          R.delayTime.value = t;
+          const fb = this.ctx.createGain();
+          fb.gain.value = 0.42;
+          const pL = this.ctx.createStereoPanner();
+          pL.pan.value = -0.85;
+          const pR = this.ctx.createStereoPanner();
+          pR.pan.value = 0.85;
+          const out = this.ctx.createGain();
+          L.connect(pL); pL.connect(out);
+          L.connect(R);
+          R.connect(pR); pR.connect(out);
+          R.connect(fb); fb.connect(L);
+          this._delays.push(L, R);
+          return { in: L, out };
+        });
+        return [p.in, p.out];
+      }
       case 'reverb': return [this.convolver, this.convolver];
       case 'flanger': return [this.flDelay, this.flDelay];
       case 'phaser': return [this.phStages[0], this.phStages[this.phStages.length - 1]];
       case 'trans': return [this.trGain, this.trGain];
       case 'crush': return [this.shaper, this.shaper];
-      case 'lowcut': return [this.lcDelay, this.lcDelay];
-      case 'spiral': return [this.spiral.in, this.spiral.out];
-      case 'upecho': return [this.upecho.in, this.upecho.out];
-      case 'downecho': return [this.downecho.in, this.downecho.out];
-      case 'roll': return [this.roll.in, this.roll.out];
-      case 'helix': return [this.helix.in, this.helix.out];
-      case 'mtdelay': return [this.mt1, this.mtOut];
+      case 'lowcut': {
+        // sortie = LE DÉLAI (le passe-haut est dans la boucle de
+        // réinjection, pas en sortie) — routage d'origine conservé
+        const c = this._mk('lowcut', () => this._echo({ fb: 0.5, filter: { type: 'highpass', freq: 700 } }));
+        return [c.delay, c.delay];
+      }
+      case 'spiral': {
+        const c = this._mk('spiral', () => this._echo({ fb: 0.72, filter: { type: 'bandpass', freq: 900, q: 0.9 } }));
+        return [c.in, c.out];
+      }
+      case 'upecho': {
+        const c = this._mk('upecho', () => this._echo({ fb: 0.5, filter: { type: 'highpass', freq: 500 } }));
+        return [c.in, c.out];
+      }
+      case 'downecho': {
+        const c = this._mk('downecho', () => this._echo({ fb: 0.5, filter: { type: 'lowpass', freq: 1200 } }));
+        return [c.in, c.out];
+      }
+      case 'roll': {
+        const c = this._mk('roll', () => this._echo({ fb: 0.93 }));
+        return [c.in, c.out];
+      }
+      case 'helix': {
+        const c = this._mk('helix', () => this._echo({ fb: 0.97 }));
+        return [c.in, c.out];
+      }
+      case 'mtdelay': {
+        const mt = this._mk('mtdelay', () => {
+          const t = this._timeNow();
+          const d1 = this.ctx.createDelay(4);
+          const d2 = this.ctx.createDelay(4);
+          const d3 = this.ctx.createDelay(4);
+          d1.delayTime.value = t;
+          d2.delayTime.value = t;
+          d3.delayTime.value = t;
+          const out = this.ctx.createGain();
+          const g1 = this.ctx.createGain(); g1.gain.value = 0.8;
+          const g2 = this.ctx.createGain(); g2.gain.value = 0.55;
+          const g3 = this.ctx.createGain(); g3.gain.value = 0.35;
+          d1.connect(g1); g1.connect(out); d1.connect(d2);
+          d2.connect(g2); g2.connect(out); d2.connect(d3);
+          d3.connect(g3); g3.connect(out);
+          this._delays.push(d1, d2, d3);
+          return { in: d1, out };
+        });
+        return [mt.in, mt.out];
+      }
       case 'pan': return [this.panNode, this.panNode];
       case 'filter': return [this.fxbp, this.fxbp];
       case 'robot': return [this.rmGain, this.rmGain];
@@ -918,11 +1073,9 @@ export class FxUnit {
   _applyTime() {
     const now = this.ctx.currentTime;
     const t = clamp(this.beatDur * this.beatsMult, 0.02, 3.9);
-    for (const d of [this.echoDelay, this.dlyDelay, this.lcDelay, this.ppL, this.ppR,
-      this.spiral.delay, this.upecho.delay, this.downecho.delay,
-      this.roll.delay, this.helix.delay, this.mt1, this.mt2, this.mt3]) {
-      d.delayTime.setTargetAtTime(t, now, 0.08);
-    }
+    // Seules les lignes RÉELLEMENT construites (les autres naîtront à
+    // l'heure) — au passage : 1 à 3 événements AudioParam au lieu de 13
+    for (const d of this._delays) d.delayTime.setTargetAtTime(t, now, 0.08);
     // La gate coupe/ouvre à chaque intervalle choisi
     this.trOsc.frequency.setTargetAtTime(clamp(1 / t, 0.25, 24), now, 0.05);
     // Les modulations suivent le tempo
@@ -956,10 +1109,19 @@ export class AudioEngine {
     this.mFilter.frequency.value = 1000;
     this.mFilter.Q.value = 0.9;
     this.masterFilterVal = 0;
-    this.masterGain.connect(this.postBus);
+    // Chemin SEC compensé : quand un FX est actif, ce gain baisse d'autant
+    // (calibration façon rekordbox — le wet se fond DANS le mix au lieu de
+    // s'empiler par-dessus et de dépasser le niveau du master)
+    this.dryComp = this.ctx.createGain();
+    this.masterGain.connect(this.dryComp);
+    this.dryComp.connect(this.postBus);
     this.postBus.connect(this.mFilter);
     this.mFilter.connect(this.limiter);
-    this.limiter.connect(this.ctx.destination);
+    // --- PRÉ-ÉCOUTE CASQUE : la platine est une CARTE SON 4 CANAUX
+    // (master sur 1/2, casque sur 3/4). Si la sortie l'offre, le bus CUE
+    // part vers les canaux 3/4 — la sortie casque physique de la FLX6.
+    this.cueBus = this.ctx.createGain();
+    this._wireOutput();
 
     // VU-mètre du MASTER (pris avant le limiteur : la LED rouge dit
     // « ça sature, le limiteur travaille »)
@@ -974,6 +1136,9 @@ export class AudioEngine {
     this.limiter.connect(this.recDest);
 
     this.decks = [0, 1, 2, 3].map(i => new Deck(this.ctx, this.masterGain, i));
+    // Envois casque de chaque deck vers le bus CUE
+    this.decks.forEach((d) => d.cueSend.connect(this.cueBus));
+    this._loadPitchWorklet();
 
     // 4 unités FX (une par joueur), chacune assignable à n'importe quel(s)
     // deck(s) : matrice d'envois 4 unités × 4 decks
@@ -1004,13 +1169,16 @@ export class AudioEngine {
     this.colorWet.gain.value = 0.85; // plafonné pour ne pas dépasser le niveau du morceau
     this.colorWet.connect(this.postBus);
     this.colorBus = this.ctx.createGain();
-    this.colorChains = {
-      dubecho: buildEchoLoop(this.ctx, { fb: 0.55, filter: { type: 'highpass', freq: 250 }, time: 0.35 }),
-      hpfecho: buildEchoLoop(this.ctx, { fb: 0.5, filter: { type: 'highpass', freq: 900 }, time: 0.3 }),
-      lpfecho: buildEchoLoop(this.ctx, { fb: 0.5, filter: { type: 'lowpass', freq: 650 }, time: 0.3 }),
-      bpfecho: buildEchoLoop(this.ctx, { fb: 0.55, filter: { type: 'bandpass', freq: 1000, q: 1 }, time: 0.3 }),
-      crushecho: buildEchoLoop(this.ctx, { fb: 0.5, crush: 6, time: 0.3 })
+    // Chaînes Color FX bâties AU PREMIER ROUTAGE (5 × ~1 Mo de tampon de
+    // délai réservés pour rien au démarrage — voir _colorChain)
+    this._colorDefs = {
+      dubecho: { fb: 0.55, filter: { type: 'highpass', freq: 250 }, time: 0.35 },
+      hpfecho: { fb: 0.5, filter: { type: 'highpass', freq: 900 }, time: 0.3 },
+      lpfecho: { fb: 0.5, filter: { type: 'lowpass', freq: 650 }, time: 0.3 },
+      bpfecho: { fb: 0.55, filter: { type: 'bandpass', freq: 1000, q: 1 }, time: 0.3 },
+      crushecho: { fb: 0.5, crush: 6, time: 0.3 }
     };
+    this.colorChains = {};
     this.cReverb = this.ctx.createConvolver();
     this.cReverb.buffer = makeImpulse(this.ctx, 2.8, 2.2);
     this.cCrush = this.ctx.createWaveShaper();
@@ -1050,6 +1218,67 @@ export class AudioEngine {
   // FX MASTER : une unité sur le MIX ENTIER (position MASTER du channel
   // select des platines). Créée à la demande, branchée en parallèle comme
   // les FX de deck : masterGain → send → unité → postBus (wet par-dessus)
+  // Moteur de transposition WSOLA (KEY ± et KEYLOCK) : un nœud par deck,
+  // chargé en tâche de fond. S'il échoue, chaque deck garde son ancien
+  // décalage à deux prises — le logiciel reste utilisable dans tous les cas.
+  async _loadPitchWorklet() {
+    try {
+      await this.ctx.audioWorklet.addModule(new URL('./pitch-worklet.js', import.meta.url));
+      this.decks.forEach((d) => {
+        const node = new AudioWorkletNode(this.ctx, 'pitch-shift', {
+          numberOfInputs: 1,
+          numberOfOutputs: 1,
+          outputChannelCount: [2],
+          channelCount: 2,
+          channelCountMode: 'explicit'
+        });
+        node.connect(d.trim);
+        d.wsola = node;
+        d._applyPitch(); // re-route si une tonalité était déjà posée
+      });
+      console.log('[midi] transposition : moteur WSOLA actif (keylock disponible)');
+    } catch (e) {
+      console.log(`[midi] transposition : moteur de secours (${String(e.message || e)})`);
+    }
+  }
+
+  // Câblage de la sortie : 4 canaux si le périphérique le permet
+  // (master → 1/2, casque → 3/4), sinon stéréo simple. À RAPPELER après
+  // tout setSinkId (le nombre de canaux dépend du périphérique).
+  _wireOutput() {
+    const dest = this.ctx.destination;
+    try { this.limiter.disconnect(); } catch { /* pas encore branché */ }
+    try { this.cueBus.disconnect(); } catch { /* idem */ }
+    if (dest.maxChannelCount >= 4) {
+      dest.channelCount = 4;
+      dest.channelCountMode = 'explicit';
+      dest.channelInterpretation = 'discrete';
+      const merger = this.ctx.createChannelMerger(4);
+      const ms = this.ctx.createChannelSplitter(2);
+      const cs = this.ctx.createChannelSplitter(2);
+      this.limiter.connect(ms);
+      ms.connect(merger, 0, 0);
+      ms.connect(merger, 1, 1);
+      this.cueBus.connect(cs);
+      cs.connect(merger, 0, 2);
+      cs.connect(merger, 1, 3);
+      merger.connect(dest);
+      this.phonesOk = true;
+      console.log('[midi] audio : sortie 4 canaux — casque actif (canaux 3/4)');
+    } else {
+      this.limiter.connect(dest);
+      this.phonesOk = false;
+      console.log(`[midi] audio : sortie ${dest.maxChannelCount} canaux — pas de casque séparé`);
+    }
+  }
+
+  // Bouton CUE casque d'une tranche : envoie/coupe le deck dans le casque
+  setCuePfl(i, on) {
+    const d = this.decks[i];
+    d.cueOn = !!on;
+    d.cueSend.gain.setTargetAtTime(on ? 1 : 0, this.ctx.currentTime, 0.01);
+  }
+
   ensureMasterFx() {
     if (!this.masterFx) {
       this.masterFx = new FxUnit(this.ctx, this.postBus);
@@ -1141,8 +1370,12 @@ export class AudioEngine {
       this._colorOut = null;
     }
     let io = null;
-    if (this.colorChains[this.colorType]) {
-      const c = this.colorChains[this.colorType];
+    if (this._colorDefs[this.colorType]) {
+      let c = this.colorChains[this.colorType];
+      if (!c) {
+        c = this.colorChains[this.colorType] =
+          buildEchoLoop(this.ctx, this._colorDefs[this.colorType]);
+      }
       io = [c.in, c.out];
     } else if (this.colorType === 'reverb') {
       io = [this.cReverb, this.cReverb];
@@ -1413,6 +1646,36 @@ export class AudioEngine {
   // GLOBALEMENT — sinon les autres decks POURSUIVENT le deck qu'on décale
   // (le fameux « ça se fight avec le calage ») et le geste devient imprécis.
   syncLock() {
+    // CALIBRATION FX PAR DECK (à chaque frame, ~zéro coût) : le sec de
+    // CHAQUE deck baisse selon le FX le plus fort qui LE traite — unités
+    // du panneau assignées à ce deck, et PAD FX tenu (qui peut demander
+    // une coupure totale : « c'est le son qu'on manipule », pas un ajout).
+    // Un FX sur le deck 2 ne touche jamais au deck 1.
+    this.decks.forEach((d, i) => {
+      if (!d.dryOut) return;
+      let wet = 0;
+      this.fx.forEach((u, uIdx) => {
+        if (u.enabled && this.fxAssign[uIdx] && this.fxAssign[uIdx][i]) {
+          const lv = Math.min(1, u.wet.gain.value || 0);
+          if (lv > wet) wet = lv;
+        }
+      });
+      let dry = 1 - 0.45 * wet;
+      const p = this.padFx && this.padFx[i];
+      if (p && p.enabled && d._padDryHold != null) dry = Math.min(dry, d._padDryHold);
+      if (Math.abs((d._dryCur ?? 1) - dry) > 0.01) {
+        d._dryCur = dry;
+        d.dryOut.gain.setTargetAtTime(dry, this.ctx.currentTime, 0.02);
+      }
+    });
+    // FX MASTER : lui seul dose le sec du MIX ENTIER
+    const mWet = this.masterFx && this.masterFx.enabled
+      ? Math.min(1, this.masterFx.wet.gain.value || 0) : 0;
+    const dryT = 1 - 0.45 * mWet;
+    if (Math.abs((this._dryTarget ?? 1) - dryT) > 0.01) {
+      this._dryTarget = dryT;
+      this.dryComp.gain.setTargetAtTime(dryT, this.ctx.currentTime, 0.05);
+    }
     this._updateAutoMaster();
     if (this.jogHold) return;
     const mi = this.masterIdx !== null ? this.masterIdx : this.autoMasterIdx;

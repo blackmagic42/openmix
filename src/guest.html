@@ -2,49 +2,97 @@
 <html lang="fr">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#0b0d12">
 <title>OpenMix — Demande ton son</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
-html,body{background:#0b0d12;color:#d7dce8;font-family:system-ui,-apple-system,'Segoe UI',sans-serif}
-body{display:flex;flex-direction:column;height:100dvh}
-header{padding:12px 14px 8px;border-bottom:1px solid #232a3a}
-h1{font-size:17px;letter-spacing:2px}
-h1 b{color:#39c2ff}
-.sub{font-size:11px;color:#8a94ae;margin-top:2px}
-#msgrow{display:flex;gap:6px;padding:8px 12px}
-#msgrow input{flex:1;padding:10px;font-size:13px;background:#12151c;border:1px solid #2b3040;border-radius:4px;color:#d7dce8;outline:none}
-#msgrow button{padding:0 16px;font-size:12px;font-weight:900;background:#21252f;border:1px solid #2b3040;color:#ffd24a;border-radius:4px}
-#search{position:sticky;top:0;z-index:5;margin:0 12px 8px;padding:12px;font-size:16px;background:#12151c;border:1px solid #2d7df1;border-radius:4px;color:#d7dce8;outline:none;width:calc(100% - 24px)}
-#list{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch}
-.row{display:flex;align-items:center;gap:8px;padding:11px 14px;border-bottom:1px solid #14171e}
-.row .t{flex:1;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.row .b{font-size:11px;font-weight:800;color:#39c2ff;font-variant-numeric:tabular-nums}
-.row .v{min-width:34px;text-align:center;font-size:12px;font-weight:900;color:#ffd24a}
-.row button{padding:9px 14px;font-size:11px;font-weight:900;background:#21252f;border:1px solid #2b3040;color:#d7dce8;border-radius:4px}
-.row button:disabled{background:#1a3d2a;border-color:#2fdf6e66;color:#2fdf6e;opacity:1}
-#toast{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);background:#2fdf6e;color:#0b0d12;font-weight:900;font-size:13px;padding:10px 18px;border-radius:6px;opacity:0;transition:opacity .2s;pointer-events:none;box-shadow:0 4px 20px rgba(0,0,0,.5)}
+html,body{background:#0a0c11;color:#e6eaf2;font-family:system-ui,-apple-system,'Segoe UI',sans-serif}
+body{display:flex;flex-direction:column;height:100dvh;overflow:hidden}
+
+/* --- en-tête --- */
+header{padding:14px 16px 10px;background:linear-gradient(180deg,#12161f,#0a0c11);border-bottom:1px solid #1c2230}
+h1{font-size:15px;font-weight:900;letter-spacing:3px}
+h1 b{color:#39c2ff;font-weight:900}
+.sub{font-size:11px;color:#7d879e;margin-top:3px;letter-spacing:.2px}
+
+/* --- onglets source --- */
+#tabs{display:flex;gap:6px;padding:10px 12px 8px}
+#tabs button{flex:1;padding:11px 8px;font-size:11.5px;font-weight:900;letter-spacing:.6px;
+  background:#12151d;border:1px solid #232a3a;color:#8a94ae;border-radius:8px;transition:.15s}
+#tabs button.on{background:#1b2a3d;border-color:#39c2ff;color:#39c2ff;box-shadow:0 0 0 1px #39c2ff33}
+
+/* --- recherche --- */
+#searchrow{display:flex;gap:7px;padding:0 12px 10px}
+#search{flex:1;min-width:0;padding:13px 14px;font-size:16px;background:#12151d;
+  border:1px solid #2b3243;border-radius:8px;color:#e6eaf2;outline:none}
+#search:focus{border-color:#39c2ff}
+#go{padding:0 18px;font-size:15px;font-weight:900;background:#39c2ff;border:none;color:#06121c;border-radius:8px}
+#go:disabled{opacity:.45}
+
+/* --- liste --- */
+#list{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding-bottom:78px}
+.sect{padding:9px 16px 5px;font-size:10px;font-weight:900;letter-spacing:1.4px;color:#5d6780;
+  background:#0a0c11;position:sticky;top:0;z-index:2}
+.row{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid #141821}
+.row img{width:42px;height:42px;border-radius:5px;object-fit:cover;background:#171b24;flex-shrink:0}
+.row .meta{flex:1;min-width:0}
+.row .t{font-size:13.5px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.row .s{font-size:10.5px;color:#6f7a92;margin-top:2px;font-variant-numeric:tabular-nums}
+.row .v{font-size:12px;font-weight:900;color:#ffd24a;flex-shrink:0;font-variant-numeric:tabular-nums}
+.row button{padding:10px 15px;font-size:11px;font-weight:900;background:#212632;border:1px solid #2f3648;
+  color:#e6eaf2;border-radius:7px;flex-shrink:0}
+.row button:disabled{background:#12301f;border-color:#2fdf6e55;color:#2fdf6e;opacity:1}
+.hint{padding:26px 22px;text-align:center;color:#5d6780;font-size:12.5px;line-height:1.7}
+
+/* --- message au DJ, ancré en bas --- */
+#msgrow{position:fixed;left:0;right:0;bottom:0;display:flex;gap:7px;padding:10px 12px calc(10px + env(safe-area-inset-bottom));
+  background:#0e1219;border-top:1px solid #1c2230}
+#msg{flex:1;min-width:0;padding:12px;font-size:15px;background:#12151d;border:1px solid #2b3243;
+  border-radius:8px;color:#e6eaf2;outline:none}
+#send{padding:0 16px;font-size:16px;background:#212632;border:1px solid #2f3648;color:#ffd24a;border-radius:8px}
+
+#toast{position:fixed;left:50%;bottom:76px;transform:translateX(-50%);background:#2fdf6e;color:#06121c;
+  font-weight:900;font-size:13px;padding:11px 20px;border-radius:8px;opacity:0;transition:opacity .2s;
+  pointer-events:none;box-shadow:0 6px 24px rgba(0,0,0,.6);z-index:9}
 #toast.show{opacity:1}
 </style>
 </head>
 <body>
 <header>
-  <h1>OPEN<b>MIX</b> · DEMANDE TON SON 🎧</h1>
-  <div class="sub">Vote un morceau, le DJ le voit direct — un vote par son, lâche-toi sur les votes</div>
+  <h1>OPEN<b>MIX</b></h1>
+  <div class="sub">Demande ton son — le DJ le voit direct sur sa platine 🎧</div>
 </header>
+
+<div id="tabs">
+  <button id="tab-lib" class="on">🎵 SES SONS</button>
+  <button id="tab-sc">☁ SOUNDCLOUD</button>
+</div>
+
+<div id="searchrow">
+  <input id="search" placeholder="Chercher un morceau…" autocomplete="off" enterkeyhint="search">
+  <button id="go">🔎</button>
+</div>
+
+<div id="list"></div>
+
 <div id="msgrow">
-  <input id="msg" maxlength="140" placeholder="Message au DJ (optionnel)…">
+  <input id="msg" maxlength="140" placeholder="Un message au DJ…">
   <button id="send">📨</button>
 </div>
-<input id="search" placeholder="Chercher un morceau…">
-<div id="list"></div>
 <div id="toast">Envoyé ! 🔥</div>
+
 <script>
 const listEl = document.getElementById('list');
 const searchEl = document.getElementById('search');
-let items = [];
-let votes = {};
+const goEl = document.getElementById('go');
+const tabLib = document.getElementById('tab-lib');
+const tabSc = document.getElementById('tab-sc');
+let mode = 'lib';          // 'lib' = bibliothèque du DJ, 'sc' = SoundCloud
+let items = [];            // bibliothèque du DJ
+let scItems = [];          // résultats SoundCloud
+let scMsg = '';            // état de la recherche SoundCloud
+let votes = {};            // votes en cours (tous les invités)
 const voted = new Set(JSON.parse(localStorage.getItem('tmVoted') || '[]'));
 
 function toast(t) {
@@ -56,6 +104,12 @@ function toast(t) {
 async function post(o) {
   try { await fetch('/vote', { method: 'POST', body: JSON.stringify(o) }); } catch { /* hors ligne */ }
 }
+const fmtDur = (ms) => {
+  if (!ms) return '';
+  const s = Math.round(ms / 1000);
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+};
+
 document.getElementById('send').addEventListener('click', () => {
   const m = document.getElementById('msg').value.trim();
   if (!m) return;
@@ -63,43 +117,144 @@ document.getElementById('send').addEventListener('click', () => {
   document.getElementById('msg').value = '';
   toast('Message envoyé ! 📨');
 });
+document.getElementById('msg').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') document.getElementById('send').click();
+});
+
+// Une ligne de morceau (bibliothèque ou SoundCloud)
+function makeRow(it) {
+  const r = document.createElement('div');
+  r.className = 'row';
+  const n = it.name;
+  const v = votes[n] || 0;
+  if (it.art) {
+    const img = document.createElement('img');
+    img.src = it.art;
+    img.loading = 'lazy';
+    r.appendChild(img);
+  }
+  const meta = document.createElement('div');
+  meta.className = 'meta';
+  const t = document.createElement('div');
+  t.className = 't';
+  t.textContent = n;
+  meta.appendChild(t);
+  const sub = [it.bpm ? `${it.bpm} BPM` : '', fmtDur(it.dur)].filter(Boolean).join(' · ');
+  if (sub) {
+    const s = document.createElement('div');
+    s.className = 's';
+    s.textContent = sub;
+    meta.appendChild(s);
+  }
+  r.appendChild(meta);
+  if (v) {
+    const vv = document.createElement('span');
+    vv.className = 'v';
+    vv.textContent = `🔥${v}`;
+    r.appendChild(vv);
+  }
+  const btn = document.createElement('button');
+  btn.textContent = voted.has(n) ? 'VOTÉ ✓' : 'VOTER';
+  btn.disabled = voted.has(n);
+  btn.addEventListener('click', () => {
+    post({ name: n, bpm: it.bpm || null, url: it.url || null, art: it.art || null });
+    voted.add(n);
+    localStorage.setItem('tmVoted', JSON.stringify([...voted]));
+    btn.disabled = true;
+    btn.textContent = 'VOTÉ ✓';
+    toast('Demande envoyée ! 🔥');
+  });
+  r.appendChild(btn);
+  return r;
+}
+function section(txt) {
+  const d = document.createElement('div');
+  d.className = 'sect';
+  d.textContent = txt;
+  return d;
+}
 
 function render() {
   const q = searchEl.value.trim().toLowerCase();
   listEl.textContent = '';
-  items
-    .filter((it) => !it.pl && (!q || it.name.toLowerCase().includes(q)))
-    .slice(0, 300)
-    .forEach((it) => {
-      const r = document.createElement('div');
-      r.className = 'row';
-      const v = votes[it.name] || 0;
-      r.innerHTML = `<span class="t"></span><span class="b">${it.bpm ?? ''}</span>
-        <span class="v">${v ? '🔥' + v : ''}</span><button>VOTER</button>`;
-      r.querySelector('.t').textContent = it.name;
-      const btn = r.querySelector('button');
-      if (voted.has(it.name)) {
-        btn.disabled = true;
-        btn.textContent = 'VOTÉ ✓';
-      }
-      btn.addEventListener('click', () => {
-        post({ name: it.name, bpm: it.bpm });
-        voted.add(it.name);
-        localStorage.setItem('tmVoted', JSON.stringify([...voted]));
-        btn.disabled = true;
-        btn.textContent = 'VOTÉ ✓';
-        toast('Vote envoyé ! 🔥');
-      });
-      listEl.appendChild(r);
+
+  if (mode === 'sc') {
+    if (scMsg) listEl.appendChild(Object.assign(document.createElement('div'), { className: 'hint', textContent: scMsg }));
+    if (scItems.length) {
+      listEl.appendChild(section(`SOUNDCLOUD · ${scItems.length} RÉSULTATS`));
+      scItems.forEach((it) => listEl.appendChild(makeRow(it)));
+    }
+    return;
+  }
+
+  // Bibliothèque du DJ — en tête, les demandes déjà votées
+  const top = Object.entries(votes).sort((a, b) => b[1] - a[1]).slice(0, 5);
+  if (!q && top.length) {
+    listEl.appendChild(section('🔥 LES PLUS DEMANDÉS'));
+    top.forEach(([name, n]) => {
+      const known = items.find((x) => x.name === name);
+      listEl.appendChild(makeRow(known || { name, bpm: null }));
+      void n;
     });
+  }
+  const found = items.filter((it) => !it.pl && (!q || it.name.toLowerCase().includes(q))).slice(0, 300);
+  listEl.appendChild(section(q ? `${found.length} RÉSULTAT${found.length > 1 ? 'S' : ''}` : 'SES MORCEAUX'));
+  if (!found.length) {
+    const h = document.createElement('div');
+    h.className = 'hint';
+    h.textContent = 'Rien à ce nom dans ses morceaux — essaie l\'onglet ☁ SOUNDCLOUD pour chercher dans tout le catalogue.';
+    listEl.appendChild(h);
+  }
+  found.forEach((it) => listEl.appendChild(makeRow(it)));
 }
-searchEl.addEventListener('input', render);
+
+// --- recherche SoundCloud (tout le catalogue) ---
+let scTimer = null;
+async function scSearch() {
+  const q = searchEl.value.trim();
+  if (q.length < 2) {
+    scItems = [];
+    scMsg = 'Tape le nom d\'un morceau ou d\'un artiste, puis 🔎';
+    render();
+    return;
+  }
+  scMsg = 'Recherche sur SoundCloud…';
+  scItems = [];
+  render();
+  try {
+    const r = await (await fetch(`/scsearch?q=${encodeURIComponent(q)}`)).json();
+    scItems = r.tracks || [];
+    scMsg = scItems.length ? '' : (r.error || 'Aucun résultat');
+  } catch {
+    scMsg = 'Recherche indisponible (connexion ?)';
+  }
+  render();
+}
+function setMode(m) {
+  mode = m;
+  tabLib.classList.toggle('on', m === 'lib');
+  tabSc.classList.toggle('on', m === 'sc');
+  searchEl.placeholder = m === 'sc' ? 'Chercher sur tout SoundCloud…' : 'Chercher dans ses morceaux…';
+  goEl.style.display = m === 'sc' ? '' : 'none';
+  if (m === 'sc') scSearch(); else render();
+}
+tabLib.addEventListener('click', () => setMode('lib'));
+tabSc.addEventListener('click', () => setMode('sc'));
+goEl.addEventListener('click', scSearch);
+searchEl.addEventListener('input', () => {
+  if (mode === 'lib') { render(); return; }
+  clearTimeout(scTimer);
+  scTimer = setTimeout(scSearch, 550); // recherche auto après la frappe
+});
+searchEl.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') { e.preventDefault(); if (mode === 'sc') scSearch(); }
+});
 
 async function loadLib() {
   try {
     const l = await (await fetch('/lib')).json();
     items = l.items || [];
-    render();
+    if (mode === 'lib') render();
   } catch { /* retentera */ }
 }
 async function pollVotes() {
@@ -107,10 +262,11 @@ async function pollVotes() {
     const r = await (await fetch('/requests')).json();
     votes = {};
     (r.votes || []).forEach((v) => { votes[v.name] = v.votes; });
-    render();
+    if (mode === 'lib') render();
   } catch { /* hors ligne */ }
   setTimeout(pollVotes, 4000);
 }
+setMode('lib');
 loadLib();
 setInterval(loadLib, 15000);
 pollVotes();

@@ -10,7 +10,7 @@ async function makePreview(buffer) {
   const W = 150;
   const H = 26;
   const ps = Math.max(2, W / Math.max(1, buffer.duration));
-  const peaks = await computeBandPeaks(buffer, ps);
+  const peaks = await computeBandPeaks(buffer, ps, { fine: false });
   const c = document.createElement('canvas');
   c.width = W;
   c.height = H;
@@ -620,11 +620,33 @@ export class Library {
     return url;
   }
 
+  // ANALYSE PARALLÈLE : plusieurs morceaux traités EN MÊME TEMPS, un par
+  // « voie ». Décodage et filtrage tournent dans les threads natifs de
+  // Chromium : à 3 voies, une machine multi-cœurs analyse une bibliothèque
+  // ~3× plus vite qu'en file indienne. Plafonné pour ne pas saturer la RAM
+  // (chaque morceau décodé pèse plusieurs dizaines de Mo).
   async _analyzeQueue(scanId) {
-    let sinceLastSave = 0;
-    for (const t of this.tracks) {
+    const cores = navigator.hardwareConcurrency || 4;
+    const voies = Math.max(1, Math.min(3, Math.floor(cores / 2)));
+    let next = 0;
+    const state = { save: Date.now() };
+    const suivant = () => {
+      while (next < this.tracks.length) {
+        const t = this.tracks[next++];
+        if (!(t.analyzed && t.preview)) return t;
+      }
+      return null;
+    };
+    await Promise.all(
+      Array.from({ length: voies }, () => this._analyzeVoie(scanId, suivant, state))
+    );
+    if (scanId === this._scanId) this._scheduleSave();
+  }
+
+  async _analyzeVoie(scanId, suivant, state) {
+    let sinceLastSave = state; // horodatage partagé entre les voies
+    for (let t = suivant(); t; t = suivant()) {
       if (scanId !== this._scanId) return;
-      if (t.analyzed && t.preview) continue;
       // JAMAIS d'analyse pendant qu'un deck joue : les décodages + détection
       // BPM saturaient le CPU → « le son lag ». L'analyse attend sagement et
       // reprend toute seule dès que la lecture s'arrête (comme Demucs).
@@ -653,9 +675,12 @@ export class Library {
         if (!t.preview) t.preview = await makePreview(buffer);
         t.analyzed = true;
         this.cache[trackKey(t)] = { ...prev, v: ANALYSIS_V, bpm: t.bpm, beatOffset: t.beatOffset, beats: newBeats, barAnchorAuto: newAnchor, duration: t.duration, preview: t.preview };
-        sinceLastSave++;
-        if (sinceLastSave >= 5) {
-          sinceLastSave = 0;
+        // Sauvegarde AU PLUS toutes les 60 s : le cache complet (jusqu'à
+        // plusieurs dizaines de Mo) repartait sur le disque tous les 5
+        // morceaux et se disputait la tête de lecture avec les fichiers en
+        // cours d'analyse. La fermeture reste couverte par flushSave().
+        if (Date.now() - sinceLastSave.save > 60000) {
+          sinceLastSave.save = Date.now();
           this._scheduleSave();
         }
         this.cb.onTrackUpdated(t);
@@ -669,7 +694,6 @@ export class Library {
         ? `${this.tracks.length} morceaux — analyse : ${remaining} restants…`
         : `${this.tracks.length} morceaux — analyse terminée`);
     }
-    this._scheduleSave();
   }
 
   async _decode(path) {
@@ -686,6 +710,12 @@ export class Library {
       const res = await window.api.scFetchTrack(track.scId, track.acctIdx);
       if (!res.ok) throw new Error(res.error);
       track.path = res.path;
+      // Extrait de 30 s (piste Go+ sans compte abonné) : on PRÉVIENT, et on
+      // ne grave pas le BPM d'un extrait dans le cache d'analyse
+      if (res.full === false) {
+        track.snippet = true;
+        this.cb.onStatus(res.warning || 'Extrait 30 s — connecte le compte SoundCloud abonné');
+      }
     }
     if (onProgress) onProgress('Décodage…');
     const buffer = await this._decode(track.path);
@@ -715,8 +745,15 @@ export class Library {
       track.beatOffset = beatOffset;
       track.duration = buffer.duration;
       track.analyzed = true;
-      this.cache[trackKey(track)] = { ...prev, v: ANALYSIS_V, bpm, beatOffset, beats: newBeats, barAnchorAuto: newAnchor, duration: buffer.duration };
-      this._scheduleSave();
+      // EXTRAIT DE 30 S : sa grille et son BPM ne valent RIEN pour le vrai
+      // morceau — on ne les grave pas dans le cache, sinon le morceau
+      // resterait faussé même après connexion du compte abonné
+      if (!track.snippet) {
+        this.cache[trackKey(track)] = { ...prev, v: ANALYSIS_V, bpm, beatOffset, beats: newBeats, barAnchorAuto: newAnchor, duration: buffer.duration };
+        this._scheduleSave();
+      } else {
+        track.analyzed = false; // à réanalyser une fois le morceau entier obtenu
+      }
       this.cb.onTrackUpdated(track);
     }
     const cached = this.cache[trackKey(track)] || {};

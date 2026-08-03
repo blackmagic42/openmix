@@ -147,14 +147,58 @@ input[type="checkbox"] { accent-color: var(--accent); width: 14px; height: 14px;
 
 #logo {
   font-family: var(--font-tech);
-  font-size: 20px;
-  font-weight: 700;
-  letter-spacing: 3px;
-  color: #fff;
-  margin-right: 6px;
-  text-shadow: 0 0 16px rgba(47, 185, 245, 0.4);
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: 3.5px;
+  color: #eef2f8;
+  margin-right: 2px;
+  text-shadow: none;              /* le halo faisait « jouet » */
 }
 #logo span { color: var(--accent); }
+
+/* ---- BARRE DU HAUT, allure MATÉRIEL PRO ---------------------------------
+   Tout est aligné sur une même hauteur, groupé par blocs séparés par un
+   filet, sans emoji : c'est une façade d'appareil, pas une page web. */
+.tb-sep {
+  width: 1px;
+  height: 17px;
+  background: var(--border);
+  flex-shrink: 0;
+  opacity: 0.8;
+}
+#topbar > button,
+#topbar > #midi-status,
+#topbar > #pad-status,
+#topbar > #btn-guests {
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  border-radius: 4px;
+}
+#topbar > button {
+  padding: 0 11px;
+  font-size: 10.5px;
+  font-weight: 800;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  background: linear-gradient(180deg, #1d222c, #161a22);
+  border: 1px solid #262c38;
+}
+#topbar > button:hover {
+  color: #fff;
+  border-color: #39434f;
+  background: linear-gradient(180deg, #242a36, #1b2029);
+}
+#topbar > button:active { transform: translateY(1px); }
+/* boutons ronds : réglages et aide */
+#btn-settings, #btn-help {
+  width: 24px;
+  padding: 0 !important;
+  justify-content: center;
+  font-size: 12px;
+  letter-spacing: 0;
+}
 
 #active-deck-label {
   font-size: 11px;
@@ -166,29 +210,56 @@ input[type="checkbox"] { accent-color: var(--accent); width: 14px; height: 14px;
 
 #topbar > button { padding: 5px 11px; font-size: 11.5px; }
 
-/* Pastilles d'état (manette / MIDI) */
+/* Pastilles d'état (manette / MIDI) : une VRAIE LED, pas un emoji */
 #pad-status, #midi-status {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 700;
-  letter-spacing: 0.4px;
-  padding: 4px 10px;
-  border-radius: 20px;
-  border: 1px solid var(--border);
-  background: var(--bg-2);
-  color: var(--text-dim);
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  padding: 0 10px 0 8px;
+  border-radius: 4px;
+  border: 1px solid #22272f;
+  background: #0f1218;
+  color: var(--text-faint);
+  max-width: 190px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+#pad-status::before, #midi-status::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: #3a4150;                       /* éteinte */
+  box-shadow: inset 0 0 2px rgba(0, 0, 0, 0.8);
 }
 #pad-status { margin-left: auto; }
-.pad-on { color: #5fe08a; border-color: rgba(95, 224, 138, 0.35); }
+.pad-on { color: #d8e2ef; border-color: #2b3a33; }
+.pad-on::before {
+  background: #35d97a;                       /* allumée */
+  box-shadow: 0 0 6px rgba(53, 217, 122, 0.85);
+}
 .pad-off { color: var(--text-faint); }
 
 #btn-tutor { color: var(--tutor); border-color: rgba(255, 210, 74, 0.35); }
 #btn-tutor:hover { border-color: var(--tutor); box-shadow: 0 0 10px -2px rgba(255, 210, 74, 0.5); }
 
-/* Enregistrement */
-#btn-rec { color: var(--rec); font-weight: 800; letter-spacing: 0.5px; }
+/* Enregistrement : pastille rouge dessinée, pas un caractère « ● » */
+#btn-rec { color: var(--rec) !important; gap: 6px; }
+#btn-rec::before {
+  content: '';
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #6b2630;
+  flex-shrink: 0;
+}
+#btn-rec.on::before { background: #fff; box-shadow: 0 0 6px rgba(255, 255, 255, 0.9); }
 #btn-rec.on {
   background: linear-gradient(180deg, #e03244, #b81f30);
   color: #fff;
@@ -604,15 +675,32 @@ body.waves-lg .wave-row canvas { height: 70px; }
 .pads .pad:hover { border-color: #3a4256; background: linear-gradient(180deg, #232936, #1b202c); }
 
 /* QR code du panneau invités : scanne → /guest */
+/* Bloc QR : la carte qu'on montre au public — il doit être NET et lisible */
 .gp-qr {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 10px 12px;
-  border-bottom: 1px solid var(--border);
+  gap: 13px;
+  padding: 11px;
+  margin-bottom: 9px;
+  background: #0e1219;
+  border: 1px solid #232a3a;
+  border-radius: 8px;
 }
-.gp-qr img { width: 110px; height: 110px; }
-.gp-qr span { color: var(--text-dim); font-size: 12px; }
+.gp-qr img {
+  width: 96px;
+  height: 96px;
+  padding: 5px;
+  background: #fff;              /* un QR se lit sur fond blanc */
+  border-radius: 6px;
+  image-rendering: pixelated;    /* pas de flou : le scan est plus rapide */
+  flex-shrink: 0;
+}
+.gp-qr span {
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1.6;
+  font-weight: 600;
+}
 
 /* Jaquette SoundCloud dans la liste (à défaut de mini-vague) */
 .col-prev .prev-art { height: 22px; width: 22px; object-fit: cover; }
@@ -779,10 +867,21 @@ body.waves-lg .wave-row canvas { height: 70px; }
 /* --- Stems --- */
 .stems-col {
   display: flex;
+  flex-direction: row;      /* disque À GAUCHE, boutons stems À DROITE :
+                               en colonne, la platine agrandie débordait sur
+                               la rangée CUE/PLAY */
+  align-items: center;
+  gap: 5px;
+  width: 128px;
+  flex-shrink: 0;
+  min-height: 0;
+}
+.stems-right {
+  display: flex;
   flex-direction: column;
   gap: 3px;
-  width: 48px;
-  flex-shrink: 0;
+  flex: 1;
+  min-width: 0;
 }
 .stems-title {
   font-size: 8px;
@@ -1478,6 +1577,8 @@ body.waves-lg .wave-row canvas { height: 70px; }
   overflow: hidden;
   text-overflow: ellipsis;
   line-height: 1.1;
+  white-space: nowrap;          /* jamais de retour a la ligne dans une cellule */
+  font-variant-numeric: tabular-nums;
 }
 .fx-cell-onoff { justify-content: center; flex-direction: column; gap: 1px; padding: 0 2px; }
 .fx-cell-onoff .fx-cell-lbl { display: none; }
@@ -1515,6 +1616,12 @@ body.waves-lg .wave-row canvas { height: 70px; }
   opacity: 0.4;
   overflow: hidden;
   cursor: pointer;
+  /* UNE SEULE LIGNE, toujours : « MT Delay » passait sur deux lignes et
+     cassait la hauteur de toute la colonne FX */
+  white-space: nowrap;
+  text-overflow: clip;
+  letter-spacing: -0.2px;
+  font-variant-numeric: tabular-nums;
 }
 .fx-badge.live { opacity: 1; }
 .fx-badge.mine {
@@ -2182,7 +2289,7 @@ body.two-decks .queue-info { font-size: 10px; }
 body.two-decks .queue-chip { font-size: 9px; }
 body.two-decks .pads .pad { min-height: 46px; font-size: 12px; }
 body.two-decks .pad-modes button { font-size: 9.5px; padding: 3px 9px; }
-body.two-decks .stems-col { width: 54px; }
+body.two-decks .stems-col { width: 150px; }
 body.two-decks .stem-btn { font-size: 9.5px; }
 body.two-decks .stems-title { font-size: 9px; }
 body.two-decks .deck-controls button { padding: 12px 0; font-size: 14px; min-width: 62px; }
@@ -2210,52 +2317,146 @@ body.two-decks .vfader { width: 36px; }
 }
 #guest-panel {
   position: fixed;
-  top: 48px;
-  right: 8px;
-  width: 360px;
-  max-height: 70vh;
+  top: 44px;
+  right: 10px;
+  width: 380px;
+  max-height: 76vh;
   overflow-y: auto;
+  overscroll-behavior: contain;
   z-index: 80;
-  background: #12151c;
-  border: 1px solid #ffd24a66;
-  border-radius: 6px;
-  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.6);
-  padding: 8px;
+  background: linear-gradient(180deg, #161a22 0%, #101318 100%);
+  border: 1px solid #2a3140;
+  border-radius: 10px;
+  box-shadow: 0 20px 50px -12px rgba(0, 0, 0, 0.85), 0 0 0 1px rgba(255, 210, 74, 0.09);
+  padding: 10px 10px 12px;
+  scrollbar-width: thin;
+  scrollbar-color: #2a3140 transparent;
 }
+#guest-panel::-webkit-scrollbar { width: 8px; }
+#guest-panel::-webkit-scrollbar-thumb { background: #2a3140; border-radius: 4px; }
 #guest-panel.hidden { display: none; }
 .gp-head {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding-bottom: 6px;
+  padding: 0 2px 9px;
   border-bottom: 1px solid #232a3a;
-  margin-bottom: 6px;
+  margin-bottom: 8px;
   font-size: 11px;
+  flex-wrap: wrap;
+}
+.gp-head b {
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 1.4px;
+  text-transform: uppercase;
 }
 .gp-head b { color: #ffd24a; letter-spacing: 0.5px; }
 .gp-head span { flex: 1; color: #8a94ae; font-size: 10px; }
-.gp-head button { padding: 3px 8px; font-size: 10px; border-radius: 3px; }
-.gp-empty { color: #8a94ae; font-size: 11px; padding: 10px 4px; }
+/* Lien de la page invités : une PASTILLE cliquable (ouvre le navigateur,
+   clic droit = copier) — c'est l'élément qu'on montre au public */
+.gp-head #gp-url {
+  flex: 1 0 100%;
+  order: 3;
+  display: block;
+  margin-top: 2px;
+  padding: 6px 9px;
+  background: #0e1219;
+  border: 1px solid #24405a;
+  border-radius: 6px;
+  color: #58cbff;
+  font-size: 10.5px;
+  font-family: var(--font-tech);
+  letter-spacing: 0.2px;
+  text-decoration: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: border-color 0.12s, background 0.12s, color 0.12s;
+}
+.gp-head #gp-url:hover {
+  color: #a5e4ff;
+  border-color: #39c2ff;
+  background: #101a24;
+}
+.gp-head button { padding: 3px 9px; font-size: 10px; border-radius: 4px; }
+.gp-art {
+  width: 28px;
+  height: 28px;
+  border-radius: 4px;
+  object-fit: cover;
+  flex-shrink: 0;
+  background: #1a1f28;
+}
+.gp-sc {
+  font-size: 8px;
+  font-weight: 900;
+  letter-spacing: 0.5px;
+  padding: 1px 4px;
+  border-radius: 2px;
+  background: #ff5500;
+  color: #fff;
+  flex-shrink: 0;
+}
+.gp-empty {
+  color: #7d879e;
+  font-size: 11.5px;
+  line-height: 1.7;
+  padding: 14px 6px 6px;
+  text-align: center;
+}
 .gp-row {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 7px 6px;
-  border-bottom: 1px solid #171b23;
+  gap: 9px;
+  padding: 7px 7px;
+  margin-bottom: 2px;
+  border: 1px solid transparent;
   font-size: 12px;
   cursor: pointer;
-  border-radius: 3px;
+  border-radius: 6px;
+  transition: background 0.1s, border-color 0.1s;
 }
-.gp-row:hover { background: #1b2029; }
-.gp-votes { color: #ffd24a; font-weight: 900; min-width: 44px; }
-.gp-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.gp-bpm { color: #39c2ff; font-weight: 800; font-size: 11px; }
-.gp-msg {
-  padding: 6px;
+.gp-row:hover { background: #1a1f29; border-color: #2c3444; }
+.gp-row:active { transform: translateY(1px); }
+/* Le compteur de votes : une pastille, pas un chiffre perdu */
+.gp-votes {
+  min-width: 34px;
+  padding: 3px 0;
+  text-align: center;
+  color: #0b0d12;
+  background: linear-gradient(180deg, #ffd970, #f0b62b);
+  border-radius: 5px;
+  font-weight: 900;
   font-size: 11px;
-  color: #aab2c6;
-  border-bottom: 1px solid #171b23;
-  font-style: italic;
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+.gp-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+}
+.gp-bpm {
+  color: #39c2ff;
+  font-weight: 800;
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+.gp-msg {
+  padding: 7px 9px;
+  margin: 3px 0;
+  font-size: 11.5px;
+  color: #b9c2d4;
+  background: #12161d;
+  border-left: 2px solid #ffd24a;
+  border-radius: 0 5px 5px 0;
+  line-height: 1.5;
 }
 
 /* ===== Barre de titre integree : le topbar EST la barre de fenetre =====
@@ -2454,12 +2655,13 @@ body, #app { background: #000; }
 
 /* ===== Platines par deck + crossfader sous les tranches ===== */
 .deck-wheel {
-  width: 48px;
-  height: 48px;
+  width: 86px;          /* 48 px : on ne lisait RIEN. Cadran façon CDJ. */
+  height: 86px;
   align-self: center;
   flex-shrink: 0;
   margin-bottom: 2px;
 }
+body.two-decks .deck-wheel { width: 104px; height: 104px; }
 #strips #xf-wrap { grid-column: 1 / -1; margin-top: 2px; }
 
 /* ===== FIX RESPONSIVE MIXER : les tranches utilisent `order` (3-1-2-4),
@@ -2501,3 +2703,64 @@ body, #app { background: #000; }
   opacity: 1;
   background: color-mix(in srgb, var(--accent) 22%, #0a0b0e);
 }
+
+/* Menu déroulant EFFET de la ligne FX MASTER (liste visible des effets) */
+.fxm-type-sel {
+  background: transparent;
+  border: none;
+  color: inherit;
+  font: inherit;
+  padding: 0;
+  cursor: pointer;
+  max-width: 92px;
+  text-align: right;
+  text-align-last: right;   /* la valeur fermee s aligne a droite comme les autres */
+  white-space: nowrap;
+  direction: rtl;           /* si le nom est trop long, il est coupe a GAUCHE */
+}
+.fxm-type-sel option { direction: ltr; text-align: left; }
+.fxm-type-sel option { background: #14171f; color: #dfe6f2; }
+
+/* Titre de section dans le panneau des demandes */
+.gp-sect {
+  font-size: 9px;
+  font-weight: 900;
+  letter-spacing: 1.6px;
+  color: #5d6780;
+  padding: 10px 4px 5px;
+}
+
+/* Demande qui n'a PAS pu être chargée : la ligne reste, marquée */
+.gp-row.gp-fail { border-color: #6b2630; background: #1a1216; }
+.gp-warn { color: #ff8a5c; font-size: 12px; flex-shrink: 0; cursor: help; }
+
+/* Morceau SoundCloud protégé (DRM) : visible AVANT de le charger */
+tr.drm { opacity: 0.55; }
+tr.drm .col-name, tr.drm td:nth-child(3) { text-decoration: line-through; text-decoration-color: #6b2630; }
+.drm-lock { margin-right: 5px; font-size: 10px; opacity: 0.9; }
+
+/* KEYLOCK : cadenas dans l'en-tête du deck — allumé = tonalité verrouillée */
+.deck-key .keylock {
+  padding: 0 4px;
+  font-size: 9px;
+  line-height: 1;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--text-faint);
+  filter: grayscale(1);
+  opacity: 0.55;
+}
+.deck-key .keylock.on {
+  filter: none;
+  opacity: 1;
+  color: #ffd24a;
+  border-color: #ffd24a66;
+  background: #2a220e;
+  box-shadow: 0 0 6px -1px rgba(255, 210, 74, 0.6);
+}
+
+/* STEMS : les 3 boutons EN LIGNE sous le disque — en colonne, INST sortait
+   du cadre depuis que la platine a été agrandie */
+.stems-btns { display: flex; flex-direction: column; gap: 2px; width: 100%; }
+.stems-btns .stem-btn { width: 100%; padding: 3px 0; font-size: 9px; }
