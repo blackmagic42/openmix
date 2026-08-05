@@ -5620,7 +5620,11 @@ function applyDeckCount(n, silent) {
 }
 
 btnDeckCount.addEventListener('click', () => applyDeckCount(deckCount === 2 ? 4 : 2));
-applyDeckCount(deckCount, true);
+// NB : l'appel initial est plus bas, une fois le mixer et les decks
+// construits — applyDeckCount() lit stripUI[2]/[3], qui n'existent qu'après
+// buildMixer(). L'appeler ici plantait au démarrage si la dernière session
+// s'était terminée en mode 2 decks (stripUI encore vide), ce qui empêchait
+// TOUT le reste du démarrage de s'exécuter (mixer et decks jamais construits).
 
 // --- Enregistrement du mix (sortie master -> fichier) ---
 const btnRec = document.getElementById('btn-rec');
@@ -5756,6 +5760,7 @@ for (let i = 0; i < 4; i++) buildDeckPanel(i);
 buildMixer();
 buildFxBar();
 setActiveDeck(0);
+applyDeckCount(deckCount, true);
 deckUI.forEach((_, i) => renderPads(i));
 samplerInit(); // recharge les samples posés sur les pads (chemins mémorisés)
 // Fermeture : écrit en synchrone tout calage de grille encore en attente
