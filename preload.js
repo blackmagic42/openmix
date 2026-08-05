@@ -1,6 +1,9 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('api', {
+  // Utilisé côté renderer pour les ajustements spécifiques à une plateforme
+  // (ex : laisser de la place aux boutons natifs macOS en haut à gauche)
+  platform: process.platform,
   pickFolder: () => ipcRenderer.invoke('pick-folder'),
   pickSamples: () => ipcRenderer.invoke('pick-samples'),
   pickXml: () => ipcRenderer.invoke('pick-xml'),
