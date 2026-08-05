@@ -3,9 +3,13 @@ import { Library } from './library.js';
 import { GamepadManager } from './gamepad.js';
 import { computeBandPeaks, drawZoom, drawOverview, setWavePalette } from './waveform.js';
 import { MidiManager, MIDI_ACTIONS_DECK, MIDI_ACTIONS_GLOBAL } from './midi.js';
-import { gridIndexFracAt, gridTimeAtIndex, gridPeriodAt, setGlobalGridOffset, getGlobalGridOffset } from './engine.js';
+import { gridIndexFracAt, gridTimeAtIndex, gridPeriodAt, setGlobalGridOffset, getGlobalGridOffset, barAlignedSeekTime } from './engine.js';
 
 const DECK_COLORS = ['#39c2ff', '#ff9f43', '#5fe08a', '#ff6b9d'];
+// En dessous de cette distance (px), un clic-relâché ne compte pas comme un
+// glisser : pas de scratch, pas de pause — juste un saut ponctuel, musique
+// non coupée. Au-delà, le geste devient un vrai scrub/scratch à la souris.
+const DRAG_THRESHOLD_PX = 3;
 
 const engine = new AudioEngine();
 let activeDeck = 0;
@@ -13,6 +17,7 @@ let deckCount = Number(localStorage.getItem('deckCount')) === 2 ? 2 : 4;
 let dragTrack = null;      // morceau en cours de drag & drop depuis la bibliothèque
 let waveWindowSec = 8;     // zoom de la vue empilée (secondes visibles)
 let scratchSound = localStorage.getItem('scratchSound') !== '0'; // scratch audible ?
+let keepBarOnJump = localStorage.getItem('keepBarOnJump') !== '0'; // garder la mesure intacte lors d'un saut ?
 
 // ---------------------------------------------------------------------------
 // Petits composants : knob rotatif et faders
@@ -162,16 +167,26 @@ function buildWaveRow(i) {
     canvas.setPointerCapture(e.pointerId);
     scrub = {
       startX: e.clientX,
+      startY: e.clientY,
       wasPlaying: deck.playing,
       startTime: deck.currentTime(),
-      audible: scratchSound
+      audible: scratchSound,
+      dragging: false
     };
-    if (deck.playing) deck.pause();
-    if (scrub.audible) deck.scrubStart();
+    // On ne coupe/pause RIEN tant qu'on ne sait pas si c'est un vrai glisser
+    // (voir pointermove) : un simple clic ne doit jamais couper la musique.
   });
   canvas.addEventListener('pointermove', (e) => {
     if (!scrub) return;
     const deck = engine.decks[i];
+    if (!scrub.dragging) {
+      const moved = Math.hypot(e.clientX - scrub.startX, e.clientY - scrub.startY);
+      if (moved < DRAG_THRESHOLD_PX) return; // simple tremblement de main : on ignore
+      // Le geste devient un vrai glisser : on bascule en scratch/scrub
+      scrub.dragging = true;
+      if (scrub.wasPlaying) deck.pause();
+      if (scrub.audible) deck.scrubStart();
+    }
     const secPerPx = (waveWindowSec * (deck.tempo || 1)) / Math.max(1, canvas.clientWidth);
     const dx = e.clientX - scrub.startX;
     // On peut tirer la piste AU-DELÀ de son début (position négative) pour
@@ -186,13 +201,15 @@ function buildWaveRow(i) {
   const endScrub = () => {
     if (!scrub) return;
     const deck = engine.decks[i];
-    deck.scrubEnd();
-    if (scrub.wasPlaying) deck.play();
-    // Recale automatiquement : segment sur segment (désactivable en ⚙)
-    if (localStorage.getItem('snapRelease') !== '0') engine.snapToRef(i);
-    // Le placement posé à la souris est ADOPTÉ : sans ré-ancrage, le servo
-    // RAMENAIT le son à l'ancien alignement (« il se remet sur le rouge »)
-    for (let k = 0; k < 4; k++) engine.reanchorSync(k);
+    if (scrub.dragging) {
+      deck.scrubEnd();
+      if (scrub.wasPlaying) deck.play();
+      // Recale automatiquement : segment sur segment (désactivable en ⚙)
+      if (localStorage.getItem('snapRelease') !== '0') engine.snapToRef(i);
+      // Le placement posé à la souris est ADOPTÉ : sans ré-ancrage, le servo
+      // RAMENAIT le son à l'ancien alignement (« il se remet sur le rouge »)
+      for (let k = 0; k < 4; k++) engine.reanchorSync(k);
+    }
     scrub = null;
   };
   canvas.addEventListener('pointerup', endScrub);
@@ -695,35 +712,62 @@ function buildDeckPanel(i) {
     deck.synced = false;
     updateTempoLabel(i);
   });
-  // Miniature : navigation CONTINUE — tant que le clic est maintenu,
-  // la position suit la souris (avec le son de scrub si activé)
+  // Miniature : un simple CLIC (sans bouger) = saut ponctuel, la musique ne
+  // s'arrête jamais. Un vrai GLISSER (au-delà de quelques pixels) bascule en
+  // navigation continue (avec le son de scrub si activé) — voir DRAG_THRESHOLD_PX.
   let overScrub = null;
   const overPosFromEvent = (e) => {
     const r = ui.over.getBoundingClientRect();
     const frac = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width));
     return frac * deck.duration;
   };
+  // Calcule et applique la position cible (alignée sur la mesure si activé),
+  // en gardant TOUJOURS la même référence "beforeTime" (capturée une seule
+  // fois, avant tout saut) même si le morceau continue de jouer pendant le
+  // geste — sinon la phase de mesure dériverait à chaque appel.
+  const applyOverSeek = (e) => {
+    let t = overPosFromEvent(e);
+    if (keepBarOnJump) t = barAlignedSeekTime(deck, overScrub.beforeTime, t);
+    deck.seek(t);
+  };
   ui.over.addEventListener('pointerdown', (e) => {
     if (!deck.buffer) return;
     engine.resume();
     ui.over.setPointerCapture(e.pointerId);
-    overScrub = { wasPlaying: deck.playing, audible: scratchSound };
-    if (deck.playing) deck.pause();
-    if (overScrub.audible) deck.scrubStart();
-    const t = overPosFromEvent(e);
-    if (overScrub.audible) deck.scrubMove(t);
-    else deck.seek(t);
+    overScrub = {
+      startX: e.clientX,
+      startY: e.clientY,
+      wasPlaying: deck.playing,
+      audible: scratchSound,
+      beforeTime: deck.currentTime(),
+      dragging: false
+    };
+    // Simple clic : on place juste la tête de lecture, la musique continue
+    // (ou reste arrêtée) sans coupure — pas de pause, pas de scrub sonore.
+    applyOverSeek(e);
   });
   ui.over.addEventListener('pointermove', (e) => {
     if (!overScrub) return;
-    const t = overPosFromEvent(e);
-    if (overScrub.audible) deck.scrubMove(t);
-    else deck.seek(t);
+    if (!overScrub.dragging) {
+      const moved = Math.hypot(e.clientX - overScrub.startX, e.clientY - overScrub.startY);
+      if (moved < DRAG_THRESHOLD_PX) return; // simple tremblement de main : on ignore
+      // Le geste devient un vrai glisser : on bascule en scrub/navigation continue
+      overScrub.dragging = true;
+      if (overScrub.wasPlaying) deck.pause();
+      if (overScrub.audible) deck.scrubStart();
+    }
+    if (overScrub.audible) {
+      deck.scrubMove(overPosFromEvent(e));
+    } else {
+      applyOverSeek(e);
+    }
   });
   const endOverScrub = () => {
     if (!overScrub) return;
-    deck.scrubEnd();
-    if (overScrub.wasPlaying) deck.play();
+    if (overScrub.dragging) {
+      if (overScrub.audible) deck.scrubEnd();
+      if (overScrub.wasPlaying) deck.play();
+    }
     // Miniature = navigation : JAMAIS de recadrage — et la sync ADOPTE la
     // position choisie au lieu de la « recalibrer » aussitôt
     for (let k = 0; k < 4; k++) engine.reanchorSync(k);
@@ -5826,6 +5870,12 @@ const setSnapRelease = document.getElementById('set-snaprelease');
 setSnapRelease.checked = localStorage.getItem('snapRelease') !== '0';
 setSnapRelease.addEventListener('change', () => {
   localStorage.setItem('snapRelease', setSnapRelease.checked ? '1' : '0');
+});
+const setKeepBarOnJump = document.getElementById('set-keepbaronjump');
+setKeepBarOnJump.checked = keepBarOnJump;
+setKeepBarOnJump.addEventListener('change', () => {
+  keepBarOnJump = setKeepBarOnJump.checked;
+  localStorage.setItem('keepBarOnJump', keepBarOnJump ? '1' : '0');
 });
 const setWaveSize = document.getElementById('set-wavesize');
 setWaveSize.value = localStorage.getItem('waveSize') || 'normal';
