@@ -281,15 +281,21 @@ export class Deck {
     this.offset = 0;
     this.cuePoint = 0;
     this.tempo = 1;
-    this.synced = false;
-    // Un NOUVEAU morceau repart d'un état de sync VIERGE : l'ancien ratio
-    // (_syncBase) n'a aucun sens pour lui et provoquait des sauts de tempo
+    // LE SYNC RESTE ALLUMÉ d'un morceau à l'autre (comme sur un CDJ) : on
+    // ne doit pas le réappuyer à chaque chargement. Le nouveau morceau
+    // repart en revanche d'un ratio VIERGE — l'ancien n'a aucun sens pour
+    // lui — et le verrou le recale sur le master dès la première image.
     this._syncBase = null;
+    this._syncRef = null;
+    this._syncWant = null;
     this._pllCorr = 0;
     this._syncPhaseOff = 0;
     this._phaseFree = false;
     this._ratioCal = false;
     this._ratioMeas = null;
+    this._ratioPasses = 0;
+    this._ratioTries = 0;
+    this._errFilt = 0;
     this.looping = false;
     this._loopBeats = null;
     this.stems = null;
@@ -1498,7 +1504,12 @@ export class AudioEngine {
       const m = this.decks[this.autoMasterIdx];
       if (m.bpm && m.playing) return m;
     }
-    return this.decks.find((d, j) => j !== excludeIdx && d.playing && d.bpm) || null;
+    // Repli : on prend en PRIORITÉ un deck NON SYNCÉ. Sinon, avec 3 sons,
+    // deux esclaves pouvaient se choisir mutuellement comme référence et se
+    // poursuivre l'un l'autre — le BPM ne se posait jamais.
+    return this.decks.find((d, j) => j !== excludeIdx && d.playing && d.bpm && !d.synced)
+      || this.decks.find((d, j) => j !== excludeIdx && d.playing && d.bpm)
+      || null;
   }
 
   // Phase d'un deck sur sa grille (0..1 dans le temps courant).
@@ -1754,16 +1765,27 @@ export class AudioEngine {
       // (> 3 % de la cible) : le sync se RÉPARE tout seul, re-visée
       // immédiate puis recalibration éclair.
       if (d.bpm && m.bpm) {
-        let want = (m.bpm * m.tempo) / d.bpm;
+        // Le BPM du master SANS sa micro-correction de servo : sinon la
+        // cible elle-même tremblait, et le calcul ci-dessous n'arrivait
+        // jamais à se poser (BPM qui bouge en continu à 3 sons).
+        const mBase = m.tempo / (1 + (m._pllCorr || 0));
+        let want = (m.bpm * mBase) / d.bpm;
         while (want > 1.6) want /= 2;
         while (want < 0.5) want *= 2;
-        if (!d._syncBase || Math.abs(d._syncBase / want - 1) > 0.03) {
+        d._syncWant = want;
+        // Seuil de RÉPARATION à 6 %, très au-dessus des ±2 % que la
+        // calibration s'autorise : les deux mécanismes se marchaient dessus
+        // (la calibration poussait jusqu'à 3 %, la réparation punissait à
+        // 3 % → remise à zéro → recalibration → boucle sans fin).
+        if (!d._syncBase || Math.abs(d._syncBase / want - 1) > 0.06) {
           d._syncBase = want;
           d._syncRef = want;
           d._pllCorr = 0;
           d.setTempo(want);
           d._ratioCal = false;
           d._ratioMeas = null;
+          d._ratioPasses = 0;
+          d._ratioTries = 0;
           d._syncPhaseOff = null;
           d._errFilt = 0;
           return;
@@ -1811,17 +1833,29 @@ export class AudioEngine {
       // tempo est ensuite CONSTANT, égal au BPM du master.
       if (!d._ratioCal) {
         const nowC = performance.now() / 1000;
+        const passe = d._ratioPasses || 0;
+        // DEUX ÉTAGES. La précision d'une mesure de pente vaut
+        // (bruit de phase) / (durée × battements par seconde) :
+        //   1 s  -> ±0,13 BPM   (ce qu'on entendait « presque calé »)
+        //   8 s  -> ±0,015 BPM  (exact, à l'échelle d'un morceau entier)
+        // Étage 1, rapide : on se cale tout de suite, en gros.
+        // Étage 2, long : on affine sans que personne ne s'en aperçoive.
+        const duree = passe === 0 ? 1 : 8;
         const ms = d._ratioMeas;
-        if (!ms || nowC - ms.t > 2) {
+        if (!ms || nowC - ms.t > duree + 2) {
           // départ (ou mesure interrompue trop longtemps) : base propre
           if (d._pllCorr) {
             d._pllCorr = 0;
             d.setTempo(d._syncBase);
           }
+          // Garde-fou : sur une grille vraiment fausse, la mesure serait
+          // sans cesse invalidée — on n'insiste pas indéfiniment
+          d._ratioTries = (d._ratioTries || 0) + 1;
+          if (d._ratioTries > 12) { d._ratioCal = true; return; }
           d._ratioMeas = { t: nowC, e: err, dp: d.currentTime(), mp: m.currentTime() };
           return;
         }
-        if (nowC - ms.t < 0.9) return;
+        if (nowC - ms.t < duree) return;
         const dtW = nowC - ms.t;
         // VALIDITÉ : un beat jump / seek / boucle PENDANT la mesure fausse
         // la pente — c'était le « tu réajustes le BPM quand j'avance ou
@@ -1838,11 +1872,25 @@ export class AudioEngine {
         de -= Math.round(de);
         const fd = (d.bpm * d.tempo) / 60; // temps (beats) par seconde
         const kRaw = 1 + de / (dtW * fd);
-        const k = Math.max(0.99, Math.min(1.01, kRaw)); // garde-fou bruit/grille
-        d._syncBase *= k;
+        // Étage 1 : grande correction autorisée (on part de loin).
+        // Étage 2 : correction FINE seulement — à ce stade on n'ajuste plus
+        // que le dernier millième, tout écart plus grand serait du bruit.
+        const lim = passe === 0 ? 0.01 : 0.001;
+        const k = Math.max(1 - lim, Math.min(1 + lim, kRaw));
+        // PLAFOND ABSOLU : la calibration n'a le droit de s'écarter que de
+        // 2 % du ratio visé. Au-delà, ce n'est plus une imprécision de BPM
+        // détecté, c'est une grille fausse — et laisser filer faisait
+        // dériver le tempo sans fin.
+        const cible = d._syncWant || d._syncBase;
+        d._syncBase = Math.max(cible * 0.98, Math.min(cible * 1.02, d._syncBase * k));
         d._syncRef = d._syncBase;
-        // butée atteinte = écart au-delà de 1 % : re-mesure par paliers
-        d._ratioCal = k === kRaw;
+        // Butée atteinte = on re-mesure, mais JAMAIS plus de 4 fois : au-delà
+        // la grille du morceau est en cause et s'acharner faisait bouger le
+        // BPM en permanence (« ça ne calibre pas d'un coup »).
+        // Terminé quand la correction devient NÉGLIGEABLE (0,02 % = 0,03 BPM
+        // à 139) — ou après 4 passes, pour ne jamais s'acharner.
+        d._ratioPasses = passe + 1;
+        d._ratioCal = Math.abs(k - 1) < 0.0002 || d._ratioPasses >= 4;
         d._ratioMeas = null;
         d._errFilt = 0;
         d.setTempo(d._syncBase);
@@ -1873,9 +1921,13 @@ export class AudioEngine {
       // presque au repos → absorption douce. corr retombe à zéro et le
       // tempo devient parfaitement CONSTANT (borné ±3 % de l'ancre).
       const gain = Math.abs(corr) >= 0.0018 ? 0.08 : 0.01;
-      const refA = d._syncRef || d._syncBase;
-      d._syncBase = Math.max(refA * 0.97,
-        Math.min(refA * 1.03, d._syncBase * (1 + corr * gain)));
+      // Bornée sur la CIBLE (le ratio visé), pas sur une ancre glissante,
+      // et à ±2 % comme la calibration : au-delà, l'absorption emmenait
+      // lentement le tempo jusqu'au seuil de réparation, qui remettait tout
+      // à zéro — d'où le BPM qui « n'arrête pas de bouger » à 3 sons.
+      const cibleA = d._syncWant || d._syncRef || d._syncBase;
+      d._syncBase = Math.max(cibleA * 0.98,
+        Math.min(cibleA * 1.02, d._syncBase * (1 + corr * gain)));
       d._pllCorr = corr;
       d.setTempo(d._syncBase * (1 + corr));
     });

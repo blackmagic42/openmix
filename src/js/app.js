@@ -997,7 +997,9 @@ function drawDeckWheel(ui, deck, t) {
   if (!cv) return;
   const playing = deck.playing;
   // Écart de tempo affiché AU CENTRE du disque, comme sur un CDJ
-  const pct = ((deck.tempo || 1) - 1) * 100;
+  // Écart de tempo SANS la micro-correction du servo : sinon la décimale
+  // clignotait en permanence sur un deck syncé
+  const pct = (((deck.tempo || 1) / (1 + (deck._pllCorr || 0))) - 1) * 100;
   const pctTxt = `${pct >= 0 ? '+' : ''}${pct.toFixed(1)}%`;
   // à l'arrêt : un seul dessin (signature), en lecture : chaque frame
   const sig = playing ? null : `stop:${deck.buffer ? 1 : 0}:${pctTxt}:${deck.keylock ? 1 : 0}:${deck.bpm}`;
@@ -1058,7 +1060,17 @@ function drawDeckWheel(ui, deck, t) {
   g.textAlign = 'center';
   g.textBaseline = 'middle';
   const MONO = 'ui-monospace, Menlo, Consolas, monospace';
-  const bpmNow = deck.bpm ? (deck.bpm * (deck.tempo || 1)) : null;
+  // DECK SYNCÉ = ON AFFICHE LE BPM DU MASTER. Le verrou garantit la même
+  // vitesse réelle ; afficher la valeur instantanée du deck montrait les
+  // micro-corrections du servo (139.07 face à 139.00) et donnait
+  // l'impression que « le BPM n'arrête pas de changer ».
+  let bpmNow = deck.bpm ? (deck.bpm * (deck.tempo || 1)) : null;
+  if (deck.synced && deck.playing && deck._syncBase) {
+    const mstr = engine.getMasterDeck(deck.id);
+    if (mstr && mstr.bpm && mstr.playing) {
+      bpmNow = mstr.bpm * (mstr.tempo / (1 + (mstr._pllCorr || 0)));
+    }
+  }
   g.font = `800 19px ${MONO}`;
   g.fillStyle = deck.buffer ? '#eef2f8' : '#39414f';
   g.fillText(bpmNow ? bpmNow.toFixed(2) : '--.--', c, c - 8);
@@ -4703,6 +4715,7 @@ function midiCue(i, on) {
 
 const midiJogTimer = [null, null, null, null]; // relâcher du nudge MIDI (côté)
 const midiScratchTimer = [null, null, null, null]; // relâcher du scratch (dessus)
+const midiJogTouchTime = [0, 0, 0, 0]; // pose de la main : rafale à ignorer
 const midiSeekAcc = [0, 0, 0, 0];   // déplacement accumulé (dessus sans toucher)
 const midiSeekTimer = [null, null, null, null];
 let midiShiftHeld = false; // bouton SHIFT (gauche ou droit) tenu enfoncé
@@ -4852,6 +4865,7 @@ const midi = new MidiManager({
         midiJogTouchAt = performance.now();
         if (on) {
           midiJogTouchHeld[i] = true;
+          midiJogTouchTime[i] = performance.now();
           clearTimeout(midiScratchTimer[i]);
           clearTimeout(midiJogArmTimer[i]); // annule une reprise en attente (anti-rebond)
           // COUPURE INSTANTANÉE à la pose (exigence d'origine de David) —
@@ -5224,6 +5238,11 @@ const midi = new MidiManager({
       const d = engine.decks[i];
       if (!d.buffer || delta === 0) return;
       engine.resume();
+      // PAS DE CALIBRAGE AUTOMATIQUE (essayé 3 fois, raté 3 fois) : un
+      // encodeur plus fin envoie des crans plus PETITS mais plus NOMBREUX,
+      // le total est déjà le même. Mesurer une « pointe » rendait le disque
+      // mou pendant des secondes après un grand geste. Les deux côtés
+      // suivent exactement le même chemin. NE PAS RÉINTRODUIRE.
       // C'est le CAPTEUR DE TOUCHER qui décide (doctrine finale) :
       let st = midiJogState[i];
       // Toucher en attente d'armement + rotation = INTENTION claire de
@@ -5252,7 +5271,11 @@ const midi = new MidiManager({
             const now2 = performance.now();
             const dt2 = Math.min(0.05, (now2 - st.t) / 1000);
             st.t = now2;
-            if (Math.abs(st.vel) > 0.02) {
+            // Seuil TRÈS bas : à 0,02 un petit geste du disque le plus fin
+            // (cran = 1 → vitesse 0,003) passait sous la barre et la
+            // friction l'effaçait avant qu'il ne s'accumule — le disque
+            // « ne bougeait qu'après un seuil ». Ici le moindre cran compte.
+            if (Math.abs(st.vel) > 0.0015) {
               // position négative AUTORISÉE : on peut tirer le son avant
               // son début (il démarrera plus tard) — comme à la souris
               st.pos = Math.max(-3600, Math.min(d.duration, st.pos + st.vel * dt2));
