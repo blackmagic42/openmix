@@ -132,7 +132,7 @@ function scAcctOrDefault(accountIdx) {
 
 ipcMain.handle('pick-folder', async () => {
   const r = await dialog.showOpenDialog(win, {
-    title: 'Choisir le dossier de musiques',
+    title: 'Choose your music folder',
     properties: ['openDirectory']
   });
   if (r.canceled || !r.filePaths.length) return null;
@@ -142,7 +142,7 @@ ipcMain.handle('pick-folder', async () => {
 // Import Rekordbox : choisir l'export XML de la collection
 ipcMain.handle('pick-xml', async () => {
   const r = await dialog.showOpenDialog(win, {
-    title: 'Choisir l\'export XML Rekordbox',
+    title: 'Choose the Rekordbox XML export',
     properties: ['openFile'],
     filters: [{ name: 'Rekordbox XML', extensions: ['xml'] }]
   });
@@ -152,7 +152,7 @@ ipcMain.handle('pick-xml', async () => {
 // SAMPLER : choisir un ou plusieurs fichiers audio à poser sur les pads
 ipcMain.handle('pick-samples', async () => {
   const r = await dialog.showOpenDialog(win, {
-    title: 'Choisir des samples',
+    title: 'Choose samples',
     properties: ['openFile', 'multiSelections'],
     filters: [{ name: 'Audio', extensions: ['mp3', 'wav', 'ogg', 'flac', 'm4a', 'aac', 'aif', 'aiff', 'opus', 'webm'] }]
   });
@@ -569,7 +569,7 @@ ipcMain.handle('stems-separate', async (_e, trackPath) => {
     if (result.code !== 0) {
       return {
         ok: false,
-        error: 'Demucs indisponible — installe-le avec « pip install demucs » puis réessaie'
+        error: 'Demucs unavailable — install it with “pip install demucs” then try again'
       };
     }
     const src = path.join(tmpOut, 'htdemucs', path.parse(trackPath).name);
@@ -591,7 +591,7 @@ ipcMain.handle('fs-roots', async () => {
     try { if (p && fs.existsSync(p)) roots.push({ name, path: p }); } catch { /* rien */ }
   };
   add('🎵 Musique', app.getPath('music'));
-  add('⬇️ Téléchargements', app.getPath('downloads'));
+  add('⬇️ Downloads', app.getPath('downloads'));
   add('🖥️ Bureau', app.getPath('desktop'));
   add('📄 Documents', app.getPath('documents'));
   for (const l of ['C', 'D', 'E', 'F', 'G']) add(`💽 ${l}:`, `${l}:\\`);
@@ -617,7 +617,7 @@ ipcMain.handle('fs-list', async (_e, dir) => {
 ipcMain.handle('export-playlist', async (_e, plName, items) => {
   try {
     const r = await dialog.showOpenDialog(win, {
-      title: 'Choisis la clé USB (ou le dossier) de destination',
+      title: 'Choose the destination USB drive (or folder)',
       properties: ['openDirectory']
     });
     if (r.canceled || !r.filePaths.length) return { ok: false, canceled: true };
@@ -740,7 +740,7 @@ async function scGetJson(url, acct = null, opts = {}) {
       // jeton mort du pote ne doit pas déconnecter tout le monde.
       acct.token = null;
       await saveSettings();
-      throw new Error(`Session SoundCloud de ${acct.name || 'ton compte'} expirée — reconnecte ce compte`);
+      throw new Error(`SoundCloud session for ${acct.name || 'your account'} expired — reconnect this account`);
     }
     // Session vivante : c'est très probablement le client_id. On laisse
     // « SoundCloud HTTP 401 » remonter pour que scTry en réextraie un frais.
@@ -864,7 +864,7 @@ ipcMain.handle('sc-login', async () => {
   try {
     const accounts = scAccounts();
     const token = await scLoginWindow();
-    if (!token) return { ok: false, error: 'Connexion annulée' };
+    if (!token) return { ok: false, error: 'Login canceled' };
     let cid = '';
     try { cid = await scEnsureClientId(); } catch { /* le jeton peut suffire */ }
     const q = cid ? `?client_id=${cid}` : '';
@@ -888,7 +888,7 @@ ipcMain.handle('sc-login', async () => {
     if (existing >= 0) {
       if (accounts[existing].token) {
         await saveSettings(); // les noms fraîchement appris méritent d'être gardés
-        return { ok: false, error: `Compte ${name} déjà connecté` };
+        return { ok: false, error: `Account ${name} already connected` };
       }
       accounts[existing].token = token;
       await saveSettings();
@@ -907,7 +907,7 @@ ipcMain.handle('sc-remove-account', async (_e, idx) => {
   try {
     const accounts = scAccounts();
     const acct = accounts[idx];
-    if (!acct) return { ok: false, error: 'Compte inconnu' };
+    if (!acct) return { ok: false, error: 'Unknown account' };
     accounts.splice(idx, 1);
     // Compte hérité de la session navigateur historique : on retire AUSSI le
     // cookie de la session par défaut, sinon le jeton traînerait sur le disque
@@ -939,7 +939,7 @@ ipcMain.handle('sc-my-playlists', async (_e, accountIdx) => {
     await scAdoptCookieToken();
     const idx = accountIdx ?? 0;
     const acct = scAccounts()[idx];
-    if (!acct || !acct.token) return { ok: false, needLogin: true, error: 'Pas connecté à SoundCloud' };
+    if (!acct || !acct.token) return { ok: false, needLogin: true, error: 'Not connected to SoundCloud' };
     return await scTry(async () => {
       let cid = '';
       try { cid = await scEnsureClientId(); } catch { /* le jeton peut suffire */ }
@@ -986,7 +986,7 @@ ipcMain.handle('sc-my-likes', async (_e, accountIdx) => {
     await scAdoptCookieToken();
     const idx = accountIdx ?? 0;
     const acct = scAccounts()[idx];
-    if (!acct || !acct.token) return { ok: false, needLogin: true, error: 'Pas connecté à SoundCloud' };
+    if (!acct || !acct.token) return { ok: false, needLogin: true, error: 'Not connected to SoundCloud' };
     return await scTry(async () => {
       let cid = '';
       try { cid = await scEnsureClientId(); } catch { /* le jeton peut suffire */ }
@@ -1090,7 +1090,7 @@ ipcMain.handle('sc-resolve', async (_e, url, accountIdx) => {
     if (obj.kind === 'track') {
       return { ok: true, kind: 'playlist', title: obj.title, tracks: [scSimplifyTrack(obj)] };
     }
-    return { ok: false, error: `Type de lien non géré : ${obj.kind}` };
+    return { ok: false, error: `Unsupported link type: ${obj.kind}` };
     });
   } catch (err) {
     return { ok: false, error: String(err.message || err) };
@@ -1144,13 +1144,13 @@ async function scDownloadToFile(scId, dest, acct = null) {
     const cid = await scEnsureClientId();
     const arr = await scGetJson(`${SC_API}/tracks?ids=${scId}&client_id=${cid}`, acct);
     const track = arr && arr[0];
-    if (!track) throw new Error('Piste introuvable');
+    if (!track) throw new Error('Track not found');
 
     const allCodings = (track.media && track.media.transcodings) || [];
     if (!allCodings.length) {
       throw new Error(track.policy === 'BLOCK'
-        ? 'Piste bloquée dans ton pays'
-        : 'Cette piste n\'expose aucun flux (retirée, privée ou supprimée)');
+        ? 'Track blocked in your country'
+        : 'This track has no available stream (removed, private, or deleted)');
     }
     // On ÉCARTE les flux protégés par DRM : leur clé est réservée au lecteur
     // du site (FairPlay/Widevine). Les télécharger ne donnerait que des
@@ -1159,7 +1159,7 @@ async function scDownloadToFile(scId, dest, acct = null) {
     if (!codings.length) {
       // Flux chiffré : la clé n'est délivrée qu'au lecteur du site. Rien à
       // « réparer » côté code, et rien à contourner — on le dit, c'est tout.
-      throw new Error('Morceau protégé (DRM) : sa lecture hors du site du service n\'est pas autorisée. Utilise le fichier que tu possèdes, ou un autre morceau.');
+      throw new Error('Protected track (DRM): playback outside the service’s site isn’t allowed. Use a file you own, or another track.');
     }
 
     // ORDRE DE PRÉFÉRENCE des flux — on ne rejette plus RIEN d'emblée :
@@ -1202,16 +1202,16 @@ async function scDownloadToFile(scId, dest, acct = null) {
           `${chosen.url}${sep}client_id=${cid}${ta}`, acct, { keepToken: true });
         let buf;
         if ((chosen.format && chosen.format.protocol) === 'progressive') {
-          buf = await getBin(streamUrl, 'Flux');
+          buf = await getBin(streamUrl, 'Stream');
         } else {
           const m3u8 = await (await fetch(streamUrl)).text();
           const segs = m3u8.split('\n').map(l => l.trim()).filter(l => l && !l.startsWith('#'));
-          if (!segs.length) throw new Error('Playlist de flux vide');
+          if (!segs.length) throw new Error('Empty stream playlist');
           const parts = [];
           for (const seg of segs) parts.push(await getBin(seg, 'Segment'));
           buf = Buffer.concat(parts);
         }
-        if (!buf || buf.length < 2048) throw new Error('Flux vide');
+        if (!buf || buf.length < 2048) throw new Error('Empty stream');
         await fsp.writeFile(dest, buf);
         // Piste « extrait » : SoundCloud ne sert que 30 s quand le compte
         // n'a pas les droits. On le SIGNALE et on le note dans le cache —
@@ -1222,7 +1222,7 @@ async function scDownloadToFile(scId, dest, acct = null) {
           bytes: buf.length,
           full: !track.snipped,
           warning: track.snipped
-            ? 'Extrait 30 s : connecte le compte SoundCloud abonné pour le morceau entier'
+            ? '30s preview: connect the subscribed SoundCloud account for the full track'
             : null
         };
       } catch (e) {
@@ -1230,8 +1230,8 @@ async function scDownloadToFile(scId, dest, acct = null) {
       }
     }
     throw new Error(track.snipped
-      ? 'Piste réservée aux abonnés (Go+) — connecte le compte abonné dans ⚙'
-      : `Aucun flux lisible : ${lastErr ? lastErr.message : 'inconnu'}`);
+      ? 'Track reserved for subscribers (Go+) — connect the subscribed account in ⚙'
+      : `No playable stream: ${lastErr ? lastErr.message : 'unknown'}`);
 }
 
 // Télécharge la piste dans le cache local (pour la lecture) — le reste du

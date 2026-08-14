@@ -1,28 +1,28 @@
 <!doctype html>
-<html lang="fr">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#0b0d12">
-<title>OpenMix — Demande ton son</title>
+<title>OpenMix — Request a track</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html,body{background:#0a0c11;color:#e6eaf2;font-family:system-ui,-apple-system,'Segoe UI',sans-serif}
 body{display:flex;flex-direction:column;height:100dvh;overflow:hidden}
 
-/* --- en-tête --- */
+/* --- header --- */
 header{padding:14px 16px 10px;background:linear-gradient(180deg,#12161f,#0a0c11);border-bottom:1px solid #1c2230}
 h1{font-size:15px;font-weight:900;letter-spacing:3px}
 h1 b{color:#39c2ff;font-weight:900}
 .sub{font-size:11px;color:#7d879e;margin-top:3px;letter-spacing:.2px}
 
-/* --- onglets source --- */
+/* --- source tabs --- */
 #tabs{display:flex;gap:6px;padding:10px 12px 8px}
 #tabs button{flex:1;padding:11px 8px;font-size:11.5px;font-weight:900;letter-spacing:.6px;
   background:#12151d;border:1px solid #232a3a;color:#8a94ae;border-radius:8px;transition:.15s}
 #tabs button.on{background:#1b2a3d;border-color:#39c2ff;color:#39c2ff;box-shadow:0 0 0 1px #39c2ff33}
 
-/* --- recherche --- */
+/* --- search --- */
 #searchrow{display:flex;gap:7px;padding:0 12px 10px}
 #search{flex:1;min-width:0;padding:13px 14px;font-size:16px;background:#12151d;
   border:1px solid #2b3243;border-radius:8px;color:#e6eaf2;outline:none}
@@ -30,7 +30,7 @@ h1 b{color:#39c2ff;font-weight:900}
 #go{padding:0 18px;font-size:15px;font-weight:900;background:#39c2ff;border:none;color:#06121c;border-radius:8px}
 #go:disabled{opacity:.45}
 
-/* --- liste --- */
+/* --- list --- */
 #list{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding-bottom:78px}
 .sect{padding:9px 16px 5px;font-size:10px;font-weight:900;letter-spacing:1.4px;color:#5d6780;
   background:#0a0c11;position:sticky;top:0;z-index:2}
@@ -45,7 +45,7 @@ h1 b{color:#39c2ff;font-weight:900}
 .row button:disabled{background:#12301f;border-color:#2fdf6e55;color:#2fdf6e;opacity:1}
 .hint{padding:26px 22px;text-align:center;color:#5d6780;font-size:12.5px;line-height:1.7}
 
-/* --- message au DJ, ancré en bas --- */
+/* --- message to the DJ, anchored at the bottom --- */
 #msgrow{position:fixed;left:0;right:0;bottom:0;display:flex;gap:7px;padding:10px 12px calc(10px + env(safe-area-inset-bottom));
   background:#0e1219;border-top:1px solid #1c2230}
 #msg{flex:1;min-width:0;padding:12px;font-size:15px;background:#12151d;border:1px solid #2b3243;
@@ -61,26 +61,26 @@ h1 b{color:#39c2ff;font-weight:900}
 <body>
 <header>
   <h1>OPEN<b>MIX</b></h1>
-  <div class="sub">Demande ton son — le DJ le voit direct sur sa platine 🎧</div>
+  <div class="sub">Request a track — the DJ sees it live on their deck 🎧</div>
 </header>
 
 <div id="tabs">
-  <button id="tab-lib" class="on">🎵 SES SONS</button>
+  <button id="tab-lib" class="on">🎵 THEIR TRACKS</button>
   <button id="tab-sc">☁ SOUNDCLOUD</button>
 </div>
 
 <div id="searchrow">
-  <input id="search" placeholder="Chercher un morceau…" autocomplete="off" enterkeyhint="search">
+  <input id="search" placeholder="Search for a track…" autocomplete="off" enterkeyhint="search">
   <button id="go">🔎</button>
 </div>
 
 <div id="list"></div>
 
 <div id="msgrow">
-  <input id="msg" maxlength="140" placeholder="Un message au DJ…">
+  <input id="msg" maxlength="140" placeholder="A message for the DJ…">
   <button id="send">📨</button>
 </div>
-<div id="toast">Envoyé ! 🔥</div>
+<div id="toast">Sent! 🔥</div>
 
 <script>
 const listEl = document.getElementById('list');
@@ -88,11 +88,11 @@ const searchEl = document.getElementById('search');
 const goEl = document.getElementById('go');
 const tabLib = document.getElementById('tab-lib');
 const tabSc = document.getElementById('tab-sc');
-let mode = 'lib';          // 'lib' = bibliothèque du DJ, 'sc' = SoundCloud
-let items = [];            // bibliothèque du DJ
-let scItems = [];          // résultats SoundCloud
-let scMsg = '';            // état de la recherche SoundCloud
-let votes = {};            // votes en cours (tous les invités)
+let mode = 'lib';          // 'lib' = the DJ's library, 'sc' = SoundCloud
+let items = [];            // the DJ's library
+let scItems = [];          // SoundCloud results
+let scMsg = '';            // SoundCloud search state
+let votes = {};            // current votes (all guests)
 const voted = new Set(JSON.parse(localStorage.getItem('tmVoted') || '[]'));
 
 function toast(t) {
@@ -102,7 +102,7 @@ function toast(t) {
   setTimeout(() => el.classList.remove('show'), 1600);
 }
 async function post(o) {
-  try { await fetch('/vote', { method: 'POST', body: JSON.stringify(o) }); } catch { /* hors ligne */ }
+  try { await fetch('/vote', { method: 'POST', body: JSON.stringify(o) }); } catch { /* offline */ }
 }
 const fmtDur = (ms) => {
   if (!ms) return '';
@@ -115,13 +115,13 @@ document.getElementById('send').addEventListener('click', () => {
   if (!m) return;
   post({ msg: m });
   document.getElementById('msg').value = '';
-  toast('Message envoyé ! 📨');
+  toast('Message sent! 📨');
 });
 document.getElementById('msg').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') document.getElementById('send').click();
 });
 
-// Une ligne de morceau (bibliothèque ou SoundCloud)
+// A track row (library or SoundCloud)
 function makeRow(it) {
   const r = document.createElement('div');
   r.className = 'row';
@@ -154,15 +154,15 @@ function makeRow(it) {
     r.appendChild(vv);
   }
   const btn = document.createElement('button');
-  btn.textContent = voted.has(n) ? 'VOTÉ ✓' : 'VOTER';
+  btn.textContent = voted.has(n) ? 'VOTED ✓' : 'VOTE';
   btn.disabled = voted.has(n);
   btn.addEventListener('click', () => {
     post({ name: n, bpm: it.bpm || null, url: it.url || null, art: it.art || null });
     voted.add(n);
     localStorage.setItem('tmVoted', JSON.stringify([...voted]));
     btn.disabled = true;
-    btn.textContent = 'VOTÉ ✓';
-    toast('Demande envoyée ! 🔥');
+    btn.textContent = 'VOTED ✓';
+    toast('Request sent! 🔥');
   });
   r.appendChild(btn);
   return r;
@@ -181,16 +181,16 @@ function render() {
   if (mode === 'sc') {
     if (scMsg) listEl.appendChild(Object.assign(document.createElement('div'), { className: 'hint', textContent: scMsg }));
     if (scItems.length) {
-      listEl.appendChild(section(`SOUNDCLOUD · ${scItems.length} RÉSULTATS`));
+      listEl.appendChild(section(`SOUNDCLOUD · ${scItems.length} RESULTS`));
       scItems.forEach((it) => listEl.appendChild(makeRow(it)));
     }
     return;
   }
 
-  // Bibliothèque du DJ — en tête, les demandes déjà votées
+  // The DJ's library — already-voted requests come first
   const top = Object.entries(votes).sort((a, b) => b[1] - a[1]).slice(0, 5);
   if (!q && top.length) {
-    listEl.appendChild(section('🔥 LES PLUS DEMANDÉS'));
+    listEl.appendChild(section('🔥 MOST REQUESTED'));
     top.forEach(([name, n]) => {
       const known = items.find((x) => x.name === name);
       listEl.appendChild(makeRow(known || { name, bpm: null }));
@@ -198,35 +198,35 @@ function render() {
     });
   }
   const found = items.filter((it) => !it.pl && (!q || it.name.toLowerCase().includes(q))).slice(0, 300);
-  listEl.appendChild(section(q ? `${found.length} RÉSULTAT${found.length > 1 ? 'S' : ''}` : 'SES MORCEAUX'));
+  listEl.appendChild(section(q ? `${found.length} RESULT${found.length > 1 ? 'S' : ''}` : 'THEIR TRACKS'));
   if (!found.length) {
     const h = document.createElement('div');
     h.className = 'hint';
-    h.textContent = 'Rien à ce nom dans ses morceaux — essaie l\'onglet ☁ SOUNDCLOUD pour chercher dans tout le catalogue.';
+    h.textContent = 'Nothing by that name in their tracks — try the ☁ SOUNDCLOUD tab to search the whole catalog.';
     listEl.appendChild(h);
   }
   found.forEach((it) => listEl.appendChild(makeRow(it)));
 }
 
-// --- recherche SoundCloud (tout le catalogue) ---
+// --- SoundCloud search (whole catalog) ---
 let scTimer = null;
 async function scSearch() {
   const q = searchEl.value.trim();
   if (q.length < 2) {
     scItems = [];
-    scMsg = 'Tape le nom d\'un morceau ou d\'un artiste, puis 🔎';
+    scMsg = 'Type a track or artist name, then 🔎';
     render();
     return;
   }
-  scMsg = 'Recherche sur SoundCloud…';
+  scMsg = 'Searching SoundCloud…';
   scItems = [];
   render();
   try {
     const r = await (await fetch(`/scsearch?q=${encodeURIComponent(q)}`)).json();
     scItems = r.tracks || [];
-    scMsg = scItems.length ? '' : (r.error || 'Aucun résultat');
+    scMsg = scItems.length ? '' : (r.error || 'No results');
   } catch {
-    scMsg = 'Recherche indisponible (connexion ?)';
+    scMsg = 'Search unavailable (connection?)';
   }
   render();
 }
@@ -234,7 +234,7 @@ function setMode(m) {
   mode = m;
   tabLib.classList.toggle('on', m === 'lib');
   tabSc.classList.toggle('on', m === 'sc');
-  searchEl.placeholder = m === 'sc' ? 'Chercher sur tout SoundCloud…' : 'Chercher dans ses morceaux…';
+  searchEl.placeholder = m === 'sc' ? 'Search all of SoundCloud…' : 'Search their tracks…';
   goEl.style.display = m === 'sc' ? '' : 'none';
   if (m === 'sc') scSearch(); else render();
 }
@@ -244,7 +244,7 @@ goEl.addEventListener('click', scSearch);
 searchEl.addEventListener('input', () => {
   if (mode === 'lib') { render(); return; }
   clearTimeout(scTimer);
-  scTimer = setTimeout(scSearch, 550); // recherche auto après la frappe
+  scTimer = setTimeout(scSearch, 550); // auto-search after typing
 });
 searchEl.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') { e.preventDefault(); if (mode === 'sc') scSearch(); }
@@ -255,7 +255,7 @@ async function loadLib() {
     const l = await (await fetch('/lib')).json();
     items = l.items || [];
     if (mode === 'lib') render();
-  } catch { /* retentera */ }
+  } catch { /* will retry */ }
 }
 async function pollVotes() {
   try {
@@ -263,7 +263,7 @@ async function pollVotes() {
     votes = {};
     (r.votes || []).forEach((v) => { votes[v.name] = v.votes; });
     if (mode === 'lib') render();
-  } catch { /* hors ligne */ }
+  } catch { /* offline */ }
   setTimeout(pollVotes, 4000);
 }
 setMode('lib');

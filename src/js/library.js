@@ -4,6 +4,7 @@
 
 import { detectBPM, alignImportedGrid } from './bpm.js';
 import { computeBandPeaks } from './waveform.js';
+import { t as i18n } from './i18n.js';
 
 // Mini-aperçu waveform coloré (RGB par fréquences) encodé en dataURL
 async function makePreview(buffer) {
@@ -175,7 +176,7 @@ export class Library {
       path: d.path,
       name: `📁 ${d.name}`
     }));
-    if (this.fsDir) dirRows.unshift({ fsUpRow: true, name: '⬅ ‥ (dossier parent)' });
+    if (this.fsDir) dirRows.unshift({ fsUpRow: true, name: i18n('parent_folder') });
     return dirRows.length ? [...dirRows, ...this.tracks] : this.tracks;
   }
 
@@ -189,7 +190,7 @@ export class Library {
     this.fsDirs = (await window.api.fsRoots()) || [];
     this.selection = 0;
     this.applyFilter();
-    this.cb.onStatus('Racines — encodeur pour entrer, RETOUR pour ressortir');
+    this.cb.onStatus(i18n('library_root_hint'));
   }
 
   async init() {
@@ -317,7 +318,7 @@ export class Library {
 
   async scan(dir) {
     const scanId = ++this._scanId;
-    this.cb.onStatus(`Scan de ${dir}…`);
+    this.cb.onStatus(i18n('scanning_folder', { dir }));
     // Navigation façon Rekordbox : les SOUS-DOSSIERS s'affichent en tête de
     // liste (l'encodeur y entre, RETOUR remonte au dossier parent)
     this.rootsView = false;
@@ -344,7 +345,7 @@ export class Library {
       };
     });
     this.applyFilter();
-    this.cb.onStatus(`${this.tracks.length} morceaux — analyse BPM en cours…`);
+    this.cb.onStatus(i18n('library_scanning_status', { n: this.tracks.length }));
     this._analyzeQueue(scanId);
   }
 
@@ -353,10 +354,10 @@ export class Library {
   // ---------------------------------------------------------------------
 
   async loadScUrl(url, acctIdx = this.scAcctIdx ?? 0) {
-    this.cb.onStatus('Connexion à SoundCloud…');
+    this.cb.onStatus(i18n('sc_connecting'));
     const res = await window.api.scResolve(url, acctIdx);
     if (!res.ok) {
-      this.cb.onStatus(`SoundCloud : ${res.error}`);
+      this.cb.onStatus(i18n('sc_error', { error: res.error }));
       return false;
     }
     // La vue appartient désormais à ce compte : ⬅ et les téléchargements
@@ -399,20 +400,20 @@ export class Library {
     this.setMode('sc');
     this.selection = 0;
     this.applyFilter();
-    this.cb.onStatus(`SoundCloud : ${this.scTitle} — ${this.scTracks.length} éléments`);
+    this.cb.onStatus(i18n('sc_playlist_status', { title: this.scTitle, n: this.scTracks.length }));
     return true;
   }
 
   // Recherche dans TOUT le catalogue SoundCloud — au-delà des playlists.
   // Les résultats se chargent/streament comme n'importe quelle piste SC.
   async searchSc(query) {
-    this.cb.onStatus(`SoundCloud : recherche « ${query} »…`);
+    this.cb.onStatus(i18n('sc_searching', { query }));
     // La recherche part avec le jeton du compte COURANT : un résultat Go+
     // doit se télécharger avec le bon compte, pas en anonyme
     const acctIdx = this.scAcctIdx ?? 0;
     const res = await window.api.scSearch(query, acctIdx);
     if (!res.ok) {
-      this.cb.onStatus(`SoundCloud : ${res.error}`);
+      this.cb.onStatus(i18n('sc_error', { error: res.error }));
       return false;
     }
     this.scAccountsView = false;
@@ -439,7 +440,7 @@ export class Library {
     this.setMode('sc');
     this.selection = 0;
     this.applyFilter();
-    this.cb.onStatus(`SoundCloud : ${this.scTracks.length} résultats pour « ${query} » — Entrée pour relancer, ← pour tes playlists`);
+    this.cb.onStatus(i18n('sc_search_results', { n: this.scTracks.length, query }));
     return true;
   }
 
@@ -504,16 +505,16 @@ export class Library {
     this.setMode('sc');
     this.selection = 0;
     this.applyFilter();
-    this.cb.onStatus(`${accounts.length} comptes SoundCloud — double-clic (ou Rond/B) pour entrer, clic droit pour retirer`);
+    this.cb.onStatus(i18n('sc_accounts_status', { n: accounts.length }));
     return true;
   }
 
   // Playlists du compte SoundCloud demandé (défaut : compte 0 = comme avant)
   async loadScMine(acctIdx = 0) {
-    this.cb.onStatus('Récupération de tes playlists SoundCloud…');
+    this.cb.onStatus(i18n('sc_fetching_playlists'));
     const res = await window.api.scMyPlaylists(acctIdx);
     if (!res.ok) {
-      this.cb.onStatus(`SoundCloud : ${res.error}`);
+      this.cb.onStatus(i18n('sc_error', { error: res.error }));
       return res;
     }
     // Chaque ligne (❤️ Likes comprise) est taguée avec SON compte : le bon
@@ -528,16 +529,16 @@ export class Library {
     this.setMode('sc');
     this.selection = 0;
     this.applyFilter();
-    this.cb.onStatus(`${rows.length} playlists de ${res.username} — double-clic (ou Rond/B) pour en ouvrir une`);
+    this.cb.onStatus(i18n('sc_user_playlists_status', { n: rows.length, user: res.username }));
     return res;
   }
 
   // Les sons LIKÉS du compte demandé, présentés comme une playlist
   async loadScLikes(acctIdx = 0) {
-    this.cb.onStatus('Récupération de tes likes SoundCloud…');
+    this.cb.onStatus(i18n('sc_fetching_likes'));
     const res = await window.api.scMyLikes(acctIdx);
     if (!res.ok) {
-      this.cb.onStatus(`SoundCloud : ${res.error}`);
+      this.cb.onStatus(i18n('sc_error', { error: res.error }));
       return false;
     }
     const switching = this.scAcctIdx !== acctIdx;
@@ -570,7 +571,7 @@ export class Library {
     this.setMode('sc');
     this.selection = 0;
     this.applyFilter();
-    this.cb.onStatus(`SoundCloud : ${this.scTracks.length} sons likés`);
+    this.cb.onStatus(i18n('sc_likes_status', { n: this.scTracks.length }));
     return true;
   }
 
@@ -691,8 +692,8 @@ export class Library {
       // ne doit pas afficher « 1 restants » pour l'éternité)
       const remaining = this.tracks.filter(x => !x.analyzed).length;
       this.cb.onStatus(remaining
-        ? `${this.tracks.length} morceaux — analyse : ${remaining} restants…`
-        : `${this.tracks.length} morceaux — analyse terminée`);
+        ? i18n('library_analyzing_status', { n: this.tracks.length, remaining })
+        : i18n('library_analysis_done', { n: this.tracks.length }));
     }
   }
 
@@ -705,7 +706,7 @@ export class Library {
   // Charge le morceau (téléchargement SoundCloud si besoin, puis décodage complet).
   async loadForDeck(track, onProgress) {
     if (track.sc && !track.path) {
-      if (onProgress) onProgress('Téléchargement SoundCloud…');
+      if (onProgress) onProgress(i18n('sc_downloading'));
       // Le compte tagué sur la piste part avec elle : ses Go+/privées à lui
       const res = await window.api.scFetchTrack(track.scId, track.acctIdx);
       if (!res.ok) throw new Error(res.error);
@@ -714,10 +715,10 @@ export class Library {
       // ne grave pas le BPM d'un extrait dans le cache d'analyse
       if (res.full === false) {
         track.snippet = true;
-        this.cb.onStatus(res.warning || 'Extrait 30 s — connecte le compte SoundCloud abonné');
+        this.cb.onStatus(res.warning || i18n('preview_30s_connect'));
       }
     }
-    if (onProgress) onProgress('Décodage…');
+    if (onProgress) onProgress(i18n('decoding'));
     const buffer = await this._decode(track.path);
     let { bpm, beatOffset } = track;
     // La fraîcheur se vérifie dans le CACHE central, pas dans l'instantané du
@@ -859,7 +860,7 @@ export class Library {
 
   // Ré-analyse FORCÉE : efface les corrections manuelles et refait tout
   async reanalyze(track) {
-    if (!track.path) throw new Error('Charge d’abord le morceau (il doit être téléchargé)');
+    if (!track.path) throw new Error(i18n('load_track_first'));
     const buffer = await this._decode(track.path);
     const res = await detectBPM(buffer, this._range());
     if (!res) throw new Error('Analyse impossible sur ce morceau');
