@@ -56,6 +56,34 @@ export function gridPeriodAt(deck, t) {
   return b[k + 1] - b[k];
 }
 
+// Saut "mesure intacte" : au lieu de sauter pile où on a cliqué, on tombe
+// dans la MÊME mesure (celle visée par le clic) mais à la même position
+// RELATIVE qu'on occupait avant de sauter (ex: on était au 1/4 de la mesure
+// 4 -> on tombe au 1/4 de la mesure 74, pas exactement sur le pixel cliqué).
+// Sans grille de battements connue (pas de BPM détecté), on ne peut rien
+// aligner : on renvoie la cible telle quelle.
+export function barAlignedSeekTime(deck, fromTime, toTime) {
+  if (!deck || !deck.bpm) return toTime;
+  if (deck.beats && deck.beats.length >= 2) {
+    const fFrom = gridIndexFracAt(deck, fromTime);
+    const fTo = gridIndexFracAt(deck, toTime);
+    if (fFrom == null || fTo == null) return toTime;
+    const anchor = deck.barAnchor || 0;
+    const relFrom = (fFrom - anchor) / 4;
+    const relTo = (fTo - anchor) / 4;
+    const phase = relFrom - Math.floor(relFrom);
+    const targetBar = Math.floor(relTo);
+    return gridTimeAtIndex(deck, anchor + (targetBar + phase) * 4);
+  }
+  if (deck.beatOffset == null) return toTime;
+  const barLen = (4 * 60) / deck.bpm;
+  const barFrom = (fromTime - deck.beatOffset) / barLen;
+  const barTo = (toTime - deck.beatOffset) / barLen;
+  const phase = barFrom - Math.floor(barFrom);
+  const targetBar = Math.floor(barTo);
+  return deck.beatOffset + (targetBar + phase) * barLen;
+}
+
 // Pitch-shifter temps réel (technique des deux lignes de délai balayées en
 // dents de scie et crossfadées) : change la tonalité sans changer la vitesse.
 class PitchShifter {
