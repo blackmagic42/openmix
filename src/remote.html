@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="theme-color" content="#0b0d12">
-<title>OpenMix — Console téléphone</title>
+<title>OpenMix — Phone remote</title>
 <style>
 /* ==== Design system Turbo Mix : même langage que l'interface de base ==
    panneaux sombres, liserés fins, néons discrets, typo serrée ==== */
@@ -117,10 +117,10 @@ body.libopen #lib{display:flex}
   <div id="mixer"></div>
   <div class="deckcol" id="deckR" style="--c:#ff9f43"></div>
 </div>
-<div id="offline">⚠️ Connexion au PC perdue…</div>
-<div id="rotate"><b>🔄</b>Tourne ton téléphone en PAYSAGE</div>
+<div id="offline">⚠️ Connection to the computer lost…</div>
+<div id="rotate"><b>🔄</b>Turn your phone to LANDSCAPE</div>
 <div id="lib">
-  <header><h2 id="lib-title">📚 Bibliothèque</h2><button id="lib-close">✕</button></header>
+  <header><h2 id="lib-title">📚 Library</h2><button id="lib-close">✕</button></header>
   <div id="lib-list"></div>
 </div>
 <div id="sheet">
@@ -614,7 +614,7 @@ async function fetchLib(force) {
     const l = await (await fetch('/lib')).json();
     if (!force && l.stamp === libStamp) return;
     libStamp = l.stamp;
-    document.getElementById('lib-title').textContent = `📚 ${l.title || 'Bibliothèque'} (${(l.items || []).length})${libTarget != null ? ` → Deck ${libTarget + 1}` : ''}`;
+    document.getElementById('lib-title').textContent = `📚 ${l.title || 'Library'} (${(l.items || []).length})${libTarget != null ? ` → Deck ${libTarget + 1}` : ''}`;
     const list = document.getElementById('lib-list');
     list.textContent = '';
     (l.items || []).forEach((it, idx) => {

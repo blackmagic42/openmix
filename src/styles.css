@@ -2466,6 +2466,11 @@ body.two-decks .vfader { width: 36px; }
   -webkit-app-region: no-drag;
 }
 
+/* macOS : les ronds rouge/jaune/vert natifs sont TOUJOURS en haut à gauche
+   (contrairement à Windows où titleBarOverlay les met à droite) — on
+   pousse le contenu du topbar pour ne pas passer dessous. */
+html.is-mac #topbar { padding-left: 80px; }
+
 /* ===== OPENMIX : passe de finitions pro ===== */
 /* Compteur de temps 1-2-3-4 dans l'entete de deck */
 .beat-dots { display: inline-flex; gap: 3px; align-items: center; padding: 0 3px; }

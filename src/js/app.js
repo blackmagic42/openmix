@@ -3,10 +3,20 @@ import { Library } from './library.js';
 import { GamepadManager } from './gamepad.js';
 import { computeBandPeaks, drawZoom, drawOverview, setWavePalette } from './waveform.js';
 import { MidiManager, MIDI_ACTIONS_DECK, MIDI_ACTIONS_GLOBAL } from './midi.js';
-import { gridIndexFracAt, gridTimeAtIndex, gridPeriodAt, setGlobalGridOffset, getGlobalGridOffset } from './engine.js';
+import { gridIndexFracAt, gridTimeAtIndex, gridPeriodAt, setGlobalGridOffset, getGlobalGridOffset, barAlignedSeekTime } from './engine.js';
 import { camelotLabel, keyName, keyDistance, heardKey, shiftKey } from './key.js';
+import { t, getLang, setLang, applyStaticTranslations } from './i18n.js';
+
+// Traduit tout ce qui porte data-i18n / data-i18n-title / data-i18n-placeholder
+// avant même de construire le reste de l'interface (decks, mixer…), pour que
+// tout démarre déjà dans la bonne langue, sans flash de texte français.
+applyStaticTranslations();
 
 const DECK_COLORS = ['#39c2ff', '#ff9f43', '#5fe08a', '#ff6b9d'];
+// En dessous de cette distance (px), un clic-relâché ne compte pas comme un
+// glisser : pas de scratch, pas de pause — juste un saut ponctuel, musique
+// non coupée. Au-delà, le geste devient un vrai scrub/scratch à la souris.
+const DRAG_THRESHOLD_PX = 3;
 
 const engine = new AudioEngine();
 let activeDeck = 0;
@@ -14,6 +24,7 @@ let deckCount = Number(localStorage.getItem('deckCount')) === 2 ? 2 : 4;
 let dragTrack = null;      // morceau en cours de drag & drop depuis la bibliothèque
 let waveWindowSec = 8;     // zoom de la vue empilée (secondes visibles)
 let scratchSound = localStorage.getItem('scratchSound') !== '0'; // scratch audible ?
+let keepBarOnJump = localStorage.getItem('keepBarOnJump') !== '0'; // garder la mesure intacte lors d'un saut ?
 
 // ---------------------------------------------------------------------------
 // Petits composants : knob rotatif et faders
@@ -163,16 +174,26 @@ function buildWaveRow(i) {
     canvas.setPointerCapture(e.pointerId);
     scrub = {
       startX: e.clientX,
+      startY: e.clientY,
       wasPlaying: deck.playing,
       startTime: deck.currentTime(),
-      audible: scratchSound
+      audible: scratchSound,
+      dragging: false
     };
-    if (deck.playing) deck.pause();
-    if (scrub.audible) deck.scrubStart();
+    // On ne coupe/pause RIEN tant qu'on ne sait pas si c'est un vrai glisser
+    // (voir pointermove) : un simple clic ne doit jamais couper la musique.
   });
   canvas.addEventListener('pointermove', (e) => {
     if (!scrub) return;
     const deck = engine.decks[i];
+    if (!scrub.dragging) {
+      const moved = Math.hypot(e.clientX - scrub.startX, e.clientY - scrub.startY);
+      if (moved < DRAG_THRESHOLD_PX) return; // simple tremblement de main : on ignore
+      // Le geste devient un vrai glisser : on bascule en scratch/scrub
+      scrub.dragging = true;
+      if (scrub.wasPlaying) deck.pause();
+      if (scrub.audible) deck.scrubStart();
+    }
     const secPerPx = (waveWindowSec * (deck.tempo || 1)) / Math.max(1, canvas.clientWidth);
     const dx = e.clientX - scrub.startX;
     // On peut tirer la piste AU-DELÀ de son début (position négative) pour
@@ -187,13 +208,15 @@ function buildWaveRow(i) {
   const endScrub = () => {
     if (!scrub) return;
     const deck = engine.decks[i];
-    deck.scrubEnd();
-    if (scrub.wasPlaying) deck.play();
-    // Recale automatiquement : segment sur segment (désactivable en ⚙)
-    if (localStorage.getItem('snapRelease') !== '0') engine.snapToRef(i);
-    // Le placement posé à la souris est ADOPTÉ : sans ré-ancrage, le servo
-    // RAMENAIT le son à l'ancien alignement (« il se remet sur le rouge »)
-    for (let k = 0; k < 4; k++) engine.reanchorSync(k);
+    if (scrub.dragging) {
+      deck.scrubEnd();
+      if (scrub.wasPlaying) deck.play();
+      // Recale automatiquement : segment sur segment (désactivable en ⚙)
+      if (localStorage.getItem('snapRelease') !== '0') engine.snapToRef(i);
+      // Le placement posé à la souris est ADOPTÉ : sans ré-ancrage, le servo
+      // RAMENAIT le son à l'ancien alignement (« il se remet sur le rouge »)
+      for (let k = 0; k < 4; k++) engine.reanchorSync(k);
+    }
     scrub = null;
   };
   canvas.addEventListener('pointerup', endScrub);
@@ -213,7 +236,7 @@ function updateQueueUI(i) {
   const ui = deckUI[i];
   const q = deckQueues[i];
   if (!q.length) {
-    ui.queueInfo.textContent = '— glisse un son ici pour l\'enchaîner —';
+    ui.queueInfo.textContent = t('queue_empty');
     ui.queueInfo.classList.remove('filled');
     ui.queueClear.classList.add('hidden');
   } else {
@@ -234,7 +257,7 @@ function queuePush(i, track) {
   }
   deckQueues[i].push(track);
   updateQueueUI(i);
-  flashStatus(`« ${track.name} » ajouté à la file du deck ${i + 1}`);
+  flashStatus(t('queue_added', { name: track.name, n: i + 1 }));
 }
 
 function makeQueueDropTarget(el, deckIdx) {
@@ -287,24 +310,24 @@ function buildDeckPanel(i) {
     <div class="deck-head">
       <span class="deck-badge">${i + 1}</span>
       <span class="pad-chip hidden"></span>
-      <img class="deck-cover hidden" alt="" title="Pochette du morceau">
-      <span class="deck-title">— vide —</span>
+      <img class="deck-cover hidden" alt="" title="${t('deck_cover_title')}">
+      <span class="deck-title">${t('deck_empty')}</span>
       <span class="deck-master hidden">MASTER</span>
-      <span class="beat-dots" title="Position dans la mesure (1·2·3·4)"><i></i><i></i><i></i><i></i></span>
-      <span class="deck-key" title="KEY : tonalité en demi-tons — compense le changement de tonalité dû au sync (double-clic sur la valeur = reset)">
-        <button class="keylock" title="KEYLOCK : garde la tonalité d'origine quand tu changes le tempo (comme sur les CDJ)">🔒</button>
+      <span class="beat-dots" title="${t('beat_dots_title')}"><i></i><i></i><i></i><i></i></span>
+      <span class="deck-key" title="${t('deck_key_title')}">
+        <button class="keylock" title="${t('keylock_title')}">🔒</button>
         <b>KEY</b>
-        <button class="key-lbl" title="Tonalité entendue (roue Camelot) — clic : KEY SYNC sur le master">—</button>
+        <button class="key-lbl" title="${t('key_lbl_title')}">—</button>
         <button class="key-dn">−</button>
         <span class="key-val">0</span>
         <button class="key-up">+</button>
       </span>
     </div>
     <canvas class="wave-over"></canvas>
-    <div class="queue-line" title="Glisse un morceau ici : il se lancera automatiquement à la fin du son en cours (file d'attente du deck)">
+    <div class="queue-line" title="${t('queue_drop_title')}">
       <span class="queue-chip">FILE</span>
-      <span class="queue-info">— glisse un son ici pour l'enchaîner —</span>
-      <button class="queue-clear hidden" title="Vider la file">✕</button>
+      <span class="queue-info">${t('queue_empty')}</span>
+      <button class="queue-clear hidden" title="${t('queue_clear_title')}">✕</button>
     </div>
     <div class="pads-bar">
       <div class="pad-modes">
@@ -312,22 +335,22 @@ function buildDeckPanel(i) {
         <button data-m="loop">LOOP</button>
         <button data-m="hotcue">CUE</button>
         <button data-m="key">KEY</button>
-        <button data-m="fx" title="PAD FX : chaque pad porte un effet (ROLL, ECHO…) — maintenir = il joue, relâcher = coupé">FX</button>
-        <button data-m="smp" title="SAMPLER : un son par pad — pad vide : choisir un fichier, clic droit : retirer">SMPL</button>
+        <button data-m="fx" title="${t('padfx_title')}">FX</button>
+        <button data-m="smp" title="${t('sampler_title')}">SMPL</button>
         <div class="jump-scale">
-          <button class="js-half" title="Force des sauts ÷2">½</button>
-          <button class="js-dbl" title="Force des sauts ×2">×2</button>
+          <button class="js-half" title="${t('jump_half_title')}">½</button>
+          <button class="js-dbl" title="${t('jump_double_title')}">×2</button>
         </div>
       </div>
       <div class="pads"></div>
       <div class="stems-col">
-        <canvas class="deck-wheel" width="96" height="96" title="Platine : BPM et écart de tempo — double-clic sur le BPM pour le corriger à la main"></canvas>
+        <canvas class="deck-wheel" width="96" height="96" title="${t('deck_wheel_title')}"></canvas>
         <div class="stems-right">
           <span class="stems-title">STEMS</span>
           <div class="stems-btns">
-            <button class="stem-btn" data-s="vocals" title="Voix">VOX</button>
-            <button class="stem-btn" data-s="drums" title="Batterie">DRM</button>
-            <button class="stem-btn" data-s="inst" title="Instrumental (basse + mélodies)">INST</button>
+            <button class="stem-btn" data-s="vocals" title="${t('stem_vocals_title')}">VOX</button>
+            <button class="stem-btn" data-s="drums" title="${t('stem_drums_title')}">DRM</button>
+            <button class="stem-btn" data-s="inst" title="${t('stem_inst_title')}">INST</button>
           </div>
         </div>
       </div>
@@ -336,14 +359,14 @@ function buildDeckPanel(i) {
       <button class="btn-cue">CUE</button>
       <button class="btn-play">▶</button>
       <button class="btn-sync">SYNC</button>
-      <button class="btn-master" title="Définir ce deck comme référence de tempo">MASTER</button>
-      <button class="btn-grid" title="Recale la grille : place un début de mesure (trait rouge) exactement sur la tête de lecture">GRID</button>
-      <button class="btn-grid-left" title="Décale finement la grille vers la gauche (maintenir = continu)">◀</button>
-      <button class="btn-grid-right" title="Décale finement la grille vers la droite (maintenir = continu)">▶</button>
-      <button class="btn-grid-half" title="Grille ÷2 : mesures deux fois plus larges (corrige une détection au double du vrai BPM)">÷2</button>
-      <button class="btn-grid-dbl" title="Grille ×2 : mesures deux fois plus serrées (corrige une détection à la moitié du vrai BPM)">×2</button>
+      <button class="btn-master" title="${t('deck_master_title')}">MASTER</button>
+      <button class="btn-grid" title="${t('grid_recal_title')}">GRID</button>
+      <button class="btn-grid-left" title="${t('grid_left_title')}">◀</button>
+      <button class="btn-grid-right" title="${t('grid_right_title')}">▶</button>
+      <button class="btn-grid-half" title="${t('grid_half_title')}">÷2</button>
+      <button class="btn-grid-dbl" title="${t('grid_double_title')}">×2</button>
       <div class="deck-time">0:00 · -0:00</div>
-      <label class="tempo-wrap" title="Jauge de tempo — le pourcentage et le BPM sont sur la platine">
+      <label class="tempo-wrap" title="${t('tempo_gauge_title')}">
         <span class="tempo-slider">
           <input type="range" class="tempo" min="-50" max="50" value="0" step="0.1">
           <i class="tempo-zero"></i>
@@ -459,7 +482,7 @@ function buildDeckPanel(i) {
     if (!q.length) return;
     const next = q.shift();
     updateQueueUI(i);
-    flashStatus(`Deck ${i + 1} : « ${next.name} » chargé depuis la file — prêt (en pause)`);
+    flashStatus(t('queue_loaded', { n: i + 1, name: next.name }));
     loadTrackToDeck(i, next); // chargé PRÊT, en pause — à toi de lancer
   };
   // Recalage de grille : partagé entre le bouton écran ET le bouton GRID
@@ -467,7 +490,7 @@ function buildDeckPanel(i) {
   // tout seul au prochain chargement)
   const recalGrid = () => {
     if (!deck.buffer || !deck.bpm) {
-      flashStatus('GRID : charge un morceau avec un BPM détecté d’abord');
+      flashStatus(t('grid_need_bpm'));
       return;
     }
     const t = deck.currentTime();
@@ -482,7 +505,7 @@ function buildDeckPanel(i) {
       deck.beatOffset = t;
       if (deck.track) library.setBeatOffset(deck.track, deck.beatOffset);
     }
-    flashStatus(`Grille du deck ${i + 1} recalée : début de mesure posé ici`);
+    flashStatus(t('grid_realigned', { n: i + 1 }));
   };
   ui.grid.addEventListener('click', recalGrid);
   ui.recalGrid = recalGrid;
@@ -496,7 +519,7 @@ function buildDeckPanel(i) {
   ui.wheelCv.style.cursor = 'pointer';
   ui.wheelCv.addEventListener('dblclick', async () => {
     if (!deck.buffer || !deck.bpm) return;
-    const val = await askText(`BPM réel du deck ${i + 1} (détecté : ${deck.bpm.toFixed(1)})`, deck.bpm.toFixed(1));
+    const val = await askText(t('ask_real_bpm', { n: i + 1, bpm: deck.bpm.toFixed(1) }), deck.bpm.toFixed(1));
     const nb = Number(String(val).replace(',', '.'));
     if (!nb || nb < 40 || nb > 260) return;
     deck.bpm = nb;
@@ -507,11 +530,11 @@ function buildDeckPanel(i) {
     deck._pllCorr = 0;
     if (deck.track) library.setBpmValue(deck.track, nb);
     updateTempoLabel(i);
-    flashStatus(`Deck ${i + 1} — BPM corrigé à ${nb} (mémorisé)`);
+    flashStatus(t('bpm_corrected', { n: i + 1, bpm: nb }));
   });
   ui.masterBtn.addEventListener('click', () => {
     engine.setMaster(i);
-    flashStatus(engine.masterIdx === null ? 'Master automatique' : `Deck ${i + 1} = MASTER`);
+    flashStatus(engine.masterIdx === null ? t('master_auto') : `Deck ${i + 1} = MASTER`);
   });
   const gridScale = (mult) => {
     if (!deck.bpm) return;
@@ -549,7 +572,7 @@ function buildDeckPanel(i) {
       if (deck.track) library.setBpmValue(deck.track, nb);
     }
     updateTempoLabel(i);
-    flashStatus(`Grille du deck ${i + 1} : ${nb.toFixed(1)} BPM — les mesures sont maintenant ${mult > 1 ? '2× plus serrées' : '2× plus larges'}`);
+    flashStatus(t('grid_changed', { n: i + 1, bpm: nb.toFixed(1), cmp: mult > 1 ? t('grid_tighter') : t('grid_wider') }));
   };
   el.querySelector('.btn-grid-half').addEventListener('click', () => gridScale(0.5));
   el.querySelector('.btn-grid-dbl').addEventListener('click', () => gridScale(2));
@@ -592,7 +615,7 @@ function buildDeckPanel(i) {
           else if (deck.beats) library.setGridMeta(deck.track, { gridShift: deck.gridShift });
           else library.setBeatOffset(deck.track, deck.beatOffset);
         }
-        if (shiftMode && !deck.beats) flashStatus(`Deck ${i + 1} : BPM ajusté à ${deck.bpm.toFixed(3)}`);
+        if (shiftMode && !deck.beats) flashStatus(t('bpm_adjusted', { n: i + 1, bpm: deck.bpm.toFixed(3) }));
       }
     };
     btn.addEventListener('pointerup', stop);
@@ -600,8 +623,8 @@ function buildDeckPanel(i) {
   };
   const gl = el.querySelector('.btn-grid-left');
   const gr = el.querySelector('.btn-grid-right');
-  gl.title = 'Décale finement la grille vers la gauche (maintenir = continu) — Shift : BPM −0,01';
-  gr.title = 'Décale finement la grille vers la droite (maintenir = continu) — Shift : BPM +0,01';
+  gl.title = t('grid_left_shift_title');
+  gr.title = t('grid_right_shift_title');
   bindNudge(gl, -1);
   bindNudge(gr, 1);
 
@@ -626,7 +649,7 @@ function buildDeckPanel(i) {
   ui.keylock.addEventListener('click', () => {
     const on = !deck.keylock;
     setLock(on);
-    flashStatus(`Deck ${i + 1} — KEYLOCK ${on ? 'ON : la tonalité ne bougera plus avec le tempo' : 'OFF'}`);
+    flashStatus(t('keylock_status', { n: i + 1, state: on ? t('keylock_on') : 'OFF' }));
   });
   setLock(localStorage.getItem(`keylock${i}`) === '1');
   ui.keyVal.addEventListener('dblclick', () => applyKey(-deck.keyShift));
@@ -702,35 +725,62 @@ function buildDeckPanel(i) {
     deck.synced = false;
     updateTempoLabel(i);
   });
-  // Miniature : navigation CONTINUE — tant que le clic est maintenu,
-  // la position suit la souris (avec le son de scrub si activé)
+  // Miniature : un simple CLIC (sans bouger) = saut ponctuel, la musique ne
+  // s'arrête jamais. Un vrai GLISSER (au-delà de quelques pixels) bascule en
+  // navigation continue (avec le son de scrub si activé) — voir DRAG_THRESHOLD_PX.
   let overScrub = null;
   const overPosFromEvent = (e) => {
     const r = ui.over.getBoundingClientRect();
     const frac = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width));
     return frac * deck.duration;
   };
+  // Calcule et applique la position cible (alignée sur la mesure si activé),
+  // en gardant TOUJOURS la même référence "beforeTime" (capturée une seule
+  // fois, avant tout saut) même si le morceau continue de jouer pendant le
+  // geste — sinon la phase de mesure dériverait à chaque appel.
+  const applyOverSeek = (e) => {
+    let t = overPosFromEvent(e);
+    if (keepBarOnJump) t = barAlignedSeekTime(deck, overScrub.beforeTime, t);
+    deck.seek(t);
+  };
   ui.over.addEventListener('pointerdown', (e) => {
     if (!deck.buffer) return;
     engine.resume();
     ui.over.setPointerCapture(e.pointerId);
-    overScrub = { wasPlaying: deck.playing, audible: scratchSound };
-    if (deck.playing) deck.pause();
-    if (overScrub.audible) deck.scrubStart();
-    const t = overPosFromEvent(e);
-    if (overScrub.audible) deck.scrubMove(t);
-    else deck.seek(t);
+    overScrub = {
+      startX: e.clientX,
+      startY: e.clientY,
+      wasPlaying: deck.playing,
+      audible: scratchSound,
+      beforeTime: deck.currentTime(),
+      dragging: false
+    };
+    // Simple clic : on place juste la tête de lecture, la musique continue
+    // (ou reste arrêtée) sans coupure — pas de pause, pas de scrub sonore.
+    applyOverSeek(e);
   });
   ui.over.addEventListener('pointermove', (e) => {
     if (!overScrub) return;
-    const t = overPosFromEvent(e);
-    if (overScrub.audible) deck.scrubMove(t);
-    else deck.seek(t);
+    if (!overScrub.dragging) {
+      const moved = Math.hypot(e.clientX - overScrub.startX, e.clientY - overScrub.startY);
+      if (moved < DRAG_THRESHOLD_PX) return; // simple tremblement de main : on ignore
+      // Le geste devient un vrai glisser : on bascule en scrub/navigation continue
+      overScrub.dragging = true;
+      if (overScrub.wasPlaying) deck.pause();
+      if (overScrub.audible) deck.scrubStart();
+    }
+    if (overScrub.audible) {
+      deck.scrubMove(overPosFromEvent(e));
+    } else {
+      applyOverSeek(e);
+    }
   });
   const endOverScrub = () => {
     if (!overScrub) return;
-    deck.scrubEnd();
-    if (overScrub.wasPlaying) deck.play();
+    if (overScrub.dragging) {
+      if (overScrub.audible) deck.scrubEnd();
+      if (overScrub.wasPlaying) deck.play();
+    }
     // Miniature = navigation : JAMAIS de recadrage — et la sync ADOPTE la
     // position choisie au lieu de la « recalibrer » aussitôt
     for (let k = 0; k < 4; k++) engine.reanchorSync(k);
@@ -809,7 +859,7 @@ function keyPadLabel(i, p, idx) {
   p.classList.remove('key-compat');
   if (deck.musicKey == null) {
     p.textContent = `${sign}♪`;
-    p.title = `Tonalité ${sign} demi-ton(s) — re-cliquer pour revenir à 0`;
+    p.title = t('key_semitones_title', { sign: kv > 0 ? '+' : '', n: kv });
     return;
   }
   const h = heardKey({ ...deck, musicKey: deck.musicKey, keyShift: kv, keylock: deck.keylock, tempo: deck.tempo });
@@ -822,7 +872,12 @@ function keyPadLabel(i, p, idx) {
   const ref = masterHeardKey();
   const mi = engine.masterIdx !== null ? engine.masterIdx : engine.autoMasterIdx;
   if (ref && mi !== i && keyDistance(h.code, ref.code) <= 1) p.classList.add('key-compat');
-  p.title = `${sign} demi-ton(s) → ${keyName(h.code)} (${lab})${ref && mi !== i ? ` — master en ${camelotLabel(ref.code)}` : ''} — re-cliquer pour revenir à 0`;
+  p.title = t('key_pad_result_title', {
+    sign,
+    name: keyName(h.code),
+    lab,
+    master: ref && mi !== i ? t('key_pad_master_suffix', { key: camelotLabel(ref.code) }) : ''
+  });
 }
 
 // Étiquette de tonalité du deck (tonalité ENTENDUE : morceau + KEY + effet
@@ -842,15 +897,18 @@ function updateKeyUI(i) {
   ui.keyLbl.classList.toggle('hidden', !deck.buffer);
   if (!h) {
     ui.keyLbl.textContent = deck.buffer ? '…' : '—';
-    ui.keyLbl.title = deck.buffer ? 'Tonalité en cours d\'analyse…' : 'Tonalité (roue Camelot)';
+    ui.keyLbl.title = deck.buffer ? t('key_analyzing') : t('key_camelot');
   } else {
     ui.keyLbl.textContent = camelotLabel(h.code);
-    const cents = Math.abs(h.cents) >= 15 ? ` (${h.cents > 0 ? '+' : ''}${h.cents} cents — active le KEYLOCK pour rester juste)` : '';
+    const cents = Math.abs(h.cents) >= 15 ? t('key_cents_hint', { cents: `${h.cents > 0 ? '+' : ''}${h.cents}` }) : '';
     if (mi === i) ui.keyLbl.classList.add('master');
     else if (dist != null) ui.keyLbl.classList.add(dist <= 1 ? 'ok' : 'clash');
     ui.keyLbl.title = `${keyName(h.code)} — ${camelotLabel(h.code)}${cents}`
-      + (ref ? ` · master : ${camelotLabel(ref.code)} → ${dist === 0 ? 'même tonalité' : dist === 1 ? 'compatible' : dist === 2 ? 'montée d\'énergie (passable)' : 'dissonant'}` : '')
-      + ' — clic : KEY SYNC';
+      + (ref ? t('key_vs_master', {
+        key: camelotLabel(ref.code),
+        rel: t(dist === 0 ? 'key_rel_same' : dist === 1 ? 'key_rel_compatible' : dist === 2 ? 'key_rel_energy' : 'key_rel_clash')
+      }) : '')
+      + t('key_click_sync');
   }
   if (ui.padMode === 'key') ui.pads.forEach((p, idx) => keyPadLabel(i, p, idx));
 }
@@ -861,13 +919,13 @@ function updateKeyUI(i) {
 function keySync(i) {
   const deck = engine.decks[i];
   if (deck.musicKey == null) {
-    flashStatus(`Deck ${i + 1} — tonalité pas encore analysée`);
+    flashStatus(t('keysync_not_analysed', { n: i + 1 }));
     return;
   }
   const mi = engine.masterIdx !== null ? engine.masterIdx : engine.autoMasterIdx;
   const ref = mi !== i ? masterHeardKey() : null;
   if (!ref) {
-    flashStatus(`KEY SYNC : il faut un master qui joue (deck ${i + 1} ${mi === i ? 'EST le master' : 'n\'a pas de référence'})`);
+    flashStatus(t('keysync_need_master', { n: i + 1, why: t(mi === i ? 'keysync_is_master' : 'keysync_no_ref') }));
     return;
   }
   const ui = deckUI[i];
@@ -883,7 +941,7 @@ function keySync(i) {
   if (semis > 6) semis -= 12;
   if (ui.applyKey) ui.applyKey(semis - deck.keyShift);
   const h = heardKey(deck);
-  flashStatus(`KEY SYNC deck ${i + 1} : ${semis > 0 ? '+' : ''}${semis} demi-ton(s) → ${camelotLabel(h.code)} (master ${camelotLabel(ref.code)})`);
+  flashStatus(t('keysync_done', { n: i + 1, semis: `${semis > 0 ? '+' : ''}${semis}`, key: camelotLabel(h.code), mkey: camelotLabel(ref.code) }));
 }
 
 function renderPads(i) {
@@ -902,37 +960,37 @@ function renderPads(i) {
     p.classList.remove('set', 'on');
     if (ui.padMode === 'hotcue') {
       p.textContent = String.fromCharCode(65 + idx); // A B C D E F G H
-      p.title = 'Clic : poser / sauter au hot cue — Clic droit : effacer';
+      p.title = t('hotcue_pad_title');
     } else if (ui.padMode === 'jump') {
       const v = JUMP_VALS[idx] * (ui.jumpScale || 1);
       p.textContent = formatMeasures(v);
-      p.title = `Sauter de ${formatMeasures(v).slice(1)} mesure(s) ${v > 0 ? 'en avant' : 'en arrière'}`;
+      p.title = t('jump_measures_title', { n: formatMeasures(v).slice(1), dir: v > 0 ? t('jump_forward') : t('jump_backward') });
     } else if (ui.padMode === 'key') {
       keyPadLabel(i, p, idx);
     } else if (ui.padMode === 'fx') {
       p.textContent = PADFX[idx].label;
-      p.title = `MAINTENIR : ${PADFX[idx].label} sur ce deck — l'effet se coupe au relâcher`;
+      p.title = t('padfx_hold_title', { label: PADFX[idx].label });
       if (ui._padFxHeld === idx) p.classList.add('on');
     } else if (ui.padMode === 'smp') {
       const s = samplerBank[idx];
-      p.textContent = s ? s.name.slice(0, 10) : '+ AJOUTER';
+      p.textContent = s ? s.name.slice(0, 10) : t('sampler_add_label');
       if (s) p.classList.add('set');
       p.title = s
-        ? `${s.name} — clic : jouer (re-clic : redémarre) · clic droit : retirer`
-        : 'Pad vide — clic : choisir un fichier audio (les suivants remplissent les pads d\'après)';
+        ? t('sampler_pad_filled_title', { name: s.name })
+        : t('sampler_pad_empty_title');
     } else if (LOOP_BEATS[idx] == null) {
       // moitié gauche du mode LOOP : IN · OUT · ✕ (boucle manuelle rangée là)
       p.textContent = idx === 0 ? 'IN' : idx === 1 ? 'OUT' : '✕';
       p.title = idx === 0
-        ? 'Poser le DÉBUT de boucle (calé sur le temps le plus proche)'
+        ? t('loop_set_in_title')
         : idx === 1
-          ? 'Fermer la boucle au point actuel et la lancer'
-          : 'Sortir de la boucle';
+          ? t('loop_set_out_title')
+          : t('loop_exit_title');
     } else {
       const b = LOOP_BEATS[idx] * (ui.jumpScale || 1);
       const label = b >= 1 ? String(b) : `1/${Math.round(1 / b)}`;
       p.textContent = label;
-      p.title = `Boucle de ${label} temps — re-cliquer pour sortir, autre valeur pour redimensionner`;
+      p.title = t('loop_resize_title', { label });
     }
   });
 }
@@ -976,31 +1034,31 @@ function loopLenLabel(deck) {
 function loopHalve(i) {
   const deck = engine.decks[i];
   if (!deck.looping) {
-    flashStatus(`Deck ${i + 1} — aucune boucle active`);
+    flashStatus(t('loop_none_active', { n: i + 1 }));
     return;
   }
   const len = deck.loopEnd - deck.loopStart;
   const minLen = deck.bpm ? (60 / deck.bpm) / 8 : 0.05;
   if (len / 2 < minLen) {
-    flashStatus(`Deck ${i + 1} — boucle minimale atteinte`);
+    flashStatus(t('loop_at_minimum', { n: i + 1 }));
     return;
   }
   deck.setLoop(deck.loopStart, deck.loopStart + len / 2);
-  flashStatus(`Deck ${i + 1} — 🔁 boucle ÷2 → ${loopLenLabel(deck)}`);
+  flashStatus(t('loop_half', { n: i + 1, label: loopLenLabel(deck) }));
 }
 function loopDouble(i) {
   const deck = engine.decks[i];
   if (!deck.looping) {
-    flashStatus(`Deck ${i + 1} — aucune boucle active`);
+    flashStatus(t('loop_none_active', { n: i + 1 }));
     return;
   }
   const end = deck.loopStart + (deck.loopEnd - deck.loopStart) * 2;
   if (end > deck.duration) {
-    flashStatus(`Deck ${i + 1} — la boucle dépasserait la fin du morceau`);
+    flashStatus(t('loop_exceeds_end', { n: i + 1 }));
     return;
   }
   deck.setLoop(deck.loopStart, end);
-  flashStatus(`Deck ${i + 1} — 🔁 boucle ×2 → ${loopLenLabel(deck)}`);
+  flashStatus(t('loop_double', { n: i + 1, label: loopLenLabel(deck) }));
 }
 function loopIn(i) {
   const deck = engine.decks[i];
@@ -1011,7 +1069,7 @@ function loopIn(i) {
     return;
   }
   deck._loopInPoint = snapToBeat(deck, deck.currentTime());
-  flashStatus(`Deck ${i + 1} — LOOP IN posé à ${formatTime(deck._loopInPoint)} (OUT pour fermer)`);
+  flashStatus(t('loop_in_set', { n: i + 1, time: formatTime(deck._loopInPoint) }));
 }
 function loopOut(i) {
   const deck = engine.decks[i];
@@ -1022,17 +1080,17 @@ function loopOut(i) {
     return;
   }
   if (deck._loopInPoint == null) {
-    flashStatus(`Deck ${i + 1} — pose d'abord le IN`);
+    flashStatus(t('loop_set_in_first', { n: i + 1 }));
     return;
   }
   const t = snapToBeat(deck, deck.currentTime());
   if (t <= deck._loopInPoint + 0.05) {
-    flashStatus(`Deck ${i + 1} — le OUT doit être APRÈS le IN`);
+    flashStatus(t('loop_out_after_in', { n: i + 1 }));
     return;
   }
   deck.setLoop(deck._loopInPoint, t);
   deck._loopBeats = deck.bpm ? Math.round((t - deck._loopInPoint) / (60 / deck.bpm)) : 0;
-  flashStatus(`Deck ${i + 1} — 🔁 boucle ${formatTime(deck._loopInPoint)} → ${formatTime(t)}`);
+  flashStatus(t('loop_extended', { n: i + 1, from: formatTime(deck._loopInPoint), to: formatTime(t) }));
 }
 
 // Réglage du OUT au STICK GAUCHE (mode activé par re-appui sur OUT) :
@@ -1058,7 +1116,7 @@ function gpLoopEditAdjust(d, v, dt) {
     if (end > deck.duration) return;
     deck.setLoop(deck.loopStart, end);
     deck._loopBeats = Math.round((end - deck.loopStart) / period);
-    flashStatus(`OUT ▶ +1 segment — boucle ${deck._loopBeats} temps`);
+    flashStatus(t('loop_out_forward', { beats: deck._loopBeats }));
   } else if (v < 0) {
     // par CRANS de 100 ms — modifier la source audio à chaque frame la
     // faisait wrapper en rafale (le son « courait » à toute vitesse)
@@ -1079,7 +1137,7 @@ function gpLoopEditAdjust(d, v, dt) {
     }
     if (now - (ui._loopEditFlash || 0) > 150) {
       ui._loopEditFlash = now;
-      flashStatus(`OUT ◀ — boucle ${((end - deck.loopStart) / period).toFixed(2)} temps`);
+      flashStatus(t('loop_out_backward', { beats: ((end - deck.loopStart) / period).toFixed(2) }));
     }
   }
 }
@@ -1331,7 +1389,7 @@ function padPress(i, idx, modeArg, ownerGi) {
       if (idx === 1) {
         if (deck.looping) {
           // OUT pendant la boucle : rappel — le stick gauche la règle déjà
-          flashStatus(`Deck ${i + 1} — 🎛 stick gauche : ▶ +1 segment · ◀ réduire la boucle`);
+          flashStatus(t('gamepad_loop_stick', { n: i + 1 }));
         } else {
           loopOut(i);
           if (deck.looping) ui.loopOwner = ownerGi != null ? ownerGi : null;
@@ -1490,16 +1548,16 @@ function ensureStems(i, silent) {
   const track = deck.track;
   if (deck.stems) return Promise.resolve(true);
   if (!track || !track.path) {
-    if (!silent) flashStatus('STEMS : charge d’abord un morceau sur ce deck');
+    if (!silent) flashStatus(t('stems_need_track'));
     return Promise.resolve(false);
   }
   const pend = stemPending[i];
   if (pend && pend.track === track) {
-    if (!silent) flashStatus(`STEMS : séparation du deck ${i + 1} en cours…`);
+    if (!silent) flashStatus(t('stems_deck_running', { n: i + 1 }));
     return pend.p;
   }
   ui.stemBtns.forEach((b) => b.classList.add('loading'));
-  if (!silent) flashStatus('STEMS : séparation en cours…');
+  if (!silent) flashStatus(t('stems_running'));
   const run = async () => {
     // le morceau a changé pendant l'attente dans la file : rien à faire
     if (engine.decks[i].track !== track) return false;
@@ -1529,7 +1587,7 @@ function ensureStems(i, silent) {
       if (lag) console.log(`[midi] stems deck ${i + 1} : recalés de ${(lag * 1000).toFixed(1)} ms sur le morceau`);
       deck.stems = { vocals, drums, bass, other: null };
       ui.stemBtns.forEach((b) => b.classList.add('ready'));
-      flashStatus(`Stems prêts sur le deck ${i + 1} — VOX / DRM / INST disponibles`);
+      flashStatus(t('stems_ready', { n: i + 1 }));
       return true;
     } catch (err) {
       if (!silent) flashStatus(`STEMS : erreur — ${err.message || err}`);
@@ -1889,7 +1947,7 @@ function gpSelReset(fallbackDeck, cur) {
     bassTxt = ` · 🔊 basses → deck ${bd + 1}`;
   }
   if (gpCutStore.size) gpCutToggle(fallbackDeck);
-  flashStatus(`↺ R1 — filtres à 0, FX coupés${bassTxt}, sélection vidée`);
+  flashStatus(t('reset_r1', { bass: bassTxt }));
   gpClearSelection();
 }
 
@@ -1900,7 +1958,7 @@ function gpClearSelection() {
   gpSelNeutral.clear();
   gpSelection.clear();
   gpPaintSelection();
-  flashStatus('Sélection vidée');
+  flashStatus(t('selection_cleared'));
 }
 
 // Pose directement une assignation FX (et synchronise les boutons cachés)
@@ -1920,7 +1978,7 @@ function gpFxEngage(st) {
   targets.forEach((d) => gpFxAssignSet(u, d, true));
   engine.updateFxSends();
   if (!engine.fx[u].enabled) uiRefs.fxUnits[u].onBtn.click();
-  flashStatus(`⚡ FX ${u + 1} activé sur deck ${targets.map((x) => x + 1).sort().join(' + ')}`);
+  flashStatus(t('fx_enabled_on_decks', { u: u + 1, decks: targets.map((x) => x + 1).sort().join(' + ') }));
 }
 
 // Colonne FX : L2/R2 = effet précédent / suivant
@@ -1938,7 +1996,7 @@ function gpFxBeatsStep(u, dir) {
   if (idx === sel.selectedIndex) return false; // déjà en butée
   sel.selectedIndex = idx;
   sel.dispatchEvent(new Event('change'));
-  flashStatus(`FX ${u + 1} — durée ${sel.options[idx].textContent.trim()} temps`);
+  flashStatus(t('fx_duration', { u: u + 1, val: sel.options[idx].textContent.trim() }));
   return true;
 }
 
@@ -2018,14 +2076,14 @@ function syncDeck(i) {
   }
   if (engine.sync(i)) {
     updateTempoLabel(i);
-    flashStatus(`Deck ${i + 1} calé sur le master`);
+    flashStatus(t('deck_synced_master', { n: i + 1 }));
   } else if (d.bpm) {
     // Pas encore de référence ? SYNC s'ARME quand même : le verrou
     // auto-réparant le calera dès qu'un autre son jouera
     d.synced = true;
-    flashStatus(`Deck ${i + 1} — SYNC armé (se calera dès qu'un autre son jouera)`);
+    flashStatus(t('sync_armed', { n: i + 1 }));
   } else {
-    flashStatus(`SYNC impossible : BPM inconnu (analyse le morceau d'abord)`);
+    flashStatus(t('sync_impossible_unknown_bpm'));
   }
 }
 
@@ -2059,7 +2117,7 @@ function buildMixer() {
   colorRow.id = 'color-row';
   colorRow.innerHTML = `
     <span>COLOR</span>
-    <select id="color-type" title="Effet contrôlé par le knob FILTER de chaque tranche">
+    <select id="color-type" title="${t('color_fx_title')}">
       <option value="filter">Filter</option>
       <option value="dubecho">Dub Echo</option>
       <option value="hpfecho">HPF Echo</option>
@@ -2070,7 +2128,7 @@ function buildMixer() {
       <option value="noise">Noise</option>
       <option value="crush">Crush</option>
     </select>
-    <button id="color-on" class="on" title="Active / désactive les filtres : quand c'est OFF, tourner un knob FILTER ne fait rien">ON</button>
+    <button id="color-on" class="on" title="${t('color_toggle_title')}">ON</button>
   `;
   mixer.appendChild(colorRow);
   uiRefs.master.colorSel = colorRow.querySelector('#color-type');
@@ -2090,12 +2148,12 @@ function buildMixer() {
   masterRow.id = 'master-row';
   const mfKnob = makeKnob('FILTER', () => engine.masterFilterVal, (v) => engine.setMasterFilter(v));
   mfKnob.el.classList.add('master-filter-knob');
-  mfKnob.el.title = 'FILTER MASTER : filtre tout le mix (les 4 pistes en même temps)';
+  mfKnob.el.title = t('filter_master_title');
   uiRefs.master.filterKnob = mfKnob;
   const mvKnob = makeKnob('VOL', () => engine.masterVolume * 2 - 1, (v) => engine.setMasterVolume((v + 1) / 2));
   uiRefs.master.volKnob = mvKnob;
   mvKnob.el.classList.add('master-filter-knob');
-  mvKnob.el.title = 'Volume MASTER : le niveau de tout le mix assemblé';
+  mvKnob.el.title = t('volume_master_title');
   const mLabel = document.createElement('span');
   mLabel.id = 'master-label';
   mLabel.textContent = 'MASTER';
@@ -2107,7 +2165,7 @@ function buildMixer() {
   // sons en SYNC suivent instantanément (il dirige tout le monde)
   const bpmWrap = document.createElement('span');
   bpmWrap.id = 'master-bpm';
-  bpmWrap.title = 'BPM du MASTER : − / + le décalent de 0,5 — tous les sons en SYNC suivent';
+  bpmWrap.title = t('master_bpm_title');
   const bMinus = document.createElement('button');
   bMinus.textContent = '−';
   const bVal = document.createElement('b');
@@ -2152,7 +2210,7 @@ function buildMixer() {
     const selBtn = document.createElement('button');
     selBtn.className = 'strip-sel';
     selBtn.textContent = 'SEL';
-    selBtn.title = 'Sélectionner cette track (CUT Triangle · ⚡ FX R3 · ↺ reset Rond)';
+    selBtn.title = t('select_track_title');
     selBtn.addEventListener('click', () => gpSelectToggle(i));
     strip.appendChild(selBtn);
 
@@ -2275,8 +2333,8 @@ function buildFxBar() {
     unit.style.setProperty('--deck-color', DECK_COLORS[i]);
     unit.innerHTML = `
       <span class="fx-num">${i + 1}</span>
-      <select class="fxu-type" title="Effet du contrôleur ${i + 1}">${FX_TYPE_OPTIONS}</select>
-      <select class="fxu-beats" title="Durée (en temps)">${FX_BEATS_OPTIONS}</select>
+      <select class="fxu-type" title="${t('fx_controller_effect_title', { n: i + 1 })}">${FX_TYPE_OPTIONS}</select>
+      <select class="fxu-beats" title="${t('fx_duration_beats_title')}">${FX_BEATS_OPTIONS}</select>
       <span class="fxu-assign" title="Sur quels decks cet effet s'applique"></span>
       <button class="fxu-on">OFF</button>
     `;
@@ -2290,7 +2348,7 @@ function buildFxBar() {
       b.className = 'fxu-assign-btn' + (engine.fxAssign[i][d] ? ' on' : '');
       b.textContent = d + 1;
       b.style.setProperty('--adc', DECK_COLORS[d]);
-      b.title = `Appliquer l'effet du contrôleur ${i + 1} au deck ${d + 1}`;
+      b.title = t('fx_apply_controller_title', { n: i + 1, d: d + 1 });
       b.addEventListener('click', () => {
         engine.fxAssign[i][d] = !engine.fxAssign[i][d];
         b.classList.toggle('on', engine.fxAssign[i][d]);
@@ -2367,7 +2425,7 @@ function buildFxBar() {
   mWrap.innerHTML = `
     <b class="fx-master-title">MASTER</b>
     <div class="fx-cell fxm-type" title="Effet du mix"><b class="fx-cell-lbl">EFFET</b><select class="fx-cell-val fxm-type-sel">${FX_TYPE_OPTIONS}</select></div>
-    <div class="fx-cell fxm-beats" title="Durée — clic : ×2 (reboucle)"><b class="fx-cell-lbl">DURÉE</b><span class="fx-cell-val">1/2</span></div>
+    <div class="fx-cell fxm-beats" title="${t('fx_duration_dbl_title')}"><b class="fx-cell-lbl">${t('duree_label')}</b><span class="fx-cell-val">1/2</span></div>
     <div class="fx-cell fxm-level" title="Niveau — clic : +25 %"><b class="fx-cell-lbl">NIVEAU</b><span class="fx-cell-val">0%</span></div>
     <div class="fx-cell fx-cell-onoff fxm-on" title="FX du MIX ENTIER on/off"><b class="fx-cell-lbl">MIX</b><span class="fx-cell-val fx-badge">OFF</span></div>
   `;
@@ -2401,7 +2459,7 @@ function buildFxBar() {
     u.setEnabled(!u.enabled);
     // Pas de niveau par défaut : c'est TOI qui joues la jauge (David)
     updateMasterFxRow();
-    flashStatus(`FX MASTER ${u.enabled ? (u.level === 0 ? 'ACTIVÉ — monte la jauge' : 'ACTIVÉ') : 'coupé'} (tout le mix)`);
+    flashStatus(t('fx_master_status', { state: u.enabled ? (u.level === 0 ? t('fx_master_on_raise') : t('fx_master_on')) : t('fx_master_off') }));
   });
   bar.appendChild(mWrap);
   uiRefs.masterFxTypes = MFX_TYPES;
@@ -2684,13 +2742,13 @@ function updateSortHeaders() {
   });
 }
 document.querySelectorAll('#lib-table th[data-sort]').forEach((th) => {
-  th.title = 'Trier — clic : croissant, re-clic : décroissant, 3e clic : ordre d\'origine';
+  th.title = t('sort_title');
   th.addEventListener('click', () => {
     library.toggleSort(th.dataset.sort);
     const lab = th.textContent.trim();
     flashStatus(library.sort.col
-      ? `Tri : ${lab} ${library.sort.dir === 1 ? 'croissant' : 'décroissant'}`
-      : 'Tri : ordre d\'origine');
+      ? t('sort_status', { col: lab, dir: t(library.sort.dir === 1 ? 'sort_asc' : 'sort_desc') })
+      : t('sort_original'));
   });
 });
 
@@ -2757,7 +2815,7 @@ function renderLibrary() {
     // logiciels partenaires sous licence.
     if (t.drm) {
       tr.classList.add('drm');
-      tr.title = 'Morceau protégé (DRM) : sa lecture hors du site du service n\'est pas autorisée';
+      tr.title = t('drm_protected_title');
       const lock = document.createElement('span');
       lock.className = 'drm-lock';
       lock.textContent = '🔒';
@@ -2843,7 +2901,7 @@ function renderLibrary() {
   if (window.api.remoteLib) {
     window.api.remoteLib({
       stamp: libRenderStamp,
-      title: library.mode === 'sc' ? (library.scTitle || 'SoundCloud') : 'Bibliothèque',
+      title: library.mode === 'sc' ? (library.scTitle || 'SoundCloud') : t('library_label'),
       items: library.filtered.slice(0, 400).map((t) => ({
         name: t.name,
         bpm: t.bpm ? Number(t.bpm.toFixed(1)) : null,
@@ -2866,30 +2924,30 @@ function showPlaylistMenu(e, p) {
     d.addEventListener('click', () => { hideCtxMenu(); fn(); });
     ctxMenu.appendChild(d);
   };
-  addItem('▶ Jouer sur le deck actif', () => {
+  addItem(t('play_active_deck_menu'), () => {
     if (!p.tracks.length) return;
     const i = activeDeck;
     deckQueues[i] = p.tracks.slice(1).map(t => ({ ...t }));
     updateQueueUI(i);
     loadTrackToDeck(i, { ...p.tracks[0] }, true);
   });
-  addItem('💾 Exporter sur clé USB (CDJ / tout matos)', async () => {
+  addItem(t('export_usb_label'), async () => {
     if (!p.tracks.length) {
-      flashStatus('Playlist vide — rien à exporter');
+      flashStatus(t('playlist_empty'));
       return;
     }
-    flashStatus(`Export de « ${p.name} » : préparation des fichiers…`);
+    flashStatus(t('export_preparing', { name: p.name }));
     // Les pistes SoundCloud sans copie locale sont téléchargées d'abord
     for (const ref of p.tracks) {
       if (ref.sc && !ref.path) {
-        flashStatus(`Téléchargement de « ${ref.name} »…`);
+        flashStatus(t('downloading_track', { name: ref.name }));
         await ensureLocalCopy(ref);
       }
     }
     const items = p.tracks.map(ref => library.exportData(ref));
     const res = await window.api.exportPlaylist(p.name, items);
     if (res.ok) {
-      flashStatus(`💾 « ${p.name} » exportée : ${res.count} morceaux${res.skipped ? ` (${res.skipped} ignorés)` : ''} → ${res.dir}`);
+      flashStatus(t('export_done', { name: p.name, count: res.count, skipped: res.skipped ? t('export_done_skipped', { n: res.skipped }) : '', dir: res.dir }));
     } else if (!res.canceled) {
       flashStatus(`Export : ${res.error}`);
     }
@@ -2914,7 +2972,7 @@ function showScAccountMenu(e, t) {
   ctxMenu.textContent = '';
   const d = document.createElement('div');
   d.className = 'ctx-item';
-  d.textContent = `🗑 Retirer ce compte (${String(t.name || '').replace(/^👤 /, '')})`;
+  d.textContent = t('remove_account_label', { name: String(t.name || '').replace(/^👤 /, '') });
   d.addEventListener('click', async () => {
     hideCtxMenu();
     const r = await window.api.scRemoveAccount(t.acctIdx);
@@ -2922,7 +2980,7 @@ function showScAccountMenu(e, t) {
       flashStatus(`SoundCloud : ${r.error}`);
       return;
     }
-    flashStatus('Compte SoundCloud retiré');
+    flashStatus(t('sc_account_removed'));
     // Les index de comptes ont bougé (splice) : les caches par compte de la
     // vue ne valent plus rien, et l'arbre doit repartir de zéro
     library.scPlaylistsByAcct = {};
@@ -3070,7 +3128,7 @@ async function loadSelectedToDeck(i) {
 
 // Un son DÉJÀ EN LECTURE ailleurs est refusé : petite animation + message
 function refuseLoad(i, dup) {
-  flashStatus(`⛔ Ce son est déjà en lecture sur le deck ${dup + 1} !`);
+  flashStatus(t('track_already_playing', { n: dup + 1 }));
   [deckUI[i].el, deckUI[dup].el].forEach((el2) => {
     if (!el2) return;
     el2.classList.remove('refused');
@@ -3119,7 +3177,7 @@ async function loadTrackToDeck(i, track, autoplay = false) {
     || track.scAccountRow || track.scLikes) return;
   // Protégé (DRM) : refus IMMÉDIAT, sans attendre un aller-retour réseau
   if (track.drm) {
-    flashStatus(`🔒 « ${track.name} » est protégé (DRM) : sa lecture hors du site n'est pas autorisée`);
+    flashStatus(t('track_drm_protected_status', { name: track.name }));
     return;
   }
   // Refus si le MÊME son joue déjà sur un autre deck
@@ -3139,11 +3197,11 @@ async function loadTrackToDeck(i, track, autoplay = false) {
     const prev = ui.loading;
     prev.cancelled = true;
     if (prev.track && prev.track.sc && !prev.track.path && window.api.scCancel) window.api.scCancel(prev.track.scId);
-    flashStatus(`Deck ${i + 1} : chargement de « ${prev.track.name} » annulé → « ${track.name} »`);
+    flashStatus(t('load_cancelled', { n: i + 1, old: prev.track.name, name: track.name }));
   }
   const job = { track, cancelled: false };
   ui.loading = job;
-  ui.title.textContent = `Chargement : ${track.name}… (un autre son posé ici l'annule)`;
+  ui.title.textContent = t('loading_title', { name: track.name });
   try {
     const { buffer, bpm, beatOffset, beats, gridShift, barAnchor, hotCues, musicKey } = await library.loadForDeck(track,
       (msg) => { if (ui.loading === job) ui.title.textContent = `${msg} ${track.name}`; },
@@ -3178,7 +3236,7 @@ async function loadTrackToDeck(i, track, autoplay = false) {
         ui.cover.classList.remove('hidden');
       }
     });
-    flashStatus(`« ${track.name} » chargé sur le deck ${i + 1}`);
+    flashStatus(t('track_loaded', { name: track.name, n: i + 1 }));
     library.addHistory(track);
     markTakenRows(); // le son passe en VERT dans l'explorateur, tout de suite
     if (autoplay) engine.decks[i].play();
@@ -3186,7 +3244,7 @@ async function loadTrackToDeck(i, track, autoplay = false) {
   } catch (err) {
     // annulé au profit d'un autre son : ce n'est pas une erreur
     if (job.cancelled || err.cancelled) return;
-    ui.title.textContent = '— erreur de chargement —';
+    ui.title.textContent = t('load_error_title');
     flashStatus(`Impossible de lire « ${track.name} » : ${err.message || err}`);
     console.error(err);
   } finally {
@@ -3262,9 +3320,9 @@ const gpFxUnitOf = (cur) => (cur.c === GP_FX_COL
 // rangées de knobs (une par rangée) — L2 ou R2 déclenchent la cellule
 // (la rangée DECK a disparu : la sélection montre déjà où va l'effet)
 const GP_FX_ROWS = [
-  { key: 'type', label: 'EFFET' },   // rangée TRIM
-  { key: 'beats', label: 'DURÉE' },  // rangée HI
-  { key: 'level', label: 'NIVEAU' }, // rangée MID
+  { key: 'type', label: t('fx_row_effect') },   // rangée TRIM
+  { key: 'beats', label: t('fx_row_duration') },  // rangée HI
+  { key: 'level', label: t('fx_row_level') }, // rangée MID
   { key: 'onoff', label: 'ON/OFF' }  // rangées LOW + FILTER
 ];
 const gpFxRowKey = (r) => GP_FX_ROWS[Math.min(Math.max(r - 1, 0), GP_FX_ROWS.length - 1)].key;
@@ -3339,7 +3397,7 @@ function masterBpmNudge(dir) {
   const mi = engine.masterIdx !== null ? engine.masterIdx : engine.autoMasterIdx;
   const m = mi != null ? engine.decks[mi] : null;
   if (!m || !m.bpm) {
-    flashStatus('♩ BPM master — lance d\'abord un son (le premier lancé dirige)');
+    flashStatus(t('bpm_master_needs_track'));
     return;
   }
   const cur = m.bpm * m.tempo;
@@ -3356,7 +3414,7 @@ function masterBpmNudge(dir) {
     if (i === mi || !d.synced || !d.playing || !d._syncBase) return;
     followers.push(i + 1);
   });
-  flashStatus(`♩ BPM master → ${target.toFixed(1)}${followers.length ? ` — sync : deck ${followers.join(' + ')} suivent` : ''}`);
+  flashStatus(t('bpm_master_set', { bpm: target.toFixed(1), sync: followers.length ? t('bpm_master_sync_suffix', { decks: followers.join(' + ') }) : '' }));
   updateMasterBpmVal();
 }
 
@@ -3427,22 +3485,22 @@ function gpKillKnob(cur, gi) {
           stripUI[o].kLow.update();
         }
       }
-      flashStatus(`🔊 Basses → deck ${cell.deck + 1} (les autres sont coupées)`);
+      flashStatus(t('bass_routed', { n: cell.deck + 1 }));
     } else {
       gpKillStore.set(kkey, cell.get());
       cell.set(-1);
-      flashStatus(`Basses coupées — deck ${cell.deck + 1}`);
+      flashStatus(t('bass_cut', { n: cell.deck + 1 }));
     }
     return;
   }
   if (gpKillStore.has(kkey)) {
     cell.set(gpKillStore.get(kkey));
     gpKillStore.delete(kkey);
-    flashStatus(`${cell.label} réactivé`);
+    flashStatus(t('fx_reenabled', { label: cell.label }));
   } else {
     gpKillStore.set(kkey, cell.get());
     cell.set(cell.killVal);
-    flashStatus(`${cell.label} coupé`);
+    flashStatus(t('fx_cut', { label: cell.label }));
   }
 }
 
@@ -3563,8 +3621,8 @@ function gpSelectToggle(d, gi) {
   gpPaintSelection();
   const mine = gi != null ? gpSonsOf(gi) : [...gpSelNeutral].sort();
   flashStatus(gpSelection.size
-    ? `${gi != null ? `🎮 J${gi + 1} — ` : ''}sélection : deck ${mine.map((x) => x + 1).join(' + ') || '—'} (union : ${[...gpSelection].sort().map((x) => x + 1).join('+')}) — sticks · R1 = ↺`
-    : 'Sélection vidée');
+    ? t('selection_status', { player: gi != null ? t('player_prefix', { n: gi + 1 }) : '', decks: mine.map((x) => x + 1).join(' + ') || '—', union: [...gpSelection].sort().map((x) => x + 1).join('+') })
+    : t('selection_cleared'));
 }
 
 function gpCutToggle(fallbackDeck) {
@@ -3576,7 +3634,7 @@ function gpCutToggle(fallbackDeck) {
       stripUI[d].fader.update();
     }
     gpCutStore.clear();
-    flashStatus('CUT relâché — les sons reviennent');
+    flashStatus(t('cut_released'));
     return;
   }
   const targets = gpSelection.size ? [...gpSelection] : [fallbackDeck];
@@ -3585,7 +3643,7 @@ function gpCutToggle(fallbackDeck) {
     engine.decks[d].setVolume(0);
     stripUI[d].fader.update();
   }
-  flashStatus(`CUT ! deck ${targets.sort().map(x => x + 1).join(' + ')} coupé${targets.length > 1 ? 's' : ''}`);
+  flashStatus(t('cut_status', { decks: targets.sort().map(x => x + 1).join(' + '), s: targets.length > 1 ? 's' : '' }));
 }
 
 // Curseurs visibles (un par joueur, couleur du deck contrôlé) avec les
@@ -4324,12 +4382,12 @@ const gamepad = new GamepadManager({
       // sélectionnés (une seule unité, routée vers chacun de ses decks)
       const u = Math.min(st.player - 1, 3);
       if (!gpFxBeatsX2(u, side)) {
-        flashStatus(`⏱ J${st.player} — FX déjà au ${side > 0 ? 'maximum (32 temps)' : 'minimum (1/4 temps)'}`);
+        flashStatus(t('fx_at_limit', { n: st.player, limit: side > 0 ? t('fx_limit_max') : t('fx_limit_min') }));
         return;
       }
       const s = uiRefs.fxUnits[u].beatsSel;
       const val = s.options[s.selectedIndex].textContent.trim();
-      flashStatus(`⏱ J${st.player} — durée ${val} temps sur deck ${mine.sort().map((t) => t + 1).join(' + ')}`);
+      flashStatus(t('fx_duration_deck', { n: st.player, val, decks: mine.sort((a, b) => a - b).map((d) => d + 1).join(' + ') }));
       return;
     }
     if (cur.r === 0 && cur.c === GP_FX_COL) {
@@ -4387,7 +4445,7 @@ const gamepad = new GamepadManager({
     if (engine.decks[d].hotCues[idx] == null) return;
     padClear(d, idx, 'hotcue');
     padFlash(d, idx, PLAYER_COLORS[st.player - 1]);
-    flashStatus(`🎮 J${st.player} — hot cue ${String.fromCharCode(65 + idx)} effacé (deck ${d + 1})`);
+    flashStatus(t('hotcue_cleared', { n: st.player, letter: String.fromCharCode(65 + idx), d: d + 1 }));
   },
   // Share/View (appui court) : changer le mode DU JOUEUR (CUE→JUMP→LOOP→KEY)
   cycleMode: (st) => {
@@ -4593,7 +4651,7 @@ const gamepad = new GamepadManager({
     if (idx >= 0) {
       sel.selectedIndex = idx;
       sel.dispatchEvent(new Event('change'));
-      flashStatus(`FX ${d + 1} — durée ${wanted[(pos + 1) % wanted.length]} temps`);
+      flashStatus(t('fx_duration_pos', { n: d + 1, val: wanted[(pos + 1) % wanted.length] }));
     }
   },
   // Carré ENFONCÉ : la liste des effets s'affiche à l'écran et l'effet
@@ -4678,8 +4736,8 @@ const gamepad = new GamepadManager({
       uiRefs.fxUnits[u].levelKnob.update();
     });
     flashStatus(gpSelection.size
-      ? `◯ — filtre + FX à 0 (sélection ${[...targets].sort().map((x) => x + 1).join('+')} conservée)`
-      : `◯ — filtre + FX du deck ${targets[0] + 1} à 0`);
+      ? t('fx_reset_selection', { sel: [...targets].sort().map((x) => x + 1).join('+') })
+      : t('fx_reset_deck', { n: targets[0] + 1 }));
   },
   // R1 ne déclenche le reset que si CE joueur a des pistes sélectionnées
   hasSelection: (gi) => gpSelFor(gi).length > 0,
@@ -4691,23 +4749,28 @@ const gamepad = new GamepadManager({
 // ---------------------------------------------------------------------------
 
 function renderHelp() {
-  const b = (i) => gamepad.connected ? gamepad.buttonLabel(i) : ({ 0: 'Croix/A', 1: 'Rond/B', 2: 'Carré/X', 3: 'Triangle/Y', 4: 'L1/LB', 5: 'R1/RB', 6: 'L2/LT', 7: 'R2/RT', 8: 'Share/View', 9: 'Options/Menu', 10: 'L3', 11: 'R3', 16: 'Bouton PS/Xbox' })[i];
+  const b = (i) => gamepad.connected ? gamepad.buttonLabel(i) : ({
+    0: t('help_btn_cross'), 1: t('help_btn_circle'), 2: t('help_btn_square'), 3: t('help_btn_triangle'),
+    4: t('help_btn_l1'), 5: t('help_btn_r1'), 6: t('help_btn_l2'), 7: t('help_btn_r2'),
+    8: t('help_btn_share'), 9: t('help_btn_options'), 10: t('help_btn_l3'), 11: t('help_btn_r3'),
+    16: t('help_btn_ps_xbox')
+  })[i];
   const rows = [
-    ['Croix ◀▶▲▼', 'MATRICE : colonnes = decks (en haut MASTER, à droite le RACK FX) · sous FILTER = NAVIGATION bibliothèque'],
-    [b(16), 'COUPER / remettre le knob survolé · sur LOW : les basses passent à CE deck (jamais 2 basses en même temps)'],
-    [`${b(6)} / ${b(7)}`, 'Sur les pads : moitié gauche / droite · COLONNE FX : durée ÷2 / ×2 · rangée MASTER : BPM − / + (les syncés suivent)'],
-    [`${b(8)} court`, 'Changer TON mode L2/R2 : JUMP → LOOP → CUE → KEY (chaque joueur garde le sien) · appui long = cette aide'],
-    [b(2), 'Court : durée du FX 1/2 → 3/4 → 1 → 2 temps · ENFONCÉ : liste des effets qui défile · (colonne FX : change l\'effet du panneau)'],
-    ['Stick droit', '▲▼ : NIVEAU du FX de la track (rangée master = tous) · ◀▶ maintenu ½ s : ZOOM / DÉZOOM des vagues'],
-    [b(11), 'SÉLECTIONNER la track (arme son FX + filtre d\'un coup) · re-appui : la retire · colonne FX : unité ON / OFF'],
-    [b(10), 'FILTRE en général ON / OFF (COLOR)'],
-    [`${b(4)} / ${b(5)}`, 'VOLUME de la piste − / + (maintenir) · rangée master : le knob master survolé · R1 avec sélection : TOUT à 0 + désélection'],
-    ['Stick gauche', '▲▼ : knob survolé · ◀▶ maintenu ½ s : DÉCALER le son (jog CDJ) — au relâcher le calage auto GARDE ton alignement'],
-    [b(9), 'BEAT SYNC du deck ON / OFF (au lancement d\'un son sync, les traits rouges se calent sur le master)'],
-    [b(0), 'Play / Pause · en NAVIGATION : ouvrir une playlist ou CHARGER ET LANCER le morceau (re-appuyer = pause)'],
-    [`${b(1)} court`, 'FX + FILTRE à 0 (sélection CONSERVÉE) + knob survolé au neutre · en NAVIGATION : retour · APPUI LONG : sélection CUT'],
-    [b(3), 'CUT : coupe d\'un coup les decks sélectionnés — ré-appuyer, tout revient d\'un coup'],
-    ['NAVIGATION', 'Descendre sous FILTER : ▲▼ = choisir, ◀▶ = onglets, Croix = ouvrir, Rond = retour, ▲ tout en haut = retour aux knobs']
+    [t('help_cross_dpad_label'), t('help_row1_desc')],
+    [b(16), t('help_row2_desc')],
+    [`${b(6)} / ${b(7)}`, t('help_row3_desc')],
+    [`${b(8)}${t('help_btn_short_suffix')}`, t('help_row4_desc')],
+    [b(2), t('help_row5_desc')],
+    [t('help_stick_right_label'), t('help_row6_desc')],
+    [b(11), t('help_row7_desc')],
+    [b(10), t('help_row8_desc')],
+    [`${b(4)} / ${b(5)}`, t('help_row9_desc')],
+    [t('help_stick_left_label'), t('help_row10_desc')],
+    [b(9), t('help_row11_desc')],
+    [b(0), t('help_row12_desc')],
+    [`${b(1)}${t('help_btn_short_suffix')}`, t('help_row13_desc')],
+    [b(3), t('help_row14_desc')],
+    [t('help_navigation_label'), t('help_row15_desc')]
   ];
   document.getElementById('help-table').innerHTML =
     rows.map(r => `<tr><td>${r[0]}</td><td>${r[1]}</td></tr>`).join('');
@@ -5053,24 +5116,24 @@ function midiCue(i, on) {
   const deck = engine.decks[i];
   if (!deck.buffer) {
     // deck vide : le DIRE (l'ancien silence ressemblait à un bouton mort)
-    if (on) flashStatus(`Deck ${i + 1} — aucun son chargé (CUE)`);
+    if (on) flashStatus(t('cue_no_track', { n: i + 1 }));
     return;
   }
   if (on) {
     if (deck.playing) {
       deck.cue();
-      flashStatus(`⏹ Deck ${i + 1} — retour au point CUE`);
+      flashStatus(t('cue_return', { n: i + 1 }));
       return;
     }
     const atCue = Math.abs(deck.currentTime() - deck.cuePoint) < 0.02;
     if (!atCue) {
       deck.cue();
-      flashStatus(`📍 Deck ${i + 1} — point CUE posé ici`);
+      flashStatus(t('cue_point_set', { n: i + 1 }));
       return;
     }
     midiCueHold[i] = true;
     deck.play();
-    flashStatus(`▶ Deck ${i + 1} — pré-écoute (maintiens CUE)`);
+    flashStatus(t('cue_preview', { n: i + 1 }));
   } else if (midiCueHold[i]) {
     midiCueHold[i] = false;
     deck.pause();
@@ -5159,7 +5222,7 @@ function masterFxBeatsStep(dir) {
   if (idx === next) return false;
   u.setBeatsMult(MASTER_FX_BEATS[next]);
   const b = MASTER_FX_BEATS[next];
-  flashStatus(`FX MASTER — durée ${b >= 1 ? b : `1/${Math.round(1 / b)}`} temps`);
+  flashStatus(t('fx_master_duration', { val: b >= 1 ? b : `1/${Math.round(1 / b)}` }));
   return true;
 }
 // Liste canonique des effets (celle des menus déroulants) : sert à la
@@ -5197,14 +5260,14 @@ function midiFxToggle() {
     : engine.fx[midiFxUnit()].enabled;
   if (targetOn) {
     platineFxOff();
-    flashStatus('FX coupé (platine)');
+    flashStatus(t('fx_off_platter'));
   } else {
     const cur = platineFxCurrent();
     const src = cur ? { type: cur.fx.type, beatsMult: cur.fx.beatsMult, level: cur.fx.level } : null;
     platineFxOff();
     const where = platineFxOnTarget(src);
     const lvl = midiFxTarget === 'master' ? engine.masterFx.level : engine.fx[midiFxUnit()].level;
-    flashStatus(`FX ACTIVÉ → ${where}${lvl === 0 ? ' — monte la jauge pour l\'entendre' : ''}`);
+    flashStatus(t('fx_on_status', { where, hint: lvl === 0 ? t('fx_on_raise_hint') : '' }));
   }
 }
 // Échelle du jog : secondes de son par cran (DDJ-FLX6 : 7200 crans/tour,
@@ -5266,7 +5329,7 @@ const midi = new MidiManager({
         if (!d.buffer) {
           // Toucher sur un deck VIDE : le DIRE au lieu d'un silence mystère
           // (bouton DECK matériel basculé sur un deck sans son chargé)
-          if (on) flashStatus(`🖐 Disque → deck ${i + 1} : AUCUN son chargé ici (bouton DECK de la platine ?)`);
+          if (on) flashStatus(t('jog_no_track', { n: i + 1 }));
           break;
         }
         midiJogTouchAt = performance.now();
@@ -5288,7 +5351,7 @@ const midi = new MidiManager({
             if (d.playing) d.pause();
             if (scratchSound) d.scrubStart();
             engine.jogHold = true;
-            flashStatus(`🖐 Disque → deck ${i + 1}`);
+            flashStatus(t('jog_routed', { n: i + 1 }));
           }
         } else {
           midiJogTouchHeld[i] = false;
@@ -5315,9 +5378,9 @@ const midi = new MidiManager({
             const src = { type: cur.fx.type, beatsMult: cur.fx.beatsMult, level: cur.fx.level };
             platineFxOff();
             platineFxOnTarget(src);
-            flashStatus(`CHANNEL SELECT — deck ${i + 1} ACTIF (le FX suit)`);
+            flashStatus(t('channel_select_active_fx', { n: i + 1 }));
           } else {
-            flashStatus(`CHANNEL SELECT — deck ${i + 1} ACTIF`);
+            flashStatus(t('channel_select_active', { n: i + 1 }));
           }
         }
         break;
@@ -5346,7 +5409,7 @@ const midi = new MidiManager({
         if (on && d.buffer) {
           d.pause();
           d.seek(0);
-          flashStatus(`⏮ Deck ${i + 1} — retour au début`);
+          flashStatus(t('back_to_start', { n: i + 1 }));
         }
         break;
       case 'cue':
@@ -5355,7 +5418,7 @@ const midi = new MidiManager({
           if (on && d.buffer) {
             d.pause();
             d.seek(0);
-            flashStatus(`⏮ Deck ${i + 1} — retour au début`);
+            flashStatus(t('back_to_start', { n: i + 1 }));
           }
           break;
         }
@@ -5395,7 +5458,7 @@ const midi = new MidiManager({
           else if (t.fsRow) enterFolder(t.path);
           else if (t.plRow) openLocalPlaylist(t.pl);
           else if (t.scPlaylist) openScPlaylist(t.permalink, t.acctIdx);
-          else flashStatus('Morceau sélectionné — utilise un bouton LOAD pour le charger');
+          else flashStatus(t('track_selected_use_load'));
         }
         break;
       // RETOUR : sortir de la playlist ouverte, remonter d'un dossier —
@@ -5409,7 +5472,7 @@ const midi = new MidiManager({
           else if (library.mode !== 'local') {
             setLibTab('local');
             library.showRoots();
-          } else if (!folderUp()) flashStatus('Bibliothèque — racines (tout en haut)');
+          } else if (!folderUp()) flashStatus(t('library_roots'));
         }
         break;
       // VIEW : masque / réaffiche l'explorateur — les decks prennent alors
@@ -5422,7 +5485,7 @@ const midi = new MidiManager({
             lib.classList.toggle('hidden');
             appEl.classList.toggle('lib-hidden', lib.classList.contains('hidden'));
             flashStatus(lib.classList.contains('hidden')
-              ? 'VIEW — plein écran decks (bibliothèque masquée)' : 'VIEW — bibliothèque affichée');
+              ? t('view_fullscreen_decks') : t('view_library_shown'));
           }
         }
         break;
@@ -5455,7 +5518,7 @@ const midi = new MidiManager({
           engine.setCuePfl(i, now2);
           flashStatus(engine.phonesOk
             ? `🎧 Deck ${i + 1} — casque ${now2 ? 'ON' : 'OFF'}`
-            : `🎧 Deck ${i + 1} — casque ${now2 ? 'ON' : 'OFF'} (sortie stéréo : pas de canal casque séparé)`);
+            : t('headphone_status', { n: i + 1, state: now2 ? 'ON' : 'OFF' }));
         }
         break;
       case 'fxSlot':
@@ -5528,7 +5591,7 @@ const midi = new MidiManager({
       if (!dk.bpm) return;
       const bAt = (dk.bpm * target).toFixed(1);
       const bTo = (dk.bpm * cur).toFixed(1);
-      flashStatus(`🎚 Deck ${idx + 1} : jauge tempo à ${bAt} BPM → amène-la sur ${bTo} pour la reprendre`);
+      flashStatus(t('tempo_gauge_status', { n: idx + 1, at: bAt, to: bTo }));
     }
     switch (action) {
       case 'volume': d.setVolume(v); stripUI[i].fader.update(); break;
@@ -5728,7 +5791,7 @@ midi.onStatus = (name) => {
   const chip = document.getElementById('midi-status');
   if (!chip) return;
   // (la pastille verte/grise est en CSS — plus d'emoji dans la barre)
-  chip.textContent = name || 'Aucun contrôleur';
+  chip.textContent = name || t('no_controller');
   chip.className = name ? 'pad-on' : 'pad-off';
   renderMidiTable();
 };
@@ -5864,8 +5927,8 @@ let guestData = { votes: [], msgs: [] };
 let guestSeen = 0;
 const btnGuests = document.createElement('button');
 btnGuests.id = 'btn-guests';
-btnGuests.innerHTML = 'DEMANDES <b id="guest-count">0</b>';
-btnGuests.title = 'Demandes du public : tes invités votent leurs sons depuis leur téléphone (page /guest)';
+btnGuests.innerHTML = `${t('guest_button_label')} <b id="guest-count">0</b>`;
+btnGuests.title = t('guest_requests_title');
 btnDeckCount.insertAdjacentElement('afterend', btnGuests);
 const guestPanel = document.createElement('div');
 guestPanel.id = 'guest-panel';
@@ -5882,9 +5945,9 @@ function renderGuestPanel() {
   guestPanel.textContent = '';
   const head = document.createElement('div');
   head.className = 'gp-head';
-  head.innerHTML = '<b>DEMANDES DU PUBLIC</b><a id="gp-url" href="#" title="Clic : ouvrir dans le navigateur · clic droit : copier"></a>';
+  head.innerHTML = `<b>${t('guest_panel_title')}</b><a id="gp-url" href="#" title="${t('guest_link_title')}"></a>`;
   const bClear = document.createElement('button');
-  bClear.textContent = 'Vider';
+  bClear.textContent = t('guest_clear_label');
   bClear.addEventListener('click', async () => {
     guestData = await window.api.guestClear();
     renderGuestPanel();
@@ -5908,25 +5971,25 @@ function renderGuestPanel() {
       u.addEventListener('click', (e) => {
         e.preventDefault();
         window.api.openExternal(guestUrl);
-        flashStatus(`Page invités ouverte : ${guestUrl}`);
+        flashStatus(t('guest_page_opened', { url: guestUrl }));
       });
       u.addEventListener('contextmenu', (e) => {
         e.preventDefault();
         navigator.clipboard.writeText(guestUrl)
-          .then(() => flashStatus('Lien invités copié — colle-le dans ton groupe 📋'))
+          .then(() => flashStatus(t('guest_link_copied')))
           .catch(() => flashStatus(guestUrl));
       });
     }
     const qr = await window.api.guestQr(guestUrl);
     if (qr) {
-      qrWrap.innerHTML = `<img src="${qr}" alt="QR invités">
-        <span>Scanne-moi pour demander ton son</span>`;
+      qrWrap.innerHTML = `<img src="${qr}" alt="${t('guest_qr_alt')}">
+        <span>${t('guest_scan_prompt')}</span>`;
     }
   });
   if (!guestData.votes.length && !guestData.msgs.length) {
     const e = document.createElement('div');
     e.className = 'gp-empty';
-    e.textContent = 'Aucune demande pour l\'instant — fais scanner le QR code à tes potes, ou envoie-leur le lien ci-dessus.';
+    e.textContent = t('guest_no_requests_yet');
     guestPanel.appendChild(e);
   }
   // Titres de section : on sépare clairement les demandes des messages
@@ -5937,7 +6000,7 @@ function renderGuestPanel() {
     guestPanel.appendChild(s);
   };
   if (guestData.votes.length) {
-    gpSection(`DEMANDES · ${guestData.votes.length}`);
+    gpSection(t('guest_requests_section', { n: guestData.votes.length }));
   }
   guestData.votes.forEach((v) => {
     const row = document.createElement('div');
@@ -5949,8 +6012,8 @@ function renderGuestPanel() {
       + `<span class="gp-bpm">${v.bpm ?? ''}</span>`;
     row.querySelector('.gp-name').textContent = v.name;
     row.title = v.url
-      ? 'Demande SoundCloud — clic : ouvrir le morceau et le charger'
-      : 'Clic : charger sur le deck actif';
+      ? t('guest_sc_request_title')
+      : t('guest_click_load_title');
     row.addEventListener('click', async () => {
       // Demande venue de la RECHERCHE SOUNDCLOUD des invités : on ouvre le
       // lien dans la bibliothèque puis on charge le morceau sur le deck actif
@@ -5967,7 +6030,7 @@ function renderGuestPanel() {
         flashStatus(raison);
       };
       if (v.url) {
-        flashStatus(`Chargement SoundCloud : ${v.name}…`);
+        flashStatus(t('guest_loading_sc', { name: v.name }));
         const ok = await library.loadScUrl(v.url);
         if (ok !== false && library.scTracks && library.scTracks.length) {
           const t0 = library.scTracks.find((t) => !t.scPlaylist && !t.scAccountRow);
@@ -5977,7 +6040,7 @@ function renderGuestPanel() {
             return;
           }
         }
-        echec(`« ${v.name} » n'a pas pu être chargé depuis SoundCloud — vérifie le compte connecté dans ⚙`);
+        echec(t('guest_sc_load_failed', { name: v.name }));
         return;
       }
       const tr = [...library.tracks, ...library.scTracks].find(
@@ -5986,12 +6049,12 @@ function renderGuestPanel() {
         loadTrackToDeck(activeDeck, tr);
         guestPanel.classList.add('hidden');
       } else {
-        echec(`« ${v.name} » est introuvable dans ta bibliothèque — cherche-le sur SoundCloud`);
+        echec(t('guest_track_not_found', { name: v.name }));
       }
     });
     guestPanel.appendChild(row);
   });
-  if (guestData.msgs.length) gpSection(`MESSAGES · ${guestData.msgs.length}`);
+  if (guestData.msgs.length) gpSection(t('guest_messages_section', { n: guestData.msgs.length }));
   guestData.msgs.slice().reverse().forEach((m) => {
     const row = document.createElement('div');
     row.className = 'gp-msg';
@@ -6010,8 +6073,8 @@ window.api.onGuestReq((d) => {
   if (now > before) {
     const top = d.votes[0];
     flashStatus(top
-      ? `Nouvelle demande — en tête : « ${top.name} » (${top.votes} votes)`
-      : 'Nouveau message du public');
+      ? t('guest_new_request', { name: top.name, votes: top.votes })
+      : t('guest_new_message'));
   }
   renderGuestPanel();
 });
@@ -6053,7 +6116,11 @@ function applyDeckCount(n, silent) {
 }
 
 btnDeckCount.addEventListener('click', () => applyDeckCount(deckCount === 2 ? 4 : 2));
-applyDeckCount(deckCount, true);
+// NB : l'appel initial est plus bas, une fois le mixer et les decks
+// construits — applyDeckCount() lit stripUI[2]/[3], qui n'existent qu'après
+// buildMixer(). L'appeler ici plantait au démarrage si la dernière session
+// s'était terminée en mode 2 decks (stripUI encore vide), ce qui empêchait
+// TOUT le reste du démarrage de s'exécuter (mixer et decks jamais construits).
 
 // --- Enregistrement du mix (sortie master -> fichier) ---
 const btnRec = document.getElementById('btn-rec');
@@ -6076,7 +6143,7 @@ btnRec.addEventListener('click', async () => {
       const d = new Date();
       const stamp = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}h${String(d.getMinutes()).padStart(2, '0')}`;
       const res = await window.api.saveRecording(data, `TurboMix ${stamp}.webm`);
-      flashStatus(res.ok ? `🎙️ Mix enregistré : ${res.path}` : 'Enregistrement annulé');
+      flashStatus(res.ok ? t('recording_saved', { path: res.path }) : t('recording_canceled'));
     };
     recorder.start(1000);
     recStart = performance.now();
@@ -6101,8 +6168,8 @@ wzScratch.addEventListener('click', () => {
   localStorage.setItem('scratchSound', scratchSound ? '1' : '0');
   refreshScratchBtn();
   flashStatus(scratchSound
-    ? 'Scratch sonore activé : tu entends le son en déplaçant la piste'
-    : 'Scratch silencieux : le son reprend seulement quand tu lâches');
+    ? t('scratch_enabled_status')
+    : t('scratch_disabled_status'));
 });
 refreshScratchBtn();
 
@@ -6189,6 +6256,7 @@ for (let i = 0; i < 4; i++) buildDeckPanel(i);
 buildMixer();
 buildFxBar();
 setActiveDeck(0);
+applyDeckCount(deckCount, true);
 deckUI.forEach((_, i) => renderPads(i));
 samplerInit(); // recharge les samples posés sur les pads (chemins mémorisés)
 // Fermeture : écrit en synchrone tout calage de grille encore en attente
@@ -6207,6 +6275,14 @@ document.getElementById('btn-close-help').addEventListener('click', toggleHelp);
 // --- Paramètres : palette, sortie audio, micros, télécommande ---
 const settingsOverlay = document.getElementById('settings-overlay');
 
+// --- Langue ---
+const setLangSelect = document.getElementById('set-lang');
+setLangSelect.value = getLang();
+setLangSelect.addEventListener('change', (e) => {
+  setLang(e.target.value);
+  flashStatus(t('language_changed', { lang: e.target.value === 'fr' ? 'Français' : 'English' }));
+});
+
 function invalidateWaves() {
   deckUI.forEach((ui) => {
     ui._zoomSig = null;
@@ -6222,19 +6298,19 @@ const storedRange = localStorage.getItem('bpmRange');
 setBpmRange.value = storedRange && storedRange !== 'auto' ? storedRange : '85-170';
 setBpmRange.addEventListener('change', (e) => {
   localStorage.setItem('bpmRange', e.target.value);
-  flashStatus('Plage BPM changée — clique « Tout ré-analyser » ou recharge les morceaux pour appliquer');
+  flashStatus(t('bpmrange_changed'));
 });
 document.getElementById('set-reanalyze').addEventListener('click', () => {
   const n = library.invalidateAnalysis();
-  flashStatus(`Ré-analyse lancée (${n} morceaux) — elle tourne en arrière-plan`);
+  flashStatus(t('reanalyze_started', { n }));
 });
 document.getElementById('set-rbimport').addEventListener('click', async () => {
   flashStatus('Lecture des analyses Rekordbox…');
   try {
     const n = await library.importRekordboxGrids();
     flashStatus(n
-      ? `${n} grilles Rekordbox importées ✔ (recharge les decks pour les appliquer)`
-      : 'Aucune analyse Rekordbox ne correspond aux morceaux de la bibliothèque');
+      ? t('rekordbox_grids_imported', { n })
+      : t('rekordbox_grids_none'));
   } catch (e) {
     flashStatus(`Import Rekordbox impossible : ${e.message}`);
   }
@@ -6246,7 +6322,7 @@ setGridOffset.addEventListener('change', () => {
   const ms = Math.max(-60, Math.min(60, Number(setGridOffset.value) || 0));
   localStorage.setItem('gridOffsetMs', String(ms));
   setGlobalGridOffset(ms / 1000);
-  flashStatus(`Décalage global de grille : ${ms} ms`);
+  flashStatus(t('grid_offset_changed', { ms }));
 });
 
 // --- Comportement ---
@@ -6266,6 +6342,12 @@ const setSnapRelease = document.getElementById('set-snaprelease');
 setSnapRelease.checked = localStorage.getItem('snapRelease') !== '0';
 setSnapRelease.addEventListener('change', () => {
   localStorage.setItem('snapRelease', setSnapRelease.checked ? '1' : '0');
+});
+const setKeepBarOnJump = document.getElementById('set-keepbaronjump');
+setKeepBarOnJump.checked = keepBarOnJump;
+setKeepBarOnJump.addEventListener('change', () => {
+  keepBarOnJump = setKeepBarOnJump.checked;
+  localStorage.setItem('keepBarOnJump', keepBarOnJump ? '1' : '0');
 });
 const setWaveSize = document.getElementById('set-wavesize');
 setWaveSize.value = localStorage.getItem('waveSize') || 'normal';
@@ -6296,20 +6378,20 @@ async function refreshDevices() {
     const devices = await navigator.mediaDevices.enumerateDevices();
     const outSel = document.getElementById('set-output');
     const current = localStorage.getItem('audioOutput') || '';
-    outSel.innerHTML = '<option value="">Sortie par défaut</option>';
+    outSel.innerHTML = `<option value="">${t('default_output')}</option>`;
     devices.filter(d => d.kind === 'audiooutput').forEach(d => {
       const o = document.createElement('option');
       o.value = d.deviceId;
-      o.textContent = d.label || `Sortie ${d.deviceId.slice(0, 6)}`;
+      o.textContent = d.label || t('output_label', { id: d.deviceId.slice(0, 6) });
       if (d.deviceId === current) o.selected = true;
       outSel.appendChild(o);
     });
     const mics = devices.filter(d => d.kind === 'audioinput');
     document.getElementById('set-mics').textContent = mics.length
-      ? mics.map(m => m.label || 'Micro sans nom').join(' · ')
-      : 'Aucun micro détecté';
+      ? mics.map(m => m.label || t('no_mic_named')).join(' · ')
+      : t('no_mic_detected');
   } catch (err) {
-    document.getElementById('set-mics').textContent = 'Périphériques inaccessibles';
+    document.getElementById('set-mics').textContent = t('mics_unavailable');
   }
 }
 
@@ -6318,9 +6400,9 @@ document.getElementById('set-output').addEventListener('change', async (e) => {
     await engine.ctx.setSinkId(e.target.value || '');
     engine._wireOutput(); // le nombre de canaux (casque !) dépend du périphérique
     localStorage.setItem('audioOutput', e.target.value);
-    flashStatus('Sortie audio changée');
+    flashStatus(t('audio_output_changed'));
   } catch (err) {
-    flashStatus(`Sortie audio : ${err.message || err}`);
+    flashStatus(t('audio_output_error', { error: err.message || err }));
   }
 });
 
@@ -6331,8 +6413,8 @@ function renderMidiTable() {
   if (!table) return;
   if (info) {
     info.textContent = midi.deviceName
-      ? `Connecté : ${midi.deviceName}${/ddj|pioneer/i.test(midi.deviceName) ? ' (préréglage DDJ chargé)' : ''}`
-      : 'Aucun contrôleur détecté — branche ta platine, elle apparaîtra ici';
+      ? t('midi_connected', { name: midi.deviceName, ddj: /ddj|pioneer/i.test(midi.deviceName) ? t('midi_ddj_preset') : '' })
+      : t('no_midi_device');
   }
   table.textContent = '';
   if (!midi.deviceName) return;
@@ -6346,7 +6428,7 @@ function renderMidiTable() {
     row.innerHTML = `
       <span class="midi-label"></span>
       <span class="midi-bind">${bound ? bound : '—'}</span>
-      <button class="midi-learn" title="Apprendre : bouge le contrôle physique">🎯</button>
+      <button class="midi-learn" title="${t('midi_learn_button_title')}">🎯</button>
       <button class="midi-clear" title="Effacer">✕</button>
     `;
     row.querySelector('.midi-label').textContent = label;
@@ -6357,7 +6439,7 @@ function renderMidiTable() {
       btn.textContent = '🎯';
       if (key) {
         row.querySelector('.midi-bind').textContent = key;
-        flashStatus(`MIDI : « ${label} » lié à ${key}`);
+        flashStatus(t('midi_learned', { label, key }));
       }
     });
     row.querySelector('.midi-clear').addEventListener('click', () => {
@@ -6371,7 +6453,7 @@ document.getElementById('midi-deck-sel').addEventListener('change', renderMidiTa
 
 document.getElementById('set-remote').addEventListener('click', async () => {
   const r = await window.api.remoteStart();
-  document.getElementById('set-remote-url').textContent = `Sur ton téléphone : ${r.url}`;
+  document.getElementById('set-remote-url').textContent = t('remote_url_label', { url: r.url });
 });
 
 document.getElementById('btn-settings').addEventListener('click', () => {
@@ -6418,7 +6500,7 @@ window.api.onRemoteCmd((c) => {
     case 'bass':
       // même règle que le logo / R1 : les basses passent à CE deck
       gpBassTo(c.deck);
-      flashStatus(`📱 🔊 Basses → deck ${c.deck + 1}`);
+      flashStatus(t('bass_routed_remote', { n: c.deck + 1 }));
       break;
     case 'jump': doBeatJump(c.deck, c.value); break;
     case 'hotcue': padPress(c.deck, c.value, 'hotcue', null); break;
@@ -6506,7 +6588,7 @@ setInterval(() => {
   });
 }, 400);
 const libSearchEl = document.getElementById('lib-search');
-libSearchEl.placeholder = 'Rechercher… (Entrée = TOUT SoundCloud)';
+libSearchEl.placeholder = t('search_placeholder_hint');
 libSearchEl.addEventListener('input', (e) => library.setSearch(e.target.value));
 // Entrée = moteur de recherche CATALOGUE SoundCloud (au-delà des playlists)
 libSearchEl.addEventListener('keydown', (e) => {
@@ -6758,7 +6840,7 @@ btnPlNew.addEventListener('click', async () => {
   const name = await askText('Nom de la nouvelle playlist', `Playlist ${library.playlists.length + 1}`);
   if (name) {
     library.createPlaylist(name);
-    flashStatus(`Playlist « ${name} » créée — clic droit sur un morceau pour l'y ajouter`);
+    flashStatus(t('playlist_created', { name }));
   }
 });
 
@@ -6834,7 +6916,7 @@ async function importRekordboxXml() {
   const root = doc.querySelector('PLAYLISTS > NODE');
   if (root) walkNode(root, '');
   if (!found.length) {
-    flashStatus('Import Rekordbox : aucune playlist avec des fichiers locaux dans ce XML');
+    flashStatus(t('rekordbox_import_no_local'));
     return;
   }
   // 3) Fusion : une playlist du même nom est MISE À JOUR, pas dupliquée
@@ -6853,8 +6935,8 @@ async function importRekordboxXml() {
   library.savePlaylists();
   setLibTab('pl');
   library.closePlaylist();
-  const skipMsg = skippedNoFile ? ` (${skippedNoFile} pistes streaming ignorées)` : '';
-  flashStatus(`Rekordbox importé : ${created} playlists créées, ${updated} mises à jour${skipMsg}`);
+  const skipMsg = skippedNoFile ? t('skip_streaming_tracks', { n: skippedNoFile }) : '';
+  flashStatus(t('rekordbox_imported', { created, updated, skip: skipMsg }));
 }
 document.getElementById('btn-pl-import').addEventListener('click', importRekordboxXml);
 btnPlPlay.addEventListener('click', () => {
@@ -6864,7 +6946,7 @@ btnPlPlay.addEventListener('click', () => {
   deckQueues[i] = p.tracks.slice(1).map(t => ({ ...t }));
   updateQueueUI(i);
   loadTrackToDeck(i, { ...p.tracks[0] }, true);
-  flashStatus(`Playlist « ${p.name } » : premier titre sur le deck ${i + 1}, ${p.tracks.length - 1} en file`);
+  flashStatus(t('playlist_first_track_queue', { name: p.name, n: i + 1, count: p.tracks.length - 1 }));
 });
 
 // Télécharge en dur (Musique/TurboMix) les pistes SoundCloud d'une playlist
@@ -6875,9 +6957,9 @@ async function ensureLocalCopy(ref) {
   if (r.ok) {
     ref.path = r.path;
     library.savePlaylists();
-    flashStatus(`« ${ref.name} » téléchargé en dur dans Musique\\TurboMix`);
+    flashStatus(t('track_downloaded_hard', { name: ref.name }));
   } else {
-    flashStatus(`Téléchargement : ${r.error}`);
+    flashStatus(t('download_error', { error: r.error }));
   }
 }
 
@@ -6899,31 +6981,31 @@ function showTrackMenu(e, track, idx) {
     ctxMenu.appendChild(d);
   };
   library.playlists.forEach((p) => {
-    addItem(`➕ Ajouter à « ${p.name} »`, () => {
+    addItem(t('add_to_playlist_label', { name: p.name }), () => {
       const ref = library.addToPlaylist(p, track);
       if (ref) {
-        flashStatus(`« ${track.name} » ajouté à « ${p.name} »`);
+        flashStatus(t('added_to_playlist', { track: track.name, playlist: p.name }));
         if (ref.sc && !ref.path) ensureLocalCopy(ref);
       } else {
-        flashStatus('Déjà dans cette playlist');
+        flashStatus(t('already_in_playlist'));
       }
     });
   });
   if (library.isTaken(track)) {
-    addItem('⬜ Retirer la marque « déjà joué » (vert)', () => {
+    addItem(t('unmark_played_label'), () => {
       library.unmarkPlayed(track);
       markTakenRows();
     });
   }
-  addItem('🧹 Effacer toutes les marques « déjà joué » de la séance', async () => {
-    const ok = await askText('Remettre tous les sons en blanc ? Tape OUI pour confirmer', '');
-    if (String(ok || '').trim().toUpperCase() !== 'OUI') return;
+  addItem(t('clear_played_label'), async () => {
+    const ok = await askText(t('clear_played_confirm'), '');
+    if (String(ok || '').trim().toUpperCase() !== t('confirm_word')) return;
     library.clearPlayed();
     markTakenRows();
-    flashStatus('Marques « déjà joué » effacées');
+    flashStatus(t('played_cleared'));
   });
-  addItem('🔄 Ré-analyser BPM + grille (efface les corrections)', async () => {
-    flashStatus(`Ré-analyse de « ${track.name} »…`);
+  addItem(t('reanalyze_track_label'), async () => {
+    flashStatus(t('reanalyzing_track', { name: track.name }));
     try {
       const res = await library.reanalyze(track);
       // Met à jour en direct les decks qui jouent ce morceau
@@ -6939,21 +7021,21 @@ function showTrackMenu(e, track, idx) {
           updateTempoLabel(di);
         }
       });
-      flashStatus(`« ${track.name} » ré-analysé : ${res.bpm.toFixed(2)} BPM, grille recalée`);
+      flashStatus(t('track_reanalyzed', { name: track.name, bpm: res.bpm.toFixed(2) }));
     } catch (err) {
-      flashStatus(`Ré-analyse : ${err.message || err}`);
+      flashStatus(t('reanalyze_error', { error: err.message || err }));
     }
   });
-  addItem('🆕 Ajouter à une nouvelle playlist…', async () => {
+  addItem(t('add_to_new_playlist_label'), async () => {
     const name = await askText('Nom de la nouvelle playlist', `Playlist ${library.playlists.length + 1}`);
     if (!name) return;
     const p = library.createPlaylist(name);
     const ref = library.addToPlaylist(p, track);
     if (ref && ref.sc && !ref.path) ensureLocalCopy(ref);
-    flashStatus(`« ${track.name} » ajouté à « ${name} »`);
+    flashStatus(t('added_to_new_playlist', { track: track.name, playlist: name }));
   });
   if (library.mode === 'pl' && library.plOpen) {
-    addItem('✕ Retirer de la playlist', () => {
+    addItem(t('remove_from_playlist_label'), () => {
       const real = library.plOpen.tracks.indexOf(track);
       if (real >= 0) library.removeFromPlaylist(library.plOpen, real);
     });
@@ -6999,7 +7081,7 @@ async function refreshScStatus() {
 btnScLogin.addEventListener('click', async () => {
   const r = await window.api.scLogin();
   if (r.ok) {
-    flashStatus(`Compte ${r.name || 'SoundCloud'} ajouté`);
+    flashStatus(t('sc_account_added', { name: r.name || 'SoundCloud' }));
     await refreshScStatus();
     buildTree(); // le nœud SoundCloud change de forme (nœuds 👤 par compte)
     library.loadScMine(r.index ?? 0);
@@ -7161,7 +7243,7 @@ async function restoreSession() {
       n++;
     }
     markTakenRows();
-    if (n) flashStatus(`Session restaurée : ${n} son${n > 1 ? 's' : ''} rechargé${n > 1 ? 's' : ''} en pause, là où tu les avais laissés`);
+    if (n) flashStatus(t('session_restored', { n }));
   } catch (err) {
     console.log(`[midi] session : restauration interrompue (${err.message || err})`);
   } finally {
