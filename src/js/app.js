@@ -4,6 +4,7 @@ import { GamepadManager } from './gamepad.js';
 import { computeBandPeaks, drawZoom, drawOverview, setWavePalette } from './waveform.js';
 import { MidiManager, MIDI_ACTIONS_DECK, MIDI_ACTIONS_GLOBAL } from './midi.js';
 import { gridIndexFracAt, gridTimeAtIndex, gridPeriodAt, setGlobalGridOffset, getGlobalGridOffset } from './engine.js';
+import { camelotLabel, keyName, keyDistance, heardKey, shiftKey } from './key.js';
 
 const DECK_COLORS = ['#39c2ff', '#ff9f43', '#5fe08a', '#ff6b9d'];
 
@@ -293,6 +294,7 @@ function buildDeckPanel(i) {
       <span class="deck-key" title="KEY : tonalité en demi-tons — compense le changement de tonalité dû au sync (double-clic sur la valeur = reset)">
         <button class="keylock" title="KEYLOCK : garde la tonalité d'origine quand tu changes le tempo (comme sur les CDJ)">🔒</button>
         <b>KEY</b>
+        <button class="key-lbl" title="Tonalité entendue (roue Camelot) — clic : KEY SYNC sur le master">—</button>
         <button class="key-dn">−</button>
         <span class="key-val">0</span>
         <button class="key-up">+</button>
@@ -388,6 +390,7 @@ function buildDeckPanel(i) {
     masterBtn: el.querySelector('.btn-master'),
     keyVal: el.querySelector('.key-val'),
     keyUp: el.querySelector('.key-up'),
+    keyLbl: el.querySelector('.key-lbl'),
     keyDn: el.querySelector('.key-dn'),
     keylock: el.querySelector('.keylock'),
     padModeBtns: [...el.querySelectorAll('.pad-modes button[data-m]')],
@@ -607,7 +610,9 @@ function buildDeckPanel(i) {
     deck.setKey(deck.keyShift + delta);
     ui.keyVal.textContent = `${deck.keyShift > 0 ? '+' : ''}${deck.keyShift}`;
     ui.keyVal.classList.toggle('shifted', deck.keyShift !== 0);
+    updateKeyUI(i);
   };
+  ui.keyLbl.addEventListener('click', () => keySync(i));
   ui.keyUp.addEventListener('click', () => applyKey(1));
   ui.keyDn.addEventListener('click', () => applyKey(-1));
   // KEYLOCK : mémorisé, et rétabli au prochain lancement
@@ -615,7 +620,9 @@ function buildDeckPanel(i) {
     deck.setKeylock(on);
     ui.keylock.classList.toggle('on', on);
     localStorage.setItem(`keylock${i}`, on ? '1' : '0');
+    if (ui.keyLbl) updateKeyUI(i);
   };
+  ui.setLock = setLock; // utilisé par KEY SYNC
   ui.keylock.addEventListener('click', () => {
     const on = !deck.keylock;
     setLock(on);
@@ -793,6 +800,92 @@ function formatMeasures(v) {
   return `${sign}1/${Math.round(1 / a)}`;
 }
 
+// --- TONALITÉ (mix harmonique) ---
+// Tonalité que donnerait le pad KEY idx (transposition ABSOLUE kv)
+function keyPadLabel(i, p, idx) {
+  const deck = engine.decks[i];
+  const kv = KEY_VALS[idx];
+  const sign = `${kv > 0 ? '+' : ''}${kv}`;
+  p.classList.remove('key-compat');
+  if (deck.musicKey == null) {
+    p.textContent = `${sign}♪`;
+    p.title = `Tonalité ${sign} demi-ton(s) — re-cliquer pour revenir à 0`;
+    return;
+  }
+  const h = heardKey({ ...deck, musicKey: deck.musicKey, keyShift: kv, keylock: deck.keylock, tempo: deck.tempo });
+  const lab = camelotLabel(h.code);
+  p.textContent = sign;
+  const sub = document.createElement('span');
+  sub.className = 'pad-sub';
+  sub.textContent = lab;
+  p.appendChild(sub);
+  const ref = masterHeardKey();
+  const mi = engine.masterIdx !== null ? engine.masterIdx : engine.autoMasterIdx;
+  if (ref && mi !== i && keyDistance(h.code, ref.code) <= 1) p.classList.add('key-compat');
+  p.title = `${sign} demi-ton(s) → ${keyName(h.code)} (${lab})${ref && mi !== i ? ` — master en ${camelotLabel(ref.code)}` : ''} — re-cliquer pour revenir à 0`;
+}
+
+// Étiquette de tonalité du deck (tonalité ENTENDUE : morceau + KEY + effet
+// du tempo si le keylock est coupé), colorée selon le master
+function updateKeyUI(i) {
+  const ui = deckUI[i];
+  const deck = engine.decks[i];
+  if (!ui || !ui.keyLbl) return;
+  const h = deck.buffer ? heardKey(deck) : null;
+  const mi = engine.masterIdx !== null ? engine.masterIdx : engine.autoMasterIdx;
+  const ref = mi !== i ? masterHeardKey() : null;
+  const dist = h && ref ? keyDistance(h.code, ref.code) : null;
+  const sig = `${h ? h.code : '-'}|${h ? h.cents : ''}|${dist}|${mi === i}`;
+  if (ui._keySig === sig) return;
+  ui._keySig = sig;
+  ui.keyLbl.classList.remove('ok', 'clash', 'master');
+  ui.keyLbl.classList.toggle('hidden', !deck.buffer);
+  if (!h) {
+    ui.keyLbl.textContent = deck.buffer ? '…' : '—';
+    ui.keyLbl.title = deck.buffer ? 'Tonalité en cours d\'analyse…' : 'Tonalité (roue Camelot)';
+  } else {
+    ui.keyLbl.textContent = camelotLabel(h.code);
+    const cents = Math.abs(h.cents) >= 15 ? ` (${h.cents > 0 ? '+' : ''}${h.cents} cents — active le KEYLOCK pour rester juste)` : '';
+    if (mi === i) ui.keyLbl.classList.add('master');
+    else if (dist != null) ui.keyLbl.classList.add(dist <= 1 ? 'ok' : 'clash');
+    ui.keyLbl.title = `${keyName(h.code)} — ${camelotLabel(h.code)}${cents}`
+      + (ref ? ` · master : ${camelotLabel(ref.code)} → ${dist === 0 ? 'même tonalité' : dist === 1 ? 'compatible' : dist === 2 ? 'montée d\'énergie (passable)' : 'dissonant'}` : '')
+      + ' — clic : KEY SYNC';
+  }
+  if (ui.padMode === 'key') ui.pads.forEach((p, idx) => keyPadLabel(i, p, idx));
+}
+
+// KEY SYNC : transpose le deck pour qu'il sonne dans la tonalité du master
+// (ou sa relative, même numéro Camelot) avec le plus petit décalage. Le
+// KEYLOCK est activé : sinon le tempo du sync désaccorderait le résultat.
+function keySync(i) {
+  const deck = engine.decks[i];
+  if (deck.musicKey == null) {
+    flashStatus(`Deck ${i + 1} — tonalité pas encore analysée`);
+    return;
+  }
+  const mi = engine.masterIdx !== null ? engine.masterIdx : engine.autoMasterIdx;
+  const ref = mi !== i ? masterHeardKey() : null;
+  if (!ref) {
+    flashStatus(`KEY SYNC : il faut un master qui joue (deck ${i + 1} ${mi === i ? 'EST le master' : 'n\'a pas de référence'})`);
+    return;
+  }
+  const ui = deckUI[i];
+  if (!deck.keylock && ui.setLock) ui.setLock(true);
+  const own = deck.musicKey;
+  const ownMinor = own >= 12;
+  const refMinor = ref.code >= 12;
+  // cible dans le MÊME mode que le morceau (relative si besoin)
+  let tgt = ref.code % 12;
+  if (ownMinor && !refMinor) tgt = (tgt + 9) % 12;      // relative mineure
+  else if (!ownMinor && refMinor) tgt = (tgt + 3) % 12; // relative majeure
+  let semis = (tgt - (own % 12) + 12) % 12;
+  if (semis > 6) semis -= 12;
+  if (ui.applyKey) ui.applyKey(semis - deck.keyShift);
+  const h = heardKey(deck);
+  flashStatus(`KEY SYNC deck ${i + 1} : ${semis > 0 ? '+' : ''}${semis} demi-ton(s) → ${camelotLabel(h.code)} (master ${camelotLabel(ref.code)})`);
+}
+
 function renderPads(i) {
   const ui = deckUI[i];
   ui._padViewSig = null; // force les vues par joueur à se reposer si besoin
@@ -815,9 +908,7 @@ function renderPads(i) {
       p.textContent = formatMeasures(v);
       p.title = `Sauter de ${formatMeasures(v).slice(1)} mesure(s) ${v > 0 ? 'en avant' : 'en arrière'}`;
     } else if (ui.padMode === 'key') {
-      const kv = KEY_VALS[idx];
-      p.textContent = `${kv > 0 ? '+' : ''}${kv}♪`;
-      p.title = `Tonalité ${kv > 0 ? '+' : ''}${kv} demi-ton(s) — re-cliquer pour revenir à 0`;
+      keyPadLabel(i, p, idx);
     } else if (ui.padMode === 'fx') {
       p.textContent = PADFX[idx].label;
       p.title = `MAINTENIR : ${PADFX[idx].label} sur ce deck — l'effet se coupe au relâcher`;
@@ -855,7 +946,10 @@ function playDeck(d) {
   const deck = engine.decks[d];
   const wasPlaying = deck.playing;
   deck.togglePlay();
-  if (!wasPlaying && deck.playing && deck.synced) engine.sync(d);
+  // (jamais sur le MASTER lui-même : c'est la référence, il se serait calé
+  // sur un de ses esclaves)
+  const mi = engine.masterIdx !== null ? engine.masterIdx : engine.autoMasterIdx;
+  if (!wasPlaying && deck.playing && deck.synced && mi !== d) engine.sync(d);
 }
 
 // Cale un temps sur le beat le plus proche de la grille (dynamique ou fixe)
@@ -1299,57 +1393,166 @@ function resetStemsCol(i) {
 }
 
 // Sépare (ou récupère du cache) et décode les stems du morceau du deck i,
-// SANS les activer : ils sont juste prêts (deck.stems). Une seule séparation à la fois.
+// SANS les activer : ils sont juste prêts (deck.stems). UNE séparation à la
+// fois (GPU/CPU) : les demandes s'enchaînent dans une file — un clic sur
+// VOX pendant que le deck voisin se prépare ATTEND son tour au lieu
+// d'échouer (« une séparation est déjà en cours »).
 let stemBusy = false;
+let stemJob = Promise.resolve();
+const stemPending = [null, null, null, null]; // { track, p } par deck
+// Moteur de stems : { ok, cuda } — avec une carte graphique, la
+// séparation est assez légère pour tourner PENDANT le mix
+let stemsEngine = null;
+window.api.stemsInfo?.().then((r) => { stemsEngine = r; }).catch(() => {});
 
-async function ensureStems(i, silent) {
+async function decodeStemFile(file) {
+  const raw = await window.api.readFile(file);
+  const ab = raw.buffer.slice(raw.byteOffset, raw.byteOffset + raw.byteLength);
+  return engine.ctx.decodeAudioData(ab);
+}
+
+// CALAGE DES STEMS SUR LE MORCEAU. Demucs décode le mp3 avec ffmpeg, le
+// logiciel avec le décodeur de Chromium : selon l'encodeur, les deux
+// timelines diffèrent de quelques dizaines de ms (délai d'encodeur LAME).
+// Sans correction, activer VOX/DRM/INST décalait le son de la grille et du
+// sync. On mesure l'écart par intercorrélation (somme des stems ≈ morceau)
+// et on recale les tampons des stems à l'échantillon près.
+function alignStems(orig, bufs) {
+  const sr = orig.sampleRate;
+  const n = Math.min(orig.length, ...bufs.map((b) => b.length));
+  if (n < sr * 12) return 0;
+  // On ne travaille QUE sur une fenêtre au milieu du morceau (4 s + marges) :
+  // quelques millisecondes de calcul, pas de gel de l'interface
+  const D = 8;
+  const maxLag = Math.floor(0.12 * sr);
+  const win = Math.floor(4 * sr);
+  const r0 = Math.floor(n / 2) - (win >> 1) - maxLag - 2 * D;
+  const len = win + 2 * maxLag + 4 * D;
+  if (r0 < 0 || r0 + len > n) return 0;
+  const o = orig.getChannelData(0).subarray(r0, r0 + len);
+  const sum = new Float32Array(len);
+  for (const b of bufs) {
+    const c = b.getChannelData(0).subarray(r0, r0 + len);
+    for (let k = 0; k < len; k++) sum[k] += c[k];
+  }
+  const from = maxLag + 2 * D; // début de la fenêtre utile dans la région
+  const corrAt = (a, b, f, l, lag) => {
+    let acc = 0;
+    for (let k = f; k < f + l; k++) acc += a[k] * b[k + lag];
+    return acc;
+  };
+  // 1) grossier : décimé ×8, ±120 ms
+  const dec = (src) => {
+    const out = new Float32Array(Math.floor(len / D));
+    for (let k = 0; k < out.length; k++) {
+      let s2 = 0;
+      for (let j = 0; j < D; j++) s2 += src[k * D + j];
+      out[k] = s2;
+    }
+    return out;
+  };
+  const oD = dec(o);
+  const sD = dec(sum);
+  let best = 0;
+  let bestV = -Infinity;
+  const mD = Math.floor(maxLag / D);
+  for (let L = -mD; L <= mD; L++) {
+    const v = corrAt(oD, sD, Math.floor(from / D), Math.floor(win / D), L);
+    if (v > bestV) { bestV = v; best = L * D; }
+  }
+  // 2) fin : à l'échantillon près, ±D autour, sur 1 s
+  let fine = best;
+  let fineV = -Infinity;
+  for (let L = best - D; L <= best + D; L++) {
+    const v = corrAt(o, sum, from, Math.floor(sr), L);
+    if (v > fineV) { fineV = v; fine = L; }
+  }
+  if (!fine) return 0;
+  // stem[k + fine] ≈ morceau[k] : on décale les stems de « fine » échantillons
+  for (const b of bufs) {
+    for (let c = 0; c < b.numberOfChannels; c++) {
+      const d = b.getChannelData(c);
+      if (fine > 0) {
+        d.copyWithin(0, fine);
+        d.fill(0, d.length - fine);
+      } else {
+        d.copyWithin(-fine, 0, d.length + fine);
+        d.fill(0, 0, -fine);
+      }
+    }
+  }
+  return fine / sr;
+}
+
+function ensureStems(i, silent) {
   const deck = engine.decks[i];
   const ui = deckUI[i];
   const track = deck.track;
-  if (deck.stems) return true;
+  if (deck.stems) return Promise.resolve(true);
   if (!track || !track.path) {
     if (!silent) flashStatus('STEMS : charge d’abord un morceau sur ce deck');
-    return false;
+    return Promise.resolve(false);
   }
-  if (stemBusy) {
-    if (!silent) flashStatus('STEMS : une séparation est déjà en cours, patiente…');
-    return false;
+  const pend = stemPending[i];
+  if (pend && pend.track === track) {
+    if (!silent) flashStatus(`STEMS : séparation du deck ${i + 1} en cours…`);
+    return pend.p;
   }
-  stemBusy = true;
   ui.stemBtns.forEach((b) => b.classList.add('loading'));
-  if (!silent) flashStatus('STEMS : séparation en cours — quelques minutes la première fois…');
-  try {
-    const res = await window.api.stemsSeparate(track.path);
-    if (!res.ok) {
-      if (!silent) flashStatus(`STEMS : ${res.error}`);
-      return false;
-    }
-    const stems = {};
-    for (const key of ['vocals', 'drums', 'bass', 'other']) {
-      const raw = await window.api.readFile(res.stems[key]);
-      const ab = raw.buffer.slice(raw.byteOffset, raw.byteOffset + raw.byteLength);
-      stems[key] = await engine.ctx.decodeAudioData(ab);
-    }
-    // Le morceau a pu changer pendant la séparation
+  if (!silent) flashStatus('STEMS : séparation en cours…');
+  const run = async () => {
+    // le morceau a changé pendant l'attente dans la file : rien à faire
     if (engine.decks[i].track !== track) return false;
-    deck.stems = stems;
-    ui.stemBtns.forEach((b) => b.classList.add('ready'));
-    flashStatus(`Stems prêts sur le deck ${i + 1} — VOX / DRM / INST disponibles`);
-    return true;
-  } catch (err) {
-    if (!silent) flashStatus(`STEMS : erreur — ${err.message || err}`);
-    return false;
-  } finally {
-    stemBusy = false;
-    ui.stemBtns.forEach((b) => b.classList.remove('loading'));
-  }
+    stemBusy = true;
+    try {
+      const res = await window.api.stemsSeparate(track.path);
+      if (!res.ok) {
+        if (!silent) flashStatus(`STEMS : ${res.error}`);
+        else console.log(`[midi] stems deck ${i + 1} : ${res.error}`);
+        return false;
+      }
+      if (engine.decks[i].track !== track) return false;
+      // INST = basse + mélodies : les deux sont toujours coupées/rendues
+      // ENSEMBLE, on les fusionne en un seul tampon (−25 % de mémoire :
+      // 4 stems décodés pèsent ~500 Mo par morceau de 6 min)
+      const [vocals, drums, bass, other] = await Promise.all(
+        ['vocals', 'drums', 'bass', 'other'].map((k) => decodeStemFile(res.stems[k])));
+      for (let c = 0; c < bass.numberOfChannels; c++) {
+        const a = bass.getChannelData(c);
+        const b = other.getChannelData(Math.min(c, other.numberOfChannels - 1));
+        const n = Math.min(a.length, b.length);
+        for (let k = 0; k < n; k++) a[k] += b[k];
+      }
+      // Le morceau a pu changer pendant la séparation
+      if (engine.decks[i].track !== track) return false;
+      const lag = alignStems(deck.buffer, [vocals, drums, bass]);
+      if (lag) console.log(`[midi] stems deck ${i + 1} : recalés de ${(lag * 1000).toFixed(1)} ms sur le morceau`);
+      deck.stems = { vocals, drums, bass, other: null };
+      ui.stemBtns.forEach((b) => b.classList.add('ready'));
+      flashStatus(`Stems prêts sur le deck ${i + 1} — VOX / DRM / INST disponibles`);
+      return true;
+    } catch (err) {
+      if (!silent) flashStatus(`STEMS : erreur — ${err.message || err}`);
+      return false;
+    } finally {
+      stemBusy = false;
+    }
+  };
+  const p = stemJob.then(run, run);
+  stemJob = p.catch(() => false);
+  stemPending[i] = { track, p };
+  p.finally(() => {
+    if (stemPending[i] && stemPending[i].p === p) stemPending[i] = null;
+    if (!stemPending[i]) ui.stemBtns.forEach((b) => b.classList.remove('loading'));
+  });
+  return p;
 }
 
 // Préparation automatique en arrière-plan dès qu'un morceau est chargé
 // (désactivable dans les paramètres)
-// Auto-stems DIFFÉRÉ : Demucs est très gourmand — on ne le lance JAMAIS
-// pendant qu'un son joue (sinon audio qui grésille + manette qui lag).
-// Les demandes s'empilent et partent dès que le mix est au repos.
+// Auto-stems DIFFÉRÉ sur processeur seul : Demucs y est très gourmand — on
+// ne le lance alors JAMAIS pendant qu'un son joue (sinon audio qui grésille
+// + manette qui lag). Avec une carte graphique NVIDIA, il part tout de suite.
 const stemAutoQueue = new Set();
 let stemPumpTimer = null;
 function pumpStemQueue() {
@@ -1358,7 +1561,8 @@ function pumpStemQueue() {
     stemPumpTimer = null;
     if (!stemAutoQueue.size) return;
     const anyPlaying = engine.decks.some((dk) => dk.playing);
-    if (anyPlaying || stemBusy) {
+    const gpu = stemsEngine && stemsEngine.cuda;
+    if ((anyPlaying && !gpu) || stemBusy) {
       pumpStemQueue(); // on repousse tant que ça joue
       return;
     }
@@ -1486,6 +1690,18 @@ function padFxPress(i, idx, on) {
     if (ui._padFxHeld != null) return; // un seul pad FX à la fois par deck
     engine.resume();
     ui._padFxHeld = idx;
+    if (preset.type === 'roll') {
+      // VRAI ROLL : le deck répète la tranche de la grille où on se trouve
+      // (½ temps…) et le morceau continue dessous — au relâcher, il reprend
+      // pile où il en serait. (L'ancien « roll » n'était qu'un écho bouclé.)
+      const d = engine.decks[i];
+      d._padRoll = { beats: preset.beats, mix: 1 };
+      d.startRoll(preset.beats, 1);
+      if (ui.pads[idx]) ui.pads[idx].classList.add('on');
+      padFxChipShow(i, preset.label);
+      ledTick();
+      return;
+    }
     engine.setPadFx(i, preset);
     // Le son SEC du deck se dose selon la NATURE de l'effet : « c'est le
     // son qu'on manipule », il ne s'ajoute pas par-dessus. ROLL/SWEEP/
@@ -1498,6 +1714,15 @@ function padFxPress(i, idx, on) {
   } else {
     if (ui._padFxHeld !== idx) return;
     ui._padFxHeld = null;
+    if (preset.type === 'roll') {
+      const d = engine.decks[i];
+      d._padRoll = null;
+      d.stopRoll();
+      if (ui.pads[idx]) ui.pads[idx].classList.remove('on');
+      padFxChipShow(i, null);
+      ledTick();
+      return;
+    }
     engine.setPadFx(i, null);
     engine.decks[i]._padDryHold = null;
     if (ui.pads[idx]) ui.pads[idx].classList.remove('on');
@@ -2374,19 +2599,105 @@ const library = new Library(engine.ctx, {
   onTrackUpdated: (t) => {
     const row = rowByTrack.get(t);
     if (row) {
-      if (t.preview && !row.children[1].firstChild) {
-        row.children[1].innerHTML = `<img src="${t.preview}" alt="">`;
-      }
+      if (row._prev !== t.preview) fillPreviewCell(row.children[1], t);
       row.children[4].textContent = t.bpm ? t.bpm.toFixed(1) : '?';
-      row.children[5].textContent = t.duration ? formatTime(t.duration) : '';
+      fillKeyCell(row.children[5], t);
+      row.children[6].textContent = t.duration ? formatTime(t.duration) : '';
     }
+    // Un deck qui joue ce morceau apprend sa tonalité dès qu'elle est connue
+    engine.decks.forEach((d, i) => {
+      if (d.track === t && t.musicKey != null && d.musicKey !== t.musicKey) {
+        d.musicKey = t.musicKey;
+        updateKeyUI(i);
+      }
+    });
   },
   onStatus: (msg) => { libLastMsg = msg; libStatus.textContent = msg; }
+});
+
+// Cellule APERÇU : pochette (petit carré) + forme d'onde. La vague apparaît
+// SANS charger le morceau : aperçu rapide pour les fichiers du PC, forme
+// d'onde publiée par SoundCloud pour ses pistes — puis le vrai aperçu en
+// couleurs dès que le morceau est passé sur un deck.
+function fillPreviewCell(td, t) {
+  const row = td.parentElement;
+  if (row) row._prev = t.preview;
+  td.textContent = '';
+  const box = document.createElement('div');
+  box.className = 'prev-box';
+  if (t.artwork) {
+    const art = document.createElement('img');
+    art.className = 'prev-art';
+    art.alt = '';
+    art.loading = 'lazy';
+    art.src = t.artwork.replace('-t500x500', '-large');
+    box.appendChild(art);
+  }
+  if (t.preview) {
+    const w = document.createElement('img');
+    w.className = 'prev-wave';
+    w.alt = '';
+    w.src = t.preview;
+    box.appendChild(w);
+  } else if (!t.artwork) {
+    return; // ni vague ni pochette (dossier, playlist…) : cellule vide
+  }
+  td.appendChild(box);
+}
+
+// Cellule KEY : notation Camelot (roue du mix harmonique) + nom classique
+// en infobulle ; colorée en VERT si compatible avec le master qui joue
+function fillKeyCell(td, t) {
+  if (!td) return;
+  if (t.musicKey == null) {
+    td.textContent = '';
+    td.className = 'col-key';
+    td.title = '';
+    return;
+  }
+  td.textContent = camelotLabel(t.musicKey);
+  td.title = `${keyName(t.musicKey)} — ${camelotLabel(t.musicKey)}`;
+  const ref = masterHeardKey();
+  const dist = ref ? keyDistance(t.musicKey, ref.code) : null;
+  td.className = `col-key${dist != null && dist <= 1 ? ' key-ok' : ''}`;
+}
+
+// Tonalité ENTENDUE du master (deck qui dirige), ou null
+function masterHeardKey() {
+  const mi = engine.masterIdx !== null ? engine.masterIdx : engine.autoMasterIdx;
+  const m = mi != null ? engine.decks[mi] : null;
+  return m && m.buffer ? heardKey(m) : null;
+}
+
+// Remet à jour le vert « déjà pris » sur les lignes affichées (le même
+// morceau peut apparaître sous plusieurs objets : dossier, historique…)
+function markTakenRows() {
+  rowByTrack.forEach((row, t) => row.classList.toggle('taken', !!t.name && library.isTaken(t)));
+}
+
+// En-têtes triables : clic = croissant → décroissant → ordre d'origine
+function updateSortHeaders() {
+  document.querySelectorAll('#lib-table th[data-sort]').forEach((th) => {
+    const on = library.sort.col === th.dataset.sort;
+    th.classList.toggle('sorted', on);
+    th.dataset.dir = on ? (library.sort.dir === 1 ? 'asc' : 'desc') : '';
+  });
+}
+document.querySelectorAll('#lib-table th[data-sort]').forEach((th) => {
+  th.title = 'Trier — clic : croissant, re-clic : décroissant, 3e clic : ordre d\'origine';
+  th.addEventListener('click', () => {
+    library.toggleSort(th.dataset.sort);
+    const lab = th.textContent.trim();
+    flashStatus(library.sort.col
+      ? `Tri : ${lab} ${library.sort.dir === 1 ? 'croissant' : 'décroissant'}`
+      : 'Tri : ordre d\'origine');
+  });
 });
 
 let libRenderStamp = 0; // bump à chaque rendu : les marques joueurs suivent
 function renderLibrary() {
   libRenderStamp++;
+  updateSortHeaders();
   libBody.textContent = '';
   rowByTrack.clear();
   lastSelIdx = library.selection;
@@ -2428,13 +2739,18 @@ function renderLibrary() {
           : (t.bpm ? t.bpm.toFixed(1) : (t.analyzed ? '?' : '…'));
     tr.innerHTML = `
       <td class="col-num">${idx + 1}</td>
-      <td class="col-prev">${t.preview ? `<img src="${t.preview}" alt="">` : (t.artwork ? `<img class="prev-art" src="${t.artwork.replace('-t500x500', '-large')}" alt="">` : '')}</td>
-      <td></td>
+      <td class="col-prev"></td>
+      <td class="col-title"></td>
       <td class="col-artist"></td>
       <td class="col-bpm">${bpmCell}</td>
+      <td class="col-key"></td>
       <td class="col-dur">${t.duration ? formatTime(t.duration) : ''}</td>
     `;
+    fillPreviewCell(tr.children[1], t);
+    fillKeyCell(tr.children[5], t);
     const isNavRow = t.plRow || t.fsRow || t.scRootRow || t.plRootRow || t.scLikes || t.fsUpRow || t.scAccountRow;
+    // DÉJÀ PRIS ce soir (chargé sur un deck) : titre écrit en VERT
+    if (!isNavRow && !t.scPlaylist && library.isTaken(t)) tr.classList.add('taken');
     tr.children[2].textContent = isNavRow ? t.name : title;
     // MORCEAU PROTÉGÉ (DRM) : repéré DÈS LA LISTE — jamais de mauvaise
     // surprise en pleine soirée. SoundCloud ne le déverrouille que pour ses
@@ -2511,8 +2827,10 @@ function renderLibrary() {
           if (!dragTrack || !p.tracks.includes(dragTrack)) return;
           e.preventDefault();
           e.stopPropagation();
+          // index RÉELS dans la playlist (la liste affichée peut être
+          // triée ou filtrée : sa position n'est pas celle de la playlist)
           const from = p.tracks.indexOf(dragTrack);
-          library.moveInPlaylist(p, from, idx);
+          library.moveInPlaylist(p, from, p.tracks.indexOf(t));
           dragTrack = null;
         });
       }
@@ -2795,7 +3113,10 @@ function remotePushWave(i) {
 
 async function loadTrackToDeck(i, track, autoplay = false) {
   const ui = deckUI[i];
-  if (!track || track.scPlaylist || ui.loading) return;
+  if (!track || track.scPlaylist) return;
+  // une ligne de NAVIGATION (dossier, playlist, compte…) ne se charge pas
+  if (track.fsRow || track.fsUpRow || track.plRow || track.scRootRow || track.plRootRow
+    || track.scAccountRow || track.scLikes) return;
   // Protégé (DRM) : refus IMMÉDIAT, sans attendre un aller-retour réseau
   if (track.drm) {
     flashStatus(`🔒 « ${track.name} » est protégé (DRM) : sa lecture hors du site n'est pas autorisée`);
@@ -2811,12 +3132,27 @@ async function loadTrackToDeck(i, track, autoplay = false) {
   }
 
   engine.resume();
-  ui.loading = true;
-  ui.title.textContent = `Chargement : ${track.name}…`;
+  // UN AUTRE SON ARRIVE PENDANT UN CHARGEMENT (le set de 3 h posé par
+  // erreur…) : le premier est ANNULÉ — téléchargement SoundCloud coupé, son
+  // décodage et son analyse abandonnés — et le nouveau part tout de suite
+  if (ui.loading) {
+    const prev = ui.loading;
+    prev.cancelled = true;
+    if (prev.track && prev.track.sc && !prev.track.path && window.api.scCancel) window.api.scCancel(prev.track.scId);
+    flashStatus(`Deck ${i + 1} : chargement de « ${prev.track.name} » annulé → « ${track.name} »`);
+  }
+  const job = { track, cancelled: false };
+  ui.loading = job;
+  ui.title.textContent = `Chargement : ${track.name}… (un autre son posé ici l'annule)`;
   try {
-    const { buffer, bpm, beatOffset, beats, gridShift, barAnchor, hotCues } = await library.loadForDeck(track,
-      (msg) => { ui.title.textContent = `${msg} ${track.name}`; });
+    const { buffer, bpm, beatOffset, beats, gridShift, barAnchor, hotCues, musicKey } = await library.loadForDeck(track,
+      (msg) => { if (ui.loading === job) ui.title.textContent = `${msg} ${track.name}`; },
+      () => job.cancelled);
+    if (job.cancelled) return;
     const peaks = await computeBandPeaks(buffer);
+    if (job.cancelled) return;
+    // vrai aperçu en couleurs dans la liste (gratuit : pics déjà calculés)
+    library.setPreviewFromPeaks(track, peaks);
     // Les hot cues SAUVEGARDÉS reviennent à chaque chargement (comme
     // Rekordbox — demande David, revirement du « chargement vierge »)
     engine.decks[i].loadTrack({ buffer, bpm, peaks, track, beatOffset, hotCues: (hotCues || []).slice(), beats, gridShift, barAnchor });
@@ -2825,6 +3161,9 @@ async function loadTrackToDeck(i, track, autoplay = false) {
     ui.title.textContent = track.name;
     ui.keyVal.textContent = '0';
     ui.keyVal.classList.remove('shifted');
+    engine.decks[i].musicKey = musicKey != null ? musicKey : (track.musicKey ?? null);
+    ui._keySig = null;
+    updateKeyUI(i);
     resetStemsCol(i);
     updateTempoLabel(i);
     remotePushWave(i); // la console téléphone reçoit la nouvelle vague
@@ -2841,14 +3180,18 @@ async function loadTrackToDeck(i, track, autoplay = false) {
     });
     flashStatus(`« ${track.name} » chargé sur le deck ${i + 1}`);
     library.addHistory(track);
+    markTakenRows(); // le son passe en VERT dans l'explorateur, tout de suite
     if (autoplay) engine.decks[i].play();
     autoPrepareStems(i); // les stems se préparent en arrière-plan
   } catch (err) {
+    // annulé au profit d'un autre son : ce n'est pas une erreur
+    if (job.cancelled || err.cancelled) return;
     ui.title.textContent = '— erreur de chargement —';
     flashStatus(`Impossible de lire « ${track.name} » : ${err.message || err}`);
     console.error(err);
+  } finally {
+    if (ui.loading === job) ui.loading = null;
   }
-  ui.loading = false;
 }
 
 // ---------------------------------------------------------------------------
@@ -3006,10 +3349,11 @@ function masterBpmNudge(dir) {
   m.setTempo(nt);
   if (m._syncBase) m._syncBase = nt;
   const followers = [];
+  // (les decks syncés suivent tout seuls : le verrou du moteur détecte que
+  // le tempo du master a bougé et les met à l'échelle à l'image suivante —
+  // les remettre à l'échelle ICI aussi doublait le changement)
   engine.decks.forEach((d, i) => {
     if (i === mi || !d.synced || !d.playing || !d._syncBase) return;
-    d._syncBase *= factor;
-    d.setTempo(d._syncBase);
     followers.push(i + 1);
   });
   flashStatus(`♩ BPM master → ${target.toFixed(1)}${followers.length ? ` — sync : deck ${followers.join(' + ')} suivent` : ''}`);
@@ -4410,6 +4754,24 @@ function frame(now) {
   requestAnimationFrame(frame);
 }
 
+// Tonalités : l'étiquette de chaque deck suit le tempo (keylock coupé) et
+// le master ; la colonne KEY de la liste se recolore quand le master change
+// de tonalité. 4 fois par seconde suffit — et rien n'est écrit si rien ne
+// change (signatures).
+let keyTickAt = 0;
+let keyListSig = '';
+function keyTick(now) {
+  if (now - keyTickAt < 250) return;
+  keyTickAt = now;
+  for (let i = 0; i < 4; i++) updateKeyUI(i);
+  const ref = masterHeardKey();
+  const sig = ref ? String(ref.code) : '-';
+  if (sig !== keyListSig) {
+    keyListSig = sig;
+    rowByTrack.forEach((row, t) => fillKeyCell(row.children[5], t));
+  }
+}
+
 function frameBody(now) {
   const dt = Math.min(0.1, (now - lastFrame) / 1000);
   lastFrame = now;
@@ -4417,6 +4779,7 @@ function frameBody(now) {
   gamepad.poll(dt, now);
   updateGpCursors(); // curseurs des joueurs sur la grille de contrôles
   engine.syncLock(); // maintient les decks synchronisés collés au master
+  keyTick(now);      // tonalités entendues (tempo, master) — 4×/s
 
   for (let i = 0; i < 4; i++) {
     const deck = engine.decks[i];
@@ -4604,23 +4967,25 @@ function frameBody(now) {
 
   // Chaque unité FX suit le BPM du premier deck qui lui est assigné
   // (sinon celui du master)
+  // Durée RÉELLE d'un temps d'un deck, à la vitesse où il joue (tempo
+  // compris, micro-corrections du sync retirées : sinon les délais des
+  // échos « respiraient » en permanence) et d'après la grille LOCALE
+  const beatOf = (dk) => {
+    if (!dk || !dk.bpm) return null;
+    const per = engine._localPeriod(dk) || 60 / dk.bpm;
+    return per / ((dk.tempo || 1) / (1 + (dk._pllCorr || 0)));
+  };
   const masterD = engine.getMasterDeck(-1);
-  const masterBeat = masterD && masterD.bpm ? 60 / (masterD.bpm * masterD.tempo) : 0.5;
+  const masterBeat = beatOf(masterD) || 0.5;
   engine.fx.forEach((u, uIdx) => {
     if (!u.enabled) return;
-    let beat = masterBeat;
-    for (let d = 0; d < 4; d++) {
-      if (engine.fxAssign[uIdx][d] && engine.decks[d].effectiveBpm) {
-        beat = 60 / engine.decks[d].effectiveBpm;
-        break;
-      }
-    }
-    u.setBeatDur(beat);
+    const ref = engine.fxRefDeck(uIdx);
+    u.setBeatDur(beatOf(ref) || masterBeat);
   });
   // Les unités PAD FX suivent le tempo de LEUR deck (sinon celui du master)
   engine.padFx.forEach((u, d) => {
     if (!u || !u.enabled) return;
-    u.setBeatDur(engine.decks[d].effectiveBpm ? 60 / engine.decks[d].effectiveBpm : masterBeat);
+    u.setBeatDur(beatOf(engine.decks[d]) || masterBeat);
   });
   // Le FX MASTER se cale sur le BPM du deck master + bandeau à jour
   if (engine.masterFx && engine.masterFx.enabled) engine.masterFx.setBeatDur(masterBeat);
@@ -4716,8 +5081,6 @@ function midiCue(i, on) {
 const midiJogTimer = [null, null, null, null]; // relâcher du nudge MIDI (côté)
 const midiScratchTimer = [null, null, null, null]; // relâcher du scratch (dessus)
 const midiJogTouchTime = [0, 0, 0, 0]; // pose de la main : rafale à ignorer
-const midiSeekAcc = [0, 0, 0, 0];   // déplacement accumulé (dessus sans toucher)
-const midiSeekTimer = [null, null, null, null];
 let midiShiftHeld = false; // bouton SHIFT (gauche ou droit) tenu enfoncé
 const midiJogState = [null, null, null, null];  // geste de scratch en cours
 const midiJogTouchHeld = [false, false, false, false]; // main posée sur le disque
@@ -4844,6 +5207,46 @@ function midiFxToggle() {
     flashStatus(`FX ACTIVÉ → ${where}${lvl === 0 ? ' — monte la jauge pour l\'entendre' : ''}`);
   }
 }
+// Échelle du jog : secondes de son par cran (DDJ-FLX6 : 7200 crans/tour,
+// 1 tour à 33⅓ tr/min = 1,8 s — la sensation d'un vrai vinyle)
+const JOG_SEC_PER_TICK = 1.8 / 7200;
+
+// Main levée du disque : le son reprend pile où le disque l'a laissé, et
+// ce placement est ADOPTÉ par le sync (phase gelée sur l'alignement choisi)
+function jogRelease(i) {
+  const d = engine.decks[i];
+  const s2 = midiJogState[i];
+  midiJogState[i] = null;
+  if (!s2) return;
+  if (s2.raf) cancelAnimationFrame(s2.raf);
+  d.scrubEnd();
+  d.seek(Math.max(-3600, s2.target ?? s2.pos));
+  if (s2.wasPlaying) d.play();
+  engine.jogHold = false;
+  for (let k = 0; k < 4; k++) engine.reanchorSync(k);
+  // INERTIE : la roue de la FLX6 est LIBRE — lâchée en mouvement, elle
+  // continue de tourner et la platine envoie des crans de TRANCHE. Ils
+  // étaient pris pour un nudge (le son « avançait » tout seul après le
+  // lâcher, ou sautait loin en pause). Tant que ce flux continue sans
+  // pause, il est ignoré : le disque s'arrête NET là où la main l'a lâché.
+  const now = performance.now();
+  midiCoast[i] = { last: s2.lastBendAt && now - s2.lastBendAt < 200 ? s2.lastBendAt : now, until: now + 2500, n: 0, sum: 0 };
+  const g = s2.diag;
+  if (g) {
+    console.log(`[midi] jog deck ${i + 1} : tenue ${g.implicit ? 'SANS note de toucher' : 'avec toucher'} — ${Object.entries(g.cc).map(([k, v]) => `CC${k} ×${v.n} Σ${v.sum > 0 ? '+' : ''}${v.sum}`).join(', ')}`);
+  }
+}
+// Garde d'inertie par deck (voir jogRelease)
+const midiCoast = [null, null, null, null];
+// Relevé d'un geste au disque (une ligne au relâcher, pour diagnostiquer
+// une platine sans encombrer la console)
+function jogDiag(st, cc, delta) {
+  if (!st.diag) st.diag = { cc: {}, implicit: !!st.implicit };
+  const e = st.diag.cc[cc] || (st.diag.cc[cc] = { n: 0, sum: 0 });
+  e.n++;
+  e.sum += delta;
+}
+
 const midi = new MidiManager({
   press(action, deck, on) {
     const i = deck == null ? activeDeck : deck;
@@ -4851,7 +5254,11 @@ const midi = new MidiManager({
     if (!d) return;
     engine.resume();
     switch (action) {
-      case 'play': if (on) { d.scrubEnd(); d.togglePlay(); } break;
+      // Même chemin que le bouton ▶ de l'écran : un deck SYNC qui démarre
+      // se recale tout de suite (tempo + traits rouges sur ceux du master).
+      // La platine faisait un simple togglePlay : le son repartait avec
+      // l'ancien ratio et un décalage quelconque — d'où les SYNC à répétition
+      case 'play': if (on) { d.scrubEnd(); playDeck(i); } break;
       case 'jogTouch':
         // VRAI toucher du disque (capteur note 54) : POSE = le son se coupe
         // et le disque devient la tête de lecture — RELÂCHE = reprise pile
@@ -4871,8 +5278,13 @@ const midi = new MidiManager({
           // COUPURE INSTANTANÉE à la pose (exigence d'origine de David) —
           // l'anti-rebond est côté RELÂCHER : un capteur qui « rebondit »
           // pendant la pose ne relance plus la lecture par à-coups
-          if (!midiJogState[i]) {
+          if (midiJogState[i]) {
+            // tenue déjà armée par la rotation : c'est désormais le capteur
+            // qui décidera du relâcher (plus de reprise automatique au repos)
+            midiJogState[i].implicit = false;
+          } else {
             midiJogState[i] = { wasPlaying: d.playing, pos: d.currentTime() };
+            midiJogState[i].target = midiJogState[i].pos;
             if (d.playing) d.pause();
             if (scratchSound) d.scrubStart();
             engine.jogHold = true;
@@ -4886,15 +5298,7 @@ const midi = new MidiManager({
           clearTimeout(midiJogArmTimer[i]);
           midiJogArmTimer[i] = setTimeout(() => {
             if (midiJogTouchHeld[i]) return; // re-pressé entre-temps
-            const s2 = midiJogState[i];
-            midiJogState[i] = null;
-            if (!s2) return;
-            if (s2.raf) cancelAnimationFrame(s2.raf);
-            d.scrubEnd();
-            d.seek(Math.max(-3600, s2.pos));
-            if (s2.wasPlaying) d.play();
-            engine.jogHold = false;
-            for (let k = 0; k < 4; k++) engine.reanchorSync(k);
+            jogRelease(i);
           }, 60);
         }
         break;
@@ -5188,7 +5592,7 @@ const midi = new MidiManager({
       }
     }
   },
-  rel(action, deck, delta) {
+  rel(action, deck, delta, cc) {
     if (action === 'browseZoom') {
       // SHIFT + molette (CC 100 dédié de la platine) = zoom des vagues,
       // en douceur : 15 % par cran
@@ -5206,9 +5610,33 @@ const midi = new MidiManager({
       const i = deck == null ? activeDeck : deck;
       const d = engine.decks[i];
       if (!d.buffer || delta === 0) return;
+      const nowB = performance.now();
+      // Main encore sur le disque (ou relâcher en attente) : la tranche ne
+      // pilote rien, c'est la tenue qui décide
+      const hold = midiJogState[i];
+      if (hold) {
+        hold.lastBendAt = nowB;
+        jogDiag(hold, cc, delta);
+        return;
+      }
+      // Roue qui continue sur sa lancée après le lâcher : ignorée tant que
+      // le flux ne s'interrompt pas (> 150 ms sans cran = roue arrêtée)
+      const coast = midiCoast[i];
+      if (coast) {
+        if (nowB < coast.until && nowB - coast.last < 150) {
+          coast.last = nowB;
+          coast.n++;
+          coast.sum += delta;
+          return;
+        }
+        if (coast.n) console.log(`[midi] jog deck ${i + 1} : inertie après lâcher ignorée — CC${cc} ×${coast.n} Σ${coast.sum > 0 ? '+' : ''}${coast.sum}`);
+        midiCoast[i] = null;
+      }
       engine.resume();
       if (!d.playing) {
-        d.seek(Math.max(-3600, d.currentTime() + delta * 0.005));
+        // à l'arrêt : recherche fine à l'échelle du vinyle (l'ancien
+        // 0,005 s par cran faisait 36 s par tour sur une FLX6)
+        d.seek(Math.max(-3600, d.currentTime() + delta * JOG_SEC_PER_TICK));
         return;
       }
       if (!gpBend[i]) {
@@ -5238,77 +5666,59 @@ const midi = new MidiManager({
       const d = engine.decks[i];
       if (!d.buffer || delta === 0) return;
       engine.resume();
-      // PAS DE CALIBRAGE AUTOMATIQUE (essayé 3 fois, raté 3 fois) : un
-      // encodeur plus fin envoie des crans plus PETITS mais plus NOMBREUX,
-      // le total est déjà le même. Mesurer une « pointe » rendait le disque
-      // mou pendant des secondes après un grand geste. Les deux côtés
-      // suivent exactement le même chemin. NE PAS RÉINTRODUIRE.
-      // C'est le CAPTEUR DE TOUCHER qui décide (doctrine finale) :
+      // DESSUS DU DISQUE TOURNÉ = MAIN POSÉE. Le dessus ne tourne pas tout
+      // seul : CC34/35 n'arrivent que sous la main. On arme donc la tenue
+      // même si le capteur de toucher (note 54) n'a rien dit — c'était le
+      // cas du disque DROIT (mode vinyle différent) : sans la note, il
+      // tombait dans un mode « petits sauts » et on ne pouvait pas le
+      // TENIR pour avancer/reculer dans le son.
       let st = midiJogState[i];
-      // Toucher en attente d'armement + rotation = INTENTION claire de
-      // scratch : on arme tout de suite, sans attendre les 120 ms
-      if (!st && midiJogTouchHeld[i]) {
+      if (!st) {
         clearTimeout(midiJogArmTimer[i]);
-        st = midiJogState[i] = { wasPlaying: d.playing, pos: d.currentTime() };
+        st = midiJogState[i] = {
+          wasPlaying: d.playing,
+          pos: d.currentTime(),
+          implicit: !midiJogTouchHeld[i] // pas de note de toucher : relâcher au repos
+        };
+        st.target = st.pos;
         if (d.playing) d.pause();
         if (scratchSound) d.scrubStart();
         engine.jogHold = true;
       }
-      if (st) {
-        // MAIN POSÉE : SCRATCH à INERTIE — les crans n'écrivent pas la
-        // position, ils poussent une VITESSE (delta × |delta| : la force de
-        // rotation compte), et une friction la ramène à zéro en ~180 ms :
-        // le disque GLISSE brièvement jusqu'au stop au lieu de freiner sec.
-        // COURBE MIXTE linéaire + cubique (itération David : « encore trop
-        // rapide ET trop lent ») : le lent remonte ×4 (terme linéaire), le
-        // rapide redescend ÷2 (cube adouci) — pente continue entre les deux
-        const mag = Math.min(10, Math.abs(delta));
-        st.vel = (st.vel || 0) + Math.sign(delta) * (mag * 0.003 + mag * mag * mag * 0.00032);
-        if (!st.raf) {
-          st.t = performance.now();
-          const step = () => {
-            if (midiJogState[i] !== st) return; // geste terminé
-            const now2 = performance.now();
-            const dt2 = Math.min(0.05, (now2 - st.t) / 1000);
-            st.t = now2;
-            // Seuil TRÈS bas : à 0,02 un petit geste du disque le plus fin
-            // (cran = 1 → vitesse 0,003) passait sous la barre et la
-            // friction l'effaçait avant qu'il ne s'accumule — le disque
-            // « ne bougeait qu'après un seuil ». Ici le moindre cran compte.
-            if (Math.abs(st.vel) > 0.0015) {
-              // position négative AUTORISÉE : on peut tirer le son avant
-              // son début (il démarrera plus tard) — comme à la souris
-              st.pos = Math.max(-3600, Math.min(d.duration, st.pos + st.vel * dt2));
-              if (scratchSound) d.scrubMove(st.pos);
-              else d.seek(st.pos);
-            }
-            st.vel *= Math.pow(0.001, dt2 / 0.25); // friction adoucie : glisse ~250 ms (moins « sec »)
-            st.raf = requestAnimationFrame(step);
-          };
+      // VINYLE LINÉAIRE : la position SUIT le disque, cran pour cran.
+      // DDJ-FLX6 = 7200 crans par tour à 33⅓ tr/min (1 tour = 1,8 s de son),
+      // la même échelle pour les deux disques et toutes les surfaces. (L'ancien
+      // modèle « impulsion de vitesse au cube » rendait les petits crans
+      // quasi nuls et les grands démesurés — selon la finesse de l'encodeur,
+      // un disque ne bougeait presque plus.)
+      jogDiag(st, cc, delta);
+      st.target = Math.max(-3600, Math.min(d.duration, (st.target ?? st.pos) + delta * JOG_SEC_PER_TICK));
+      if (st.implicit && !midiJogTouchHeld[i]) {
+        // Pas de capteur : la main est considérée levée 250 ms après le
+        // dernier cran — le son repart là où le disque l'a laissé
+        clearTimeout(midiJogArmTimer[i]);
+        midiJogArmTimer[i] = setTimeout(() => {
+          if (!midiJogTouchHeld[i] && midiJogState[i] === st) jogRelease(i);
+        }, 250);
+      }
+      if (!st.raf) {
+        st.t = performance.now();
+        const step = () => {
+          if (midiJogState[i] !== st) return; // geste terminé
+          const now2 = performance.now();
+          const dt2 = Math.min(0.05, (now2 - st.t) / 1000);
+          st.t = now2;
+          // lissage très court (15 ms) : les messages MIDI arrivent par
+          // paquets, la tête de lecture glisse au lieu de sautiller
+          const gap = st.target - st.pos;
+          if (Math.abs(gap) > 0.00005) {
+            st.pos += gap * (1 - Math.exp(-dt2 / 0.015));
+            if (scratchSound) d.scrubMove(st.pos);
+            else d.seek(st.pos);
+          }
           st.raf = requestAnimationFrame(step);
-        }
-        return;
-      }
-      // MAIN NON POSÉE, dessus du disque : DÉPLACEMENT dans le son —
-      // avancer / reculer vite, comme la recherche d'un CDJ. Le BPM n'est
-      // JAMAIS touché (David : « au lieu de se déplacer sur le son tu
-      // changes le BPM pour avancer ou reculer » — corrigé). Les crans
-      // s'accumulent et la position saute par petits pas réguliers.
-      if (!d.playing) {
-        d.seek(Math.max(-3600, d.currentTime() + delta * 0.005));
-        return;
-      }
-      engine.jogHold = true;
-      midiSeekAcc[i] += delta * 0.012;
-      if (!midiSeekTimer[i]) {
-        midiSeekTimer[i] = setTimeout(() => {
-          midiSeekTimer[i] = null;
-          const off = midiSeekAcc[i];
-          midiSeekAcc[i] = 0;
-          if (off) d.seek(Math.max(-3600, d.currentTime() + off));
-          engine.jogHold = false;
-          for (let k = 0; k < 4; k++) engine.reanchorSync(k);
-        }, 70);
+        };
+        st.raf = requestAnimationFrame(step);
       }
     }
   }
@@ -5840,6 +6250,13 @@ setGridOffset.addEventListener('change', () => {
 });
 
 // --- Comportement ---
+const setRestore = document.getElementById('set-restore');
+if (setRestore) {
+  setRestore.checked = localStorage.getItem('restoreSession') === '1';
+  setRestore.addEventListener('change', () => {
+    localStorage.setItem('restoreSession', setRestore.checked ? '1' : '0');
+  });
+}
 const setAutoStems = document.getElementById('set-autostems');
 setAutoStems.checked = localStorage.getItem('autoStems') !== '0';
 setAutoStems.addEventListener('change', () => {
@@ -6492,6 +6909,19 @@ function showTrackMenu(e, track, idx) {
       }
     });
   });
+  if (library.isTaken(track)) {
+    addItem('⬜ Retirer la marque « déjà joué » (vert)', () => {
+      library.unmarkPlayed(track);
+      markTakenRows();
+    });
+  }
+  addItem('🧹 Effacer toutes les marques « déjà joué » de la séance', async () => {
+    const ok = await askText('Remettre tous les sons en blanc ? Tape OUI pour confirmer', '');
+    if (String(ok || '').trim().toUpperCase() !== 'OUI') return;
+    library.clearPlayed();
+    markTakenRows();
+    flashStatus('Marques « déjà joué » effacées');
+  });
   addItem('🔄 Ré-analyser BPM + grille (efface les corrections)', async () => {
     flashStatus(`Ré-analyse de « ${track.name} »…`);
     try {
@@ -6523,7 +6953,10 @@ function showTrackMenu(e, track, idx) {
     flashStatus(`« ${track.name} » ajouté à « ${name} »`);
   });
   if (library.mode === 'pl' && library.plOpen) {
-    addItem('✕ Retirer de la playlist', () => library.removeFromPlaylist(library.plOpen, idx));
+    addItem('✕ Retirer de la playlist', () => {
+      const real = library.plOpen.tracks.indexOf(track);
+      if (real >= 0) library.removeFromPlaylist(library.plOpen, real);
+    });
   }
   ctxMenu.style.left = `${Math.min(e.clientX, window.innerWidth - 260)}px`;
   ctxMenu.style.top = `${Math.min(e.clientY, window.innerHeight - ctxMenu.childElementCount * 30 - 10)}px`;
@@ -6600,9 +7033,147 @@ window.addEventListener('resize', () => {
   invalidateWaves();
 });
 
+// ---------------------------------------------------------------------------
+// SESSION : à la relance, on retrouve TOUT comme on l'a laissé (demande
+// David : « à chaque fois qu'on relance le logiciel tout est à 0 »). Les sons
+// reviennent sur leurs decks EN PAUSE, à leur position, avec point CUE,
+// tempo, KEY et SYNC ; le mixer (volumes, EQ, trim, filtres, crossfader,
+// master) et les réglages FX (effet, durée, assignations) aussi. Le NIVEAU
+// des FX, lui, repart de 0 — règle d'origine : jamais d'effet surprise.
+// ---------------------------------------------------------------------------
+const SESSION_KEY = 'omSession';
+let sessionRestoring = false;
+// AUCUNE sauvegarde avant la fin de la restauration : sinon l'état vide du
+// démarrage écrasait la session avant même qu'on la relise
+let sessionReady = false;
+let lastSessionJson = '';
+
+function captureSession() {
+  return {
+    v: 1,
+    decks: engine.decks.map((d) => ({
+      track: d.track ? library.trackRef(d.track) : null,
+      pos: d.buffer ? d.currentTime() : 0,
+      cue: d.cuePoint || 0,
+      // tempo de BASE (sans la micro-correction du sync)
+      tempo: d.synced && d._syncBase ? d._syncBase : (d.tempo || 1) / (1 + (d._pllCorr || 0)),
+      key: d.keyShift || 0,
+      synced: !!d.synced,
+      vol: d.volume,
+      eq: { ...d.eq },
+      trim: d.trimVal || 0,
+      filter: d.filterVal || 0
+    })),
+    xf: engine.crossfader,
+    mvol: engine.masterVolume,
+    mfilter: engine.masterFilterVal || 0,
+    masterIdx: engine.masterIdx,
+    color: { type: engine.colorType, on: engine.colorEnabled },
+    fx: engine.fx.map((u) => ({ type: u.type, beats: u.beatsMult })),
+    fxAssign: engine.fxAssign.map((a) => a.slice())
+  };
+}
+
+function saveSession() {
+  if (sessionRestoring || !sessionReady) return;
+  try {
+    const j = JSON.stringify(captureSession());
+    if (j !== lastSessionJson) {
+      lastSessionJson = j;
+      localStorage.setItem(SESSION_KEY, j);
+    }
+  } catch { /* stockage indisponible : tant pis pour cette fois */ }
+}
+setInterval(saveSession, 2000);
+window.addEventListener('beforeunload', saveSession);
+
+async function restoreSession() {
+  // OPTION (⚙ Comportement), désactivée par défaut : au lancement, decks
+  // vides et réglages neufs — « à chaque relance, tout est à 0 »
+  if (localStorage.getItem('restoreSession') !== '1') {
+    sessionReady = true;
+    return;
+  }
+  let s = null;
+  try { s = JSON.parse(localStorage.getItem(SESSION_KEY)); } catch { /* rien */ }
+  if (!s || s.v !== 1 || !Array.isArray(s.decks)) {
+    sessionReady = true;
+    return;
+  }
+  sessionRestoring = true;
+  try {
+    // 1) mixer
+    s.decks.forEach((ds, i) => {
+      const d = engine.decks[i];
+      if (!ds || !d) return;
+      if (ds.vol != null) d.setVolume(ds.vol);
+      if (ds.eq) for (const b of ['low', 'mid', 'high']) if (ds.eq[b] != null) d.setEq(b, ds.eq[b]);
+      if (ds.trim != null) d.setTrim(ds.trim);
+      if (ds.filter != null) engine.setDeckColor(i, ds.filter);
+    });
+    if (s.color) {
+      if (s.color.type && s.color.type !== engine.colorType) {
+        engine.setColorType(s.color.type);
+        if (uiRefs.master.colorSel) uiRefs.master.colorSel.value = s.color.type;
+      }
+      if (s.color.on != null && s.color.on !== engine.colorEnabled) {
+        engine.setColorEnabled(!!s.color.on);
+        const b = document.getElementById('color-on');
+        if (b) {
+          b.textContent = engine.colorEnabled ? 'ON' : 'OFF';
+          b.classList.toggle('on', engine.colorEnabled);
+        }
+      }
+    }
+    stripUI.forEach((_, i) => refreshStrip(i));
+    if (s.xf != null) { engine.setCrossfader(s.xf); if (xfFader) xfFader.update(); }
+    if (s.mvol != null) { engine.setMasterVolume(s.mvol); uiRefs.master.volKnob?.update(); }
+    if (s.mfilter != null) { engine.setMasterFilter(s.mfilter); uiRefs.master.filterKnob?.update(); }
+    engine.masterIdx = s.masterIdx ?? null;
+    // 2) réglages FX (niveau à 0, effet éteint : comme au démarrage)
+    (s.fx || []).forEach((f, u) => {
+      const unit = engine.fx[u];
+      const r = uiRefs.fxUnits[u];
+      if (!unit || !f) return;
+      if (f.type) { unit.setType(f.type); if (r && r.typeSel) r.typeSel.value = f.type; }
+      if (f.beats) { unit.setBeatsMult(f.beats); if (r && r.beatsSel) r.beatsSel.value = String(f.beats); }
+    });
+    if (Array.isArray(s.fxAssign) && s.fxAssign.length === 4) {
+      engine.fxAssign = s.fxAssign.map((a) => [0, 1, 2, 3].map((k) => !!(a && a[k])));
+      engine.updateFxSends();
+    }
+    try { updateFxPanel(); } catch { /* panneau pas encore prêt */ }
+    // 3) les sons, un deck après l'autre, EN PAUSE à leur position
+    let n = 0;
+    for (let i = 0; i < 4; i++) {
+      const ds = s.decks[i];
+      if (!ds || !ds.track) continue;
+      await loadTrackToDeck(i, ds.track);
+      const d = engine.decks[i];
+      if (!d.buffer || d.track !== ds.track) continue;
+      if (ds.tempo) { d.setTempo(ds.tempo); updateTempoLabel(i); }
+      if (ds.key && deckUI[i].applyKey) deckUI[i].applyKey(ds.key - d.keyShift);
+      d.cuePoint = ds.cue || 0;
+      d.seek(ds.pos || 0);
+      d.synced = !!ds.synced;
+      // rechargé, pas joué : il ne compte pas comme « déjà joué » ce soir
+      library.unmarkPlayed(ds.track);
+      n++;
+    }
+    markTakenRows();
+    if (n) flashStatus(`Session restaurée : ${n} son${n > 1 ? 's' : ''} rechargé${n > 1 ? 's' : ''} en pause, là où tu les avais laissés`);
+  } catch (err) {
+    console.log(`[midi] session : restauration interrompue (${err.message || err})`);
+  } finally {
+    sessionRestoring = false;
+    sessionReady = true;
+  }
+}
+
 library.init().then(() => {
   if (library.cache.__scUrl) scUrlInput.value = library.cache.__scUrl;
-});
+  restoreSession();
+}).catch(() => { sessionReady = true; });
 
 
 requestAnimationFrame(frame);

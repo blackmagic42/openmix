@@ -536,6 +536,116 @@ ipcMain.handle('remote-start', async () => {
 });
 
 // --- Stems : séparation voix/batterie/basse/instru via Demucs (IA locale) ---
+// LE BON PYTHON. « python » tout court prend le PREMIER du PATH : il a
+// suffi qu'un autre logiciel (un venv « hermes-agent ») se glisse en tête
+// pour que les stems disparaissent — son Python n'a pas Demucs. On cherche
+// donc UN Python qui sait importer demucs (lanceur py, installations
+// classiques, conda…), puis on retient son chemin.
+let demucsPy = null;      // chemin du python validé
+let demucsCuda = false;    // torch voit une carte graphique NVIDIA
+let demucsPySearch = null; // recherche en cours (partagée)
+
+function pyTest(exe, args = []) {
+  const { spawn } = require('child_process');
+  return new Promise((resolve) => {
+    let out = '';
+    let done = false;
+    const finish = (v) => { if (!done) { done = true; resolve(v); } };
+    let p;
+    try {
+      p = spawn(exe, [...args, '-c',
+        'import demucs, sys, torch; print(int(torch.cuda.is_available())); print(sys.executable)'],
+        { windowsHide: true, env: { ...process.env, PYTHONIOENCODING: 'utf-8' } });
+    } catch { finish(null); return; }
+    // import torch peut prendre plusieurs secondes à froid
+    const t = setTimeout(() => { try { p.kill(); } catch { /* rien */ } finish(null); }, 90000);
+    p.stdout.on('data', (d) => { out += d; });
+    p.on('error', () => { clearTimeout(t); finish(null); });
+    p.on('close', (code) => {
+      clearTimeout(t);
+      const lines = out.trim().split(/\r?\n/);
+      const exePath = lines.pop();
+      if (code === 0 && exePath) demucsCuda = lines.pop() === '1';
+      finish(code === 0 && exePath ? exePath : null);
+    });
+  });
+}
+
+function pyCandidates() {
+  const fs = require('fs');
+  const list = [];
+  const add = (exe, args = []) => {
+    if (!list.some((c) => c.exe === exe && c.args.join() === args.join())) list.push({ exe, args });
+  };
+  const local = process.env.LOCALAPPDATA || '';
+  const home = process.env.USERPROFILE || '';
+  const dirs = [
+    path.join(local, 'Programs', 'Python'),
+    path.join(local, 'Python'),
+    'C:\\Program Files',
+    'C:\\'
+  ];
+  for (const dir of dirs) {
+    try {
+      for (const n of fs.readdirSync(dir)) {
+        if (/^python(core-)?3/i.test(n)) {
+          const exe = path.join(dir, n, 'python.exe');
+          if (fs.existsSync(exe)) add(exe);
+        }
+      }
+    } catch { /* dossier absent */ }
+  }
+  for (const c of ['anaconda3', 'miniconda3', 'Anaconda3', 'Miniconda3']) {
+    const exe = path.join(home, c, 'python.exe');
+    if (fs.existsSync(exe)) add(exe);
+  }
+  // Versions récentes d'abord (Demucs est en général installé sur la plus
+  // récente que torch supporte), puis le lanceur py et le python du PATH
+  list.sort((a, b) => b.exe.localeCompare(a.exe, undefined, { numeric: true }));
+  for (const v of ['3.13', '3.12', '3.11', '3.10']) add('py', [`-${v}`]);
+  add('python');
+  add('python3');
+  return list;
+}
+
+function findDemucsPython() {
+  if (demucsPy) return Promise.resolve(demucsPy);
+  if (demucsPySearch) return demucsPySearch;
+  demucsPySearch = (async () => {
+    const fs = require('fs');
+    // chemin retenu lors d'une séance précédente : on le revérifie
+    const saved = settings.demucsPython;
+    if (saved && fs.existsSync(saved) && await pyTest(saved)) {
+      demucsPy = saved;
+      return demucsPy;
+    }
+    for (const c of pyCandidates()) {
+      const exe = await pyTest(c.exe, c.args);
+      if (exe) {
+        demucsPy = exe;
+        settings.demucsPython = exe;
+        saveSettings();
+        console.log(`[midi] stems : Demucs trouvé → ${exe}`);
+        return demucsPy;
+      }
+    }
+    return null;
+  })();
+  demucsPySearch.finally(() => { demucsPySearch = null; });
+  return demucsPySearch;
+}
+
+// Recherche lancée dès le démarrage, en tâche de fond : le premier clic sur
+// VOX/DRM/INST n'attend pas l'import de torch
+app.whenReady().then(() => setTimeout(() => { findDemucsPython(); }, 4000));
+
+// État du moteur de stems pour l'interface : avec une carte graphique, la
+// séparation est assez légère pour tourner PENDANT le mix
+ipcMain.handle('stems-info', async () => {
+  const py = await findDemucsPython();
+  return { ok: !!py, cuda: !!(py && demucsCuda) };
+});
+
 ipcMain.handle('stems-separate', async (_e, trackPath) => {
   const { spawn } = require('child_process');
   const crypto = require('crypto');
@@ -553,26 +663,45 @@ ipcMain.handle('stems-separate', async (_e, trackPath) => {
     }
     if (allCached) return { ok: true, stems };
 
+    const py = await findDemucsPython();
+    if (!py) {
+      return {
+        ok: false,
+        error: 'Demucs introuvable — installe-le avec « py -m pip install demucs » puis réessaie'
+      };
+    }
     await fsp.mkdir(finalDir, { recursive: true });
     const tmpOut = path.join(outRoot, `tmp-${hash}`);
+    await fsp.rm(tmpOut, { recursive: true, force: true });
     const result = await new Promise((resolve) => {
-      const p = spawn('python', ['-m', 'demucs', '-n', 'htdemucs', '-o', tmpOut, trackPath], { windowsHide: true });
+      // UTF-8 forcé : un titre avec « — » ou « ä » faisait planter
+      // l'affichage console de Demucs sous Windows (encodage cp1252)
+      const p = spawn(py, ['-m', 'demucs', '-n', 'htdemucs', '-o', tmpOut, trackPath], {
+        windowsHide: true,
+        env: { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUTF8: '1' }
+      });
       // PRIORITÉ BASSE : Demucs ne doit JAMAIS voler le CPU de l'audio en
       // cours — sinon le son grésille et la manette répond avec des secondes
       // de retard pendant la séparation
       try { require('os').setPriority(p.pid, 19); } catch { /* déjà mort */ }
       let err = '';
-      p.stderr.on('data', (d) => { err += d; });
+      p.stderr.on('data', (d) => { err = (err + d).slice(-4000); });
       p.on('error', () => resolve({ code: -1, err: 'python introuvable' }));
       p.on('close', (code) => resolve({ code, err }));
     });
     if (result.code !== 0) {
-      return {
-        ok: false,
-        error: 'Demucs indisponible — installe-le avec « pip install demucs » puis réessaie'
-      };
+      const last = String(result.err || '').trim().split(/\r?\n/).filter(Boolean).pop() || '';
+      console.log(`[midi] stems : échec Demucs (${result.code}) ${last}`);
+      await fsp.rm(tmpOut, { recursive: true, force: true }).catch(() => {});
+      // le python retenu ne marche plus (désinstallé ?) : on recherchera
+      if (result.code === -1) { demucsPy = null; delete settings.demucsPython; }
+      return { ok: false, error: `Demucs a échoué${last ? ` — ${last.slice(0, 140)}` : ''}` };
     }
-    const src = path.join(tmpOut, 'htdemucs', path.parse(trackPath).name);
+    // Dossier de sortie : Demucs le nomme d'après le fichier — on prend
+    // celui qu'il a réellement créé (pas de devinette sur les points/accents)
+    const modelDir = path.join(tmpOut, 'htdemucs');
+    const sub = (await fsp.readdir(modelDir).catch(() => []))[0];
+    const src = sub ? path.join(modelDir, sub) : path.join(modelDir, path.parse(trackPath).name);
     for (const n of names) {
       await fsp.copyFile(path.join(src, `${n}.wav`), stems[n]);
     }
@@ -1038,9 +1167,37 @@ function scSimplifyTrack(t) {
     blocked: t.policy === 'BLOCK',
     streamable: t.streamable !== false && t.policy !== 'BLOCK',
     // Jaquette SoundCloud (t500 = grande taille) — pochette sur le deck
-    artwork: t.artwork_url ? t.artwork_url.replace('-large', '-t500x500') : null
+    artwork: t.artwork_url ? t.artwork_url.replace('-large', '-t500x500') : null,
+    // Forme d'onde publiée par SoundCloud : l'aperçu dans la liste SANS
+    // télécharger le son
+    waveform: t.waveform_url || null
   };
 }
+
+// Forme d'onde SoundCloud (wave.sndcdn.com) : la version .json donne
+// ~1800 hauteurs 0-140. Réduite à 600 points pour l'aperçu de la liste.
+ipcMain.handle('sc-waveform', async (_e, url) => {
+  try {
+    if (!/^https:\/\/([a-z0-9-]+\.)*sndcdn\.com\//i.test(String(url || ''))) return { ok: false };
+    const r = await fetch(String(url).replace(/\.png(\?.*)?$/i, '.json'));
+    if (!r.ok) return { ok: false };
+    const j = await r.json();
+    const src = Array.isArray(j.samples) ? j.samples : [];
+    if (!src.length) return { ok: false };
+    const n = Math.min(600, src.length);
+    const out = new Array(n);
+    for (let i = 0; i < n; i++) {
+      const a = Math.floor((i / n) * src.length);
+      const b = Math.max(a + 1, Math.floor(((i + 1) / n) * src.length));
+      let m = 0;
+      for (let k = a; k < b; k++) if (src[k] > m) m = src[k];
+      out[i] = m;
+    }
+    return { ok: true, samples: out };
+  } catch {
+    return { ok: false };
+  }
+});
 
 // Complète les pistes « stub » (les playlists ne renvoient en entier que les
 // premières). Le compte est propagé : sans lui, les pistes privées/Go+ d'une
@@ -1140,7 +1297,16 @@ ipcMain.handle('open-external', (_e, url) => {
 // Téléchargement du flux audio d'une piste SoundCloud vers un fichier.
 // Le compte (acct) ouvre l'accès aux pistes privées/Go+ ; les fetch bruts du
 // flux plus bas restent sans auth : ce sont des URLs déjà signées.
-async function scDownloadToFile(scId, dest, acct = null) {
+// Téléchargements SoundCloud EN COURS (scId → AbortController) : charger un
+// autre son sur le deck ANNULE le premier (un set de 3 h lancé par erreur)
+const scAborts = new Map();
+ipcMain.handle('sc-cancel', async (_e, scId) => {
+  const ac = scAborts.get(String(scId));
+  if (ac) ac.abort();
+  return !!ac;
+});
+
+async function scDownloadToFile(scId, dest, acct = null, signal = null) {
     const cid = await scEnsureClientId();
     const arr = await scGetJson(`${SC_API}/tracks?ids=${scId}&client_id=${cid}`, acct);
     const track = arr && arr[0];
@@ -1183,10 +1349,11 @@ async function scDownloadToFile(scId, dest, acct = null) {
       : '';
 
     const getBin = async (u, what) => {
-      let r = await fetch(u);
+      if (signal && signal.aborted) throw new Error('Chargement annulé');
+      let r = await fetch(u, { signal });
       for (let i = 0; i < 2 && (r.status === 429 || r.status >= 500); i++) {
         await new Promise((ok) => setTimeout(ok, 900 * (i + 1)));
-        r = await fetch(u);
+        r = await fetch(u, { signal });
       }
       if (!r.ok) throw new Error(`${what} HTTP ${r.status}`);
       return Buffer.from(await r.arrayBuffer());
@@ -1204,7 +1371,7 @@ async function scDownloadToFile(scId, dest, acct = null) {
         if ((chosen.format && chosen.format.protocol) === 'progressive') {
           buf = await getBin(streamUrl, 'Flux');
         } else {
-          const m3u8 = await (await fetch(streamUrl)).text();
+          const m3u8 = await (await fetch(streamUrl, { signal })).text();
           const segs = m3u8.split('\n').map(l => l.trim()).filter(l => l && !l.startsWith('#'));
           if (!segs.length) throw new Error('Playlist de flux vide');
           const parts = [];
@@ -1226,6 +1393,8 @@ async function scDownloadToFile(scId, dest, acct = null) {
             : null
         };
       } catch (e) {
+        // annulé : on n'essaie surtout pas le flux suivant
+        if (signal && signal.aborted) throw new Error('Chargement annulé');
         lastErr = e;
       }
     }
@@ -1243,6 +1412,20 @@ async function scDownloadToFile(scId, dest, acct = null) {
 function scAcctKey(acct) {
   return acct && acct.token ? `u:${acct.name || 'sans-nom'}` : 'anonyme';
 }
+
+// Chemin du son SoundCloud déjà en cache COMPLET (sinon null) — pour
+// analyser sa tonalité en tâche de fond sans rien télécharger
+ipcMain.handle('sc-cached-path', async (_e, scId) => {
+  try {
+    const dir = path.join(app.getPath('userData'), 'sc-cache');
+    const dest = path.join(dir, `${String(scId).replace(/[^0-9]/g, '')}.mp3`);
+    const st = await fsp.stat(dest);
+    const m = JSON.parse(await fsp.readFile(path.join(dir, `${String(scId).replace(/[^0-9]/g, '')}.json`), 'utf8'));
+    return st.size > 0 && m.full !== false ? dest : null;
+  } catch {
+    return null;
+  }
+});
 
 ipcMain.handle('sc-fetch-track', async (_e, scId, accountIdx) => {
   try {
@@ -1263,7 +1446,15 @@ ipcMain.handle('sc-fetch-track', async (_e, scId, accountIdx) => {
         return { ok: true, path: dest, full: m.full !== false, warning: m.warning || null };
       }
     } catch { /* pas en cache, extrait, ou cache d'ancienne version */ }
-    const r = await scTry(() => scDownloadToFile(scId, dest, acct));
+    const ac = new AbortController();
+    scAborts.set(String(scId), ac);
+    let r;
+    try {
+      r = await scTry(() => scDownloadToFile(scId, dest, acct, ac.signal));
+    } finally {
+      if (scAborts.get(String(scId)) === ac) scAborts.delete(String(scId));
+    }
+    if (ac.signal.aborted) return { ok: false, cancelled: true, error: 'Chargement annulé' };
     try {
       await fsp.writeFile(meta, JSON.stringify({
         full: r.full, bytes: r.bytes, acct: key, at: Date.now(), warning: r.warning || null
@@ -1271,7 +1462,8 @@ ipcMain.handle('sc-fetch-track', async (_e, scId, accountIdx) => {
     } catch { /* fiche non écrite : on retéléchargera, sans gravité */ }
     return { ok: true, path: dest, full: r.full, warning: r.warning || null };
   } catch (err) {
-    return { ok: false, error: String(err.message || err) };
+    const cancelled = /annulé|abort/i.test(String(err && (err.name + err.message)));
+    return { ok: false, cancelled, error: cancelled ? 'Chargement annulé' : String(err.message || err) };
   }
 });
 

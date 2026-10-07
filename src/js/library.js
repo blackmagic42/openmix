@@ -4,6 +4,7 @@
 
 import { detectBPM, alignImportedGrid } from './bpm.js';
 import { computeBandPeaks } from './waveform.js';
+import { detectKey, camelot } from './key.js';
 
 // Mini-aperçu waveform coloré (RGB par fréquences) encodé en dataURL
 async function makePreview(buffer) {
@@ -28,6 +29,157 @@ async function makePreview(buffer) {
   }
   return c.toDataURL('image/png');
 }
+
+// Même aperçu, mais tiré des pics DÉJÀ calculés pour le deck (aucun
+// recalcul : le chargement d'un morceau produit son vrai aperçu gratuitement)
+export function previewFromPeaks(peaks) {
+  const W = 150;
+  const H = 26;
+  const len = peaks.top.length;
+  if (!len) return null;
+  const c = document.createElement('canvas');
+  c.width = W;
+  c.height = H;
+  const ctx = c.getContext('2d');
+  const mid = H / 2;
+  for (let x = 0; x < W; x++) {
+    const a = Math.floor((x / W) * len);
+    const b = Math.max(a + 1, Math.floor(((x + 1) / W) * len));
+    let top = 0;
+    let bot = 0;
+    let l = 0;
+    let m = 0;
+    let h = 0;
+    for (let k = a; k < b && k < len; k++) {
+      if (peaks.top[k] > top) top = peaks.top[k];
+      if (peaks.bottom[k] < bot) bot = peaks.bottom[k];
+      l += peaks.low[k];
+      m += peaks.mid[k];
+      h += peaks.high[k];
+    }
+    const mx = Math.max(l, m, h, 1e-6);
+    ctx.fillStyle = `rgb(${Math.round((l / mx) * 255)},${Math.round((m / mx) * 255)},${Math.round((h / mx) * 255)})`;
+    const y0 = mid - top * (H * 0.48);
+    const y1 = mid - bot * (H * 0.48);
+    ctx.fillRect(x, y0, 1, Math.max(1, y1 - y0));
+  }
+  return c.toDataURL('image/png');
+}
+
+// APERÇU RAPIDE d'un fichier local SANS l'analyse complète : décodage
+// directement en 11 kHz (rééchantillonné hors du fil principal par le
+// navigateur — 4× moins de mémoire qu'un décodage normal) puis deux filtres
+// à un pôle pour la couleur basses/médiums/aigus. Assez léger pour tourner
+// PENDANT le mix : la bibliothèque montre la forme des sons sans les charger.
+async function makeQuickPreview(arrayBuffer) {
+  const SR = 11025;
+  const dec = new OfflineAudioContext(2, 1, SR);
+  const buf = await dec.decodeAudioData(arrayBuffer);
+  const W = 150;
+  const H = 26;
+  const L = buf.getChannelData(0);
+  const R = buf.numberOfChannels > 1 ? buf.getChannelData(1) : L;
+  const n = L.length;
+  if (!n) return null;
+  const a200 = 1 - Math.exp((-2 * Math.PI * 200) / SR);
+  const a2k = 1 - Math.exp((-2 * Math.PI * 2000) / SR);
+  let lp200 = 0;
+  let lp2k = 0;
+  const cols = [];
+  for (let x = 0; x < W; x++) {
+    const i0 = Math.floor((x / W) * n);
+    const i1 = Math.floor(((x + 1) / W) * n);
+    let hi = 0;
+    let lo = 0;
+    let el = 0;
+    let em = 0;
+    let eh = 0;
+    for (let i = i0; i < i1; i++) {
+      const a = L[i];
+      const b = R[i];
+      if (a > hi) hi = a;
+      if (b > hi) hi = b;
+      if (a < lo) lo = a;
+      if (b < lo) lo = b;
+      const v = (a + b) * 0.5;
+      lp200 += a200 * (v - lp200);
+      lp2k += a2k * (v - lp2k);
+      el += Math.abs(lp200);
+      em += Math.abs(lp2k - lp200);
+      eh += Math.abs(v - lp2k);
+    }
+    cols.push([hi, lo, el, em, eh]);
+    // rend la main de temps en temps : jamais de gel de l'interface
+    if (x % 25 === 24) await new Promise((r) => setTimeout(r, 0));
+  }
+  const c = document.createElement('canvas');
+  c.width = W;
+  c.height = H;
+  const ctx = c.getContext('2d');
+  const mid = H / 2;
+  cols.forEach(([hi, lo, el, em, eh], x) => {
+    const mx = Math.max(el, em, eh, 1e-6);
+    ctx.fillStyle = `rgb(${Math.round((el / mx) * 255)},${Math.round((em / mx) * 255)},${Math.round((eh / mx) * 255)})`;
+    const y0 = mid - hi * (H * 0.48);
+    const y1 = mid - lo * (H * 0.48);
+    ctx.fillRect(x, y0, 1, Math.max(1, y1 - y0));
+  });
+  return { url: c.toDataURL('image/png'), duration: buf.duration };
+}
+
+// Aperçu d'une piste SOUNDCLOUD à partir de la forme d'onde que SoundCloud
+// publie lui-même (quelques Ko, aucun téléchargement du son) : amplitude
+// seule — teinte bleue, l'aperçu complet en couleurs arrive au chargement.
+function previewFromSamples(samples) {
+  const W = 150;
+  const H = 26;
+  if (!samples || !samples.length) return null;
+  const c = document.createElement('canvas');
+  c.width = W;
+  c.height = H;
+  const ctx = c.getContext('2d');
+  const mid = H / 2;
+  let max = 0;
+  for (const v of samples) if (v > max) max = v;
+  if (!max) return null;
+  for (let x = 0; x < W; x++) {
+    const a = Math.floor((x / W) * samples.length);
+    const b = Math.max(a + 1, Math.floor(((x + 1) / W) * samples.length));
+    let v = 0;
+    for (let k = a; k < b && k < samples.length; k++) if (samples[k] > v) v = samples[k];
+    // Les masters modernes sont « en brique » (presque tout à fond) : la
+    // courbe au cube fait ressortir breaks et montées au lieu d'un bloc plein
+    const r = Math.pow(v / max, 3);
+    // plus c'est fort, plus c'est clair (le relief du morceau d'un coup d'oeil)
+    ctx.fillStyle = `rgb(${Math.round(40 + 140 * r)},${Math.round(110 + 110 * r)},${Math.round(230 + 25 * r)})`;
+    const h = Math.max(1, r * (H * 0.48));
+    ctx.fillRect(x, mid - h, 1, h * 2);
+  }
+  return c.toDataURL('image/png');
+}
+
+// --- TRI de la liste (clic sur un en-tête de colonne) ---
+// Les lignes de navigation (dossiers, playlists, comptes…) restent en tête,
+// dans leur ordre ; seuls les MORCEAUX sont triés.
+const isNavRow = (t) => t.plRow || t.fsRow || t.fsUpRow || t.scRootRow || t.plRootRow ||
+  t.scLikes || t.scAccountRow || t.scPlaylist;
+const splitName = (t) => {
+  const sep = (t.name || '').indexOf(' - ');
+  return sep > 0
+    ? { artist: t.name.slice(0, sep), title: t.name.slice(sep + 3) }
+    : { artist: '', title: t.name || '' };
+};
+const SORTERS = {
+  title: (t) => splitName(t).title.toLowerCase(),
+  artist: (t) => splitName(t).artist.toLowerCase(),
+  bpm: (t) => t.bpm || null,
+  dur: (t) => t.duration || null,
+  // ordre de la roue Camelot : 1A 1B 2A 2B … 12B
+  key: (t) => {
+    const c = camelot(t.musicKey);
+    return c ? c.num * 2 + (c.letter === 'B' ? 1 : 0) : null;
+  }
+};
 
 const trackKey = (t) => t.key || (t.sc ? `sc:${t.scId}` : `${t.path}|${t.size}|${Math.round(t.mtime)}`);
 
@@ -58,8 +210,51 @@ export class Library {
     this.selection = 0;
     this.search = '';
     this.cache = {};
+    this.played = {};    // sons joués PENDANT CETTE SÉANCE (clé → date), voir isTaken
     this._scanId = 0;
     this._saveTimer = null;
+    // tri choisi en cliquant sur les en-têtes (mémorisé)
+    this.sort = { col: null, dir: 1 };
+    try {
+      const sv = JSON.parse(localStorage.getItem('libSort'));
+      if (sv && SORTERS[sv.col]) this.sort = { col: sv.col, dir: sv.dir === -1 ? -1 : 1 };
+    } catch { /* tri par défaut */ }
+    this._previewBusy = false;
+    this._scWaveQueue = [];
+    this._scWaveRunning = 0;
+  }
+
+  // Clic sur un en-tête : tri croissant → décroissant → ordre d'origine
+  toggleSort(col) {
+    if (this.sort.col !== col) this.sort = { col, dir: 1 };
+    else if (this.sort.dir === 1) this.sort = { col, dir: -1 };
+    else this.sort = { col: null, dir: 1 };
+    try { localStorage.setItem('libSort', JSON.stringify(this.sort)); } catch { /* rien */ }
+    const cur = this.filtered[this.selection];
+    this.applyFilter();
+    // la sélection suit le morceau, pas sa position
+    const ni = cur ? this.filtered.indexOf(cur) : -1;
+    if (ni >= 0 && ni !== this.selection) {
+      this.selection = ni;
+      this.cb.onListChanged();
+    }
+  }
+
+  // Reprend du cache central tout ce qu'on sait déjà d'un morceau
+  _fromCache(t) {
+    const cached = this.cache[trackKey(t)];
+    if (!cached) return t;
+    if (cached.v >= 2) {
+      t.bpm = cached.bpm;
+      t.beatOffset = cached.beatOffset;
+      t.analyzed = cached.v >= ANALYSIS_V;
+    }
+    if (cached.preview && !t.preview) {
+      t.preview = cached.preview;
+      t.previewQ = !!cached.previewQ;
+    }
+    if (cached.musicKey != null) t.musicKey = cached.musicKey;
+    return t;
   }
 
   // Plage BPM d'analyse choisie dans les paramètres (défaut : 85-170)
@@ -195,6 +390,11 @@ export class Library {
   async init() {
     this.cache = (await window.api.cacheLoad()) || {};
     this.history = this.cache.__history || [];
+    // Les marques « déjà joué » ne valent QUE pour la séance en cours : à
+    // chaque lancement, tout repart en blanc (demande David). On nettoie
+    // l'ancienne version permanente si elle traîne dans le cache.
+    this.played = {};
+    delete this.cache.__played;
     this.playlists = this.cache.__playlists || [];
     this.plOpen = null;
     const last = this.cache.__folder;
@@ -222,6 +422,7 @@ export class Library {
       beatOffset: track.beatOffset != null ? track.beatOffset : null,
       duration: track.duration || null,
       preview: track.preview || null,
+      musicKey: track.musicKey ?? null,
       analyzed: true
     };
   }
@@ -277,6 +478,23 @@ export class Library {
   }
 
   // Historique : appelé à chaque chargement d'un morceau sur un deck
+  // Morceaux DÉJÀ JOUÉS PENDANT CETTE SÉANCE (chargés sur un deck depuis
+  // le lancement d'OpenMix) : écrits en vert dans l'explorateur. Rien n'est
+  // gardé d'une séance à l'autre : à la relance, tout est de nouveau blanc.
+  isTaken(t) {
+    if (!t || !t.name) return false;
+    return !!this.played[trackKey(t)];
+  }
+
+  // Retirer la marque d'un morceau (clic droit) ou de tous
+  unmarkPlayed(t) {
+    delete this.played[trackKey(t)];
+  }
+
+  clearPlayed() {
+    this.played = {};
+  }
+
   addHistory(track) {
     const entry = {
       key: trackKey(track),
@@ -288,11 +506,13 @@ export class Library {
       beatOffset: track.beatOffset != null ? track.beatOffset : null,
       duration: track.duration || null,
       preview: track.preview || null,
+      musicKey: track.musicKey ?? null,
       analyzed: true,
       at: Date.now()
     };
     this.history = this.history.filter(h => h.key !== entry.key);
     this.history.unshift(entry);
+    this.played[entry.key] = entry.at; // marque « déjà joué » permanente
     if (this.history.length > 300) this.history.length = 300;
     this.cache.__history = this.history;
     this._scheduleSave();
@@ -339,13 +559,17 @@ export class Library {
         bpm: ok ? cached.bpm : null,
         beatOffset: ok ? cached.beatOffset : null,
         duration: ok ? cached.duration : null,
-        preview: ok ? cached.preview || null : null,
+        preview: cached && cached.preview ? cached.preview : null,
+        previewQ: !!(cached && cached.previewQ),
+        musicKey: cached && cached.musicKey != null ? cached.musicKey : null,
+        keyTried: !!(cached && cached.keyFail),
         analyzed: !!fresh
       };
     });
     this.applyFilter();
     this.cb.onStatus(`${this.tracks.length} morceaux — analyse BPM en cours…`);
     this._analyzeQueue(scanId);
+    this._previewQueue(scanId);
   }
 
   // ---------------------------------------------------------------------
@@ -383,15 +607,9 @@ export class Library {
         analyzed: false,
         path: null
       }));
-      // Récupère les BPM déjà en cache (pistes déjà chargées une fois)
-      for (const t of this.scTracks) {
-        const cached = this.cache[trackKey(t)];
-        if (cached && cached.v >= 2) {
-          t.bpm = cached.bpm;
-          t.beatOffset = cached.beatOffset;
-          t.analyzed = cached.v >= ANALYSIS_V;
-        }
-      }
+      // Récupère ce qu'on sait déjà (BPM, tonalité, aperçu) du cache
+      for (const t of this.scTracks) this._fromCache(t);
+      this._queueScWaves(this.scTracks);
       this.scTitle = res.title;
     }
     this.cache.__scUrl = url;
@@ -425,15 +643,9 @@ export class Library {
       analyzed: false,
       path: null
     }));
-    // BPM déjà connus (pistes déjà chargées une fois) récupérés du cache
-    for (const t of this.scTracks) {
-      const cached = this.cache[trackKey(t)];
-      if (cached && cached.v >= 2) {
-        t.bpm = cached.bpm;
-        t.beatOffset = cached.beatOffset;
-        t.analyzed = cached.v >= ANALYSIS_V;
-      }
-    }
+    // BPM, tonalité et aperçus déjà connus récupérés du cache
+    for (const t of this.scTracks) this._fromCache(t);
+    this._queueScWaves(this.scTracks);
     this.scTitle = `Recherche : ${query}`;
     this.search = ''; // les résultats ne doivent pas être re-filtrés localement
     this.setMode('sc');
@@ -448,9 +660,36 @@ export class Library {
   applyFilter() {
     const q = this.search.trim().toLowerCase();
     const src = this.list();
-    this.filtered = q
+    let list = q
       ? src.filter(t => t.name.toLowerCase().includes(q))
       : src;
+    const by = this.sort && this.sort.col && SORTERS[this.sort.col];
+    if (by) {
+      const dir = this.sort.dir || 1;
+      const nav = list.filter(isNavRow);
+      const tracks = list.filter((t) => !isNavRow(t));
+      // ordre stable ; les valeurs inconnues (BPM pas encore analysé…) en fin
+      const keyed = tracks.map((t, i) => ({ t, i, v: by(t) }));
+      keyed.sort((a, b) => {
+        if (a.v == null && b.v == null) return a.i - b.i;
+        if (a.v == null) return 1;
+        if (b.v == null) return -1;
+        const c = typeof a.v === 'string' ? a.v.localeCompare(b.v) : a.v - b.v;
+        return c ? c * dir : a.i - b.i;
+      });
+      list = [...nav, ...keyed.map((k) => k.t)];
+    }
+    this.filtered = list;
+    // Historique / playlists : leurs entrées gardaient l'aperçu (souvent
+    // vide ou bleu) du moment où elles ont été ajoutées — on les remet à
+    // jour depuis le cache et on complète les couleurs manquantes
+    if (this.mode === 'hist' || (this.mode === 'pl' && this.plOpen)) {
+      const items = src.filter((t) => !isNavRow(t));
+      for (const t of items) {
+        if (!t._enriched) { t._enriched = true; this._fromCache(t); }
+      }
+      this._queueScColors(items);
+    }
     this.selection = Math.min(this.selection, Math.max(0, this.filtered.length - 1));
     this.cb.onListChanged();
   }
@@ -555,14 +794,8 @@ export class Library {
       analyzed: false,
       path: null
     }));
-    for (const t of this.scTracks) {
-      const cached = this.cache[trackKey(t)];
-      if (cached && cached.v >= 2) {
-        t.bpm = cached.bpm;
-        t.beatOffset = cached.beatOffset;
-        t.analyzed = cached.v >= ANALYSIS_V;
-      }
-    }
+    for (const t of this.scTracks) this._fromCache(t);
+    this._queueScWaves(this.scTracks);
     // En b2b on précise À QUI sont ces likes — en solo, libellé historique
     this.scTitle = (this.scAccountCount >= 2 && res.username)
       ? `❤️ Likes de ${res.username}`
@@ -633,7 +866,7 @@ export class Library {
     const suivant = () => {
       while (next < this.tracks.length) {
         const t = this.tracks[next++];
-        if (!(t.analyzed && t.preview)) return t;
+        if (!(t.analyzed && t.preview && !t.previewQ) || (t.musicKey == null && !t.keyTried)) return t;
       }
       return null;
     };
@@ -672,9 +905,22 @@ export class Library {
           newBeats = keepBpm && prev.beats ? prev.beats : (res ? res.beats : null);
           if (!keepBpm && res) newAnchor = res.barAnchor || 0;
         }
-        if (!t.preview) t.preview = await makePreview(buffer);
+        if (!t.preview || t.previewQ) {
+          t.preview = await makePreview(buffer);
+          t.previewQ = false;
+        }
+        // TONALITÉ (une fois par morceau, gardée en cache)
+        let mk = prev.musicKey;
+        let keyFail = false;
+        if (mk == null) {
+          t.keyTried = true;
+          const k = await detectKey(buffer).catch(() => null);
+          if (k) mk = k.code;
+          else keyFail = true;
+        }
+        if (mk != null) t.musicKey = mk;
         t.analyzed = true;
-        this.cache[trackKey(t)] = { ...prev, v: ANALYSIS_V, bpm: t.bpm, beatOffset: t.beatOffset, beats: newBeats, barAnchorAuto: newAnchor, duration: t.duration, preview: t.preview };
+        this.cache[trackKey(t)] = { ...prev, v: ANALYSIS_V, bpm: t.bpm, beatOffset: t.beatOffset, beats: newBeats, barAnchorAuto: newAnchor, duration: t.duration, preview: t.preview, previewQ: false, musicKey: mk ?? null, keyFail };
         // Sauvegarde AU PLUS toutes les 60 s : le cache complet (jusqu'à
         // plusieurs dizaines de Mo) repartait sur le disque tous les 5
         // morceaux et se disputait la tête de lecture avec les fichiers en
@@ -686,6 +932,7 @@ export class Library {
         this.cb.onTrackUpdated(t);
       } catch {
         t.analyzed = true; // fichier illisible : on n'insiste pas
+        t.keyTried = true;
       }
       // (on ne compte que l'ANALYSE : une preview ratée sur fichier illisible
       // ne doit pas afficher « 1 restants » pour l'éternité)
@@ -696,6 +943,209 @@ export class Library {
     }
   }
 
+  // APERÇUS RAPIDES des fichiers locaux — y compris PENDANT le mix (l'analyse
+  // complète, elle, attend que plus rien ne joue). Un morceau à la fois,
+  // avec une pause entre deux quand ça joue : le son passe toujours avant.
+  async _previewQueue(scanId) {
+    this._previewWant = scanId;
+    if (this._previewBusy) return; // la boucle en cours relancera pour ce dossier
+    this._previewBusy = true;
+    try {
+      for (const t of this.tracks) {
+        if (scanId !== this._scanId) return;
+        if (t.preview || !t.path) continue;
+        try {
+          const raw = await window.api.readFile(t.path);
+          if (scanId !== this._scanId) return;
+          const ab = raw.buffer.slice(raw.byteOffset, raw.byteOffset + raw.byteLength);
+          const q = await makeQuickPreview(ab);
+          if (!q || t.preview) continue;
+          t.preview = q.url;
+          t.previewQ = true;
+          if (!t.duration) t.duration = q.duration;
+          const key = trackKey(t);
+          const c = this.cache[key] || { v: 1 };
+          if (!c.preview) {
+            c.preview = q.url;
+            c.previewQ = true;
+            c.previewSrc = 'audio';
+            if (!c.duration) c.duration = q.duration;
+            this.cache[key] = c;
+          }
+          this.cb.onTrackUpdated(t);
+        } catch { /* fichier illisible : l'analyse le signalera */ }
+        const busy = this.cb.canAnalyze && !this.cb.canAnalyze();
+        await new Promise((r) => setTimeout(r, busy ? 700 : 30));
+      }
+      this._scheduleSave();
+    } finally {
+      this._previewBusy = false;
+      // un autre dossier a été ouvert pendant la boucle : on le traite
+      if (this._previewWant === this._scanId && this._previewWant !== scanId) {
+        this._previewQueue(this._scanId);
+      }
+    }
+  }
+
+  // Formes d'onde SOUNDCLOUD (publiées par SoundCloud, quelques Ko chacune)
+  _queueScWaves(list) {
+    for (const t of list) {
+      if (t.sc && t.waveform && !t.preview && !t._waveAsked) {
+        t._waveAsked = true;
+        this._scWaveQueue.push(t);
+      }
+    }
+    const pump = async () => {
+      this._scWaveRunning++;
+      try {
+        while (this._scWaveQueue.length) {
+          const t = this._scWaveQueue.shift();
+          if (t.preview) continue;
+          const res = await window.api.scWaveform(t.waveform).catch(() => null);
+          const url = res && res.ok ? previewFromSamples(res.samples) : null;
+          if (!url || t.preview) continue;
+          t.preview = url;
+          t.previewQ = true;
+          const key = trackKey(t);
+          const c = this.cache[key] || { v: 1 };
+          if (!c.preview) {
+            c.preview = url;
+            c.previewQ = true;
+            c.previewSrc = 'sc';
+            this.cache[key] = c;
+            this._scheduleSave();
+          } else if (c.previewSrc === 'audio' || !c.previewQ) {
+            t.preview = c.preview; // la couleur était déjà là
+          }
+          this.cb.onTrackUpdated(t);
+        }
+      } finally {
+        this._scWaveRunning--;
+      }
+    };
+    while (this._scWaveRunning < 4 && this._scWaveQueue.length) pump();
+    this._queueScColors(list);
+    this._queueScKeys(list);
+  }
+
+  // VRAIES COULEURS (basses / médiums / aigus) pour les pistes SoundCloud
+  // déjà écoutées : leur son complet est dans le cache, on en tire l'aperçu
+  // rapide comme pour un fichier du PC — y compris pendant le mix, une piste
+  // à la fois. (La forme d'onde publiée par SoundCloud n'a que l'amplitude :
+  // c'est elle qui restait toute bleue.)
+  _queueScColors(list) {
+    if (!this._scColorQueue) this._scColorQueue = [];
+    for (const t of list) {
+      const src = (t.sc && t.scId) || (!t.sc && t.path);
+      if (src && !t._colorAsked && (!t.preview || t.previewQ)) {
+        t._colorAsked = true;
+        this._scColorQueue.push(t);
+      }
+    }
+    if (this._scColorRunning) return;
+    this._scColorRunning = true;
+    (async () => {
+      try {
+        while (this._scColorQueue.length) {
+          const t = this._scColorQueue.shift();
+          const key = trackKey(t);
+          const c0 = this.cache[key];
+          if (c0 && c0.preview && c0.previewSrc === 'audio') {
+            if (t.preview !== c0.preview) { t.preview = c0.preview; this.cb.onTrackUpdated(t); }
+            continue;
+          }
+          const p = t.sc ? await window.api.scCachedPath(t.scId).catch(() => null) : t.path;
+          if (!p) continue;
+          try {
+            const raw = await window.api.readFile(p);
+            const ab = raw.buffer.slice(raw.byteOffset, raw.byteOffset + raw.byteLength);
+            const q = await makeQuickPreview(ab);
+            if (!q) continue;
+            const c = this.cache[key] || { v: 1 };
+            // un vrai aperçu (morceau déjà chargé sur un deck) reste prioritaire
+            if (!(c.preview && !c.previewQ)) {
+              c.preview = q.url;
+              c.previewQ = true;
+              c.previewSrc = 'audio';
+              this.cache[key] = c;
+              t.preview = q.url;
+              t.previewQ = true;
+              this._scheduleSave();
+              this.cb.onTrackUpdated(t);
+            }
+          } catch { /* fichier illisible */ }
+          const busy = this.cb.canAnalyze && !this.cb.canAnalyze();
+          await new Promise((r) => setTimeout(r, busy ? 600 : 20));
+        }
+      } finally {
+        this._scColorRunning = false;
+      }
+    })();
+  }
+
+  // TONALITÉ des pistes SoundCloud déjà écoutées (son complet en cache) :
+  // calculée quand plus rien ne joue, comme l'analyse des fichiers du PC
+  _queueScKeys(list) {
+    if (!this._scKeyQueue) this._scKeyQueue = [];
+    for (const t of list) {
+      if (t.sc && t.scId && t.musicKey == null && !t._keyAsked && t.bpm) {
+        t._keyAsked = true;
+        this._scKeyQueue.push(t);
+      }
+    }
+    if (this._scKeyRunning) return;
+    this._scKeyRunning = true;
+    (async () => {
+      try {
+        while (this._scKeyQueue.length) {
+          while (this.cb.canAnalyze && !this.cb.canAnalyze()) {
+            await new Promise((r) => setTimeout(r, 1500));
+          }
+          const t = this._scKeyQueue.shift();
+          if (t.musicKey != null) continue;
+          const key = trackKey(t);
+          if (this.cache[key] && this.cache[key].musicKey != null) {
+            t.musicKey = this.cache[key].musicKey;
+            this.cb.onTrackUpdated(t);
+            continue;
+          }
+          const p = await window.api.scCachedPath(t.scId).catch(() => null);
+          if (!p) continue;
+          try {
+            const buffer = await this._decode(p);
+            const k = await detectKey(buffer);
+            if (!k) continue;
+            const c = this.cache[key] || { v: 1 };
+            c.musicKey = k.code;
+            this.cache[key] = c;
+            t.musicKey = k.code;
+            this._scheduleSave();
+            this.cb.onTrackUpdated(t);
+          } catch { /* fichier illisible : tant pis */ }
+        }
+      } finally {
+        this._scKeyRunning = false;
+      }
+    })();
+  }
+
+  // Vrai aperçu en couleurs (tiré des pics du deck) dès qu'un morceau est
+  // chargé — remplace l'aperçu rapide / SoundCloud
+  setPreviewFromPeaks(track, peaks) {
+    const key = trackKey(track);
+    const c = this.cache[key] || { v: 1 };
+    if (c.preview && !c.previewQ) return;
+    const url = previewFromPeaks(peaks);
+    if (!url) return;
+    c.preview = url;
+    c.previewQ = false;
+    this.cache[key] = c;
+    track.preview = url;
+    track.previewQ = false;
+    this._scheduleSave();
+    this.cb.onTrackUpdated(track);
+  }
+
   async _decode(path) {
     const raw = await window.api.readFile(path);
     const ab = raw.buffer.slice(raw.byteOffset, raw.byteOffset + raw.byteLength);
@@ -703,11 +1153,21 @@ export class Library {
   }
 
   // Charge le morceau (téléchargement SoundCloud si besoin, puis décodage complet).
-  async loadForDeck(track, onProgress) {
+  // isCancelled() : un autre son a été demandé sur ce deck entre-temps — on
+  // abandonne au plus tôt (avant le décodage, avant l'analyse…)
+  async loadForDeck(track, onProgress, isCancelled = () => false) {
+    const stop = () => {
+      if (isCancelled()) {
+        const e = new Error('Chargement annulé');
+        e.cancelled = true;
+        throw e;
+      }
+    };
     if (track.sc && !track.path) {
       if (onProgress) onProgress('Téléchargement SoundCloud…');
       // Le compte tagué sur la piste part avec elle : ses Go+/privées à lui
       const res = await window.api.scFetchTrack(track.scId, track.acctIdx);
+      stop();
       if (!res.ok) throw new Error(res.error);
       track.path = res.path;
       // Extrait de 30 s (piste Go+ sans compte abonné) : on PRÉVIENT, et on
@@ -717,8 +1177,12 @@ export class Library {
         this.cb.onStatus(res.warning || 'Extrait 30 s — connecte le compte SoundCloud abonné');
       }
     }
+    if (onProgress) onProgress('Lecture du fichier…');
+    const raw = await window.api.readFile(track.path);
+    stop(); // annulé pendant la lecture du fichier : on ne décode même pas
     if (onProgress) onProgress('Décodage…');
-    const buffer = await this._decode(track.path);
+    const buffer = await this.audioCtx.decodeAudioData(raw.buffer.slice(raw.byteOffset, raw.byteOffset + raw.byteLength));
+    stop();
     let { bpm, beatOffset } = track;
     // La fraîcheur se vérifie dans le CACHE central, pas dans l'instantané du
     // morceau (les entrées d'historique / de playlists portaient un
@@ -734,6 +1198,7 @@ export class Library {
     if (!fresh || bpm == null) {
       if (onProgress) onProgress('Analyse BPM…');
       const res = await detectBPM(buffer, this._range());
+      stop();
       const prev = this.cache[trackKey(track)] || {};
       const keepBpm = (prev.manualBpm || prev.manual || prev.manualOffset ||
         prev.gridShift != null || prev.barAnchor != null || prev.rb) && prev.bpm != null;
@@ -772,10 +1237,27 @@ export class Library {
       this.cache[trackKey(track)] = cached;
       this._scheduleSave();
     }
+    // TONALITÉ : connue → tout de suite ; sinon calculée EN TÂCHE DE FOND
+    // (le morceau est jouable sans attendre) puis annoncée au deck
+    if (cached.musicKey != null) {
+      track.musicKey = cached.musicKey;
+    } else if (!track.snippet && !isCancelled()) {
+      detectKey(buffer).then((k) => {
+        if (!k) return;
+        const c = this.cache[trackKey(track)] || { v: 2 };
+        c.musicKey = k.code;
+        this.cache[trackKey(track)] = c;
+        track.musicKey = k.code;
+        this._scheduleSave();
+        this.cb.onTrackUpdated(track);
+        if (this.cb.onKeyDetected) this.cb.onKeyDetected(track, k.code);
+      }).catch(() => {});
+    }
     return {
       buffer,
       bpm,
       beatOffset,
+      musicKey: cached.musicKey ?? null,
       hotCues: cached.hotCues || [],
       beats: cached.beats || null,
       gridShift: cached.gridShift || 0,
@@ -877,6 +1359,11 @@ export class Library {
     c.beats = res.beats || null;
     c.barAnchorAuto = res.barAnchor || 0;
     c.duration = buffer.duration;
+    const k = await detectKey(buffer).catch(() => null);
+    if (k) {
+      c.musicKey = k.code;
+      track.musicKey = k.code;
+    }
     this.cache[key] = c;
     track.bpm = res.bpm;
     track.beatOffset = res.beatOffset;

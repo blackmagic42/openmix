@@ -419,11 +419,12 @@ export class MidiManager {
         let delta = b.action.startsWith('jog')
           ? d2 - 64
           : (d2 < 64 ? d2 : d2 - 128);
-        // Le dessus « vinyl OFF » (CC35) a une résolution 2× plus fine que
-        // le « vinyl ON » (CC34) : sans normalisation, un des deux jogs
-        // plafonnait 6× plus bas en vitesse (relevés : ±4 contre ±8)
-        if (d1 === 35) delta *= 2;
-        this.actions.rel(b.action, b.deck, delta);
+        // AUCUNE PONDÉRATION PAR CC. Le dessus émet CC34 en mode VINYLE et
+        // CC35 sans vinyle : doubler CC35 rendait le disque qui se trouvait
+        // dans ce mode DEUX FOIS plus nerveux que l'autre — la fameuse
+        // asymétrie gauche/droite. Un cran vaut un cran, des deux côtés.
+        // NE PAS RÉINTRODUIRE de facteur ici.
+        this.actions.rel(b.action, b.deck, delta, d1);
       } else if (d2 > 0) {
         this.actions.press(b.action, b.deck, true);
       } else {

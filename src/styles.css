@@ -2764,3 +2764,67 @@ tr.drm .col-name, tr.drm td:nth-child(3) { text-decoration: line-through; text-d
    du cadre depuis que la platine a été agrandie */
 .stems-btns { display: flex; flex-direction: column; gap: 2px; width: 100%; }
 .stems-btns .stem-btn { width: 100%; padding: 3px 0; font-size: 9px; }
+
+/* ==========================================================================
+   BIBLIOTHÈQUE : aperçu vague + pochette, colonne KEY, tri par en-tête
+   ========================================================================== */
+.col-prev { width: 178px; }
+#lib-table td.col-prev .prev-box {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+}
+#lib-table td.col-prev img.prev-art {
+  flex: 0 0 22px;
+  width: 22px;
+  height: 22px;
+  object-fit: cover;
+  border-radius: 2px;
+}
+#lib-table td.col-prev img.prev-wave {
+  flex: 1 1 auto;
+  min-width: 0;
+  width: 100%;
+  height: 22px;
+}
+.col-key { width: 54px; }
+#lib-table td.col-key {
+  font-family: var(--font-tech);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
+}
+/* compatible (roue Camelot) avec la tonalité du master qui joue */
+#lib-table td.col-key.key-ok { color: #4ade80; font-weight: 700; }
+#lib-table th[data-sort] { cursor: pointer; user-select: none; }
+#lib-table th[data-sort]:hover { color: var(--text-dim); }
+#lib-table th.sorted { color: var(--accent); }
+#lib-table th.sorted[data-dir="asc"]::after { content: ' ▲'; font-size: 8px; }
+#lib-table th.sorted[data-dir="desc"]::after { content: ' ▼'; font-size: 8px; }
+
+/* TONALITÉ dans l'en-tête du deck : Camelot entendu (morceau + KEY + tempo),
+   VERT = compatible avec le master, ORANGE = dissonant. Clic = KEY SYNC */
+.deck-key .key-lbl {
+  min-width: 30px;
+  padding: 0 4px;
+  font-family: var(--font-tech);
+  font-size: 11px;
+  font-weight: 800;
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  margin-right: 2px;
+}
+.deck-key .key-lbl.ok { color: #4ade80; border-color: #4ade8055; }
+.deck-key .key-lbl.clash { color: #ffa94d; border-color: #ffa94d55; }
+.deck-key .key-lbl.master { color: #fff; }
+/* pads du mode KEY : la tonalité obtenue, verte si elle colle au master */
+.pads .pad.key-compat { box-shadow: inset 0 -3px 0 #4ade80; }
+.pads .pad .pad-sub { display: block; font-size: 8.5px; opacity: 0.75; font-family: var(--font-tech); }
+
+/* Morceau DÉJÀ PRIS ce soir (chargé sur un deck) : titre et artiste en vert,
+   même sur la ligne sélectionnée */
+#lib-table tbody tr.taken td.col-title,
+#lib-table tbody tr.taken td.col-artist,
+#lib-table tbody tr.taken.selected td.col-title,
+#lib-table tbody tr.taken.selected td.col-artist { color: #4ade80; }

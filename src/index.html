@@ -70,7 +70,7 @@
         <div id="lib-list-wrap">
           <table id="lib-table">
             <thead>
-              <tr><th class="col-num">#</th><th class="col-prev">Aperçu</th><th>Titre</th><th class="col-artist">Artiste</th><th class="col-bpm">BPM</th><th class="col-dur">Durée</th></tr>
+              <tr><th class="col-num">#</th><th class="col-prev">Aperçu</th><th data-sort="title">Titre</th><th class="col-artist" data-sort="artist">Artiste</th><th class="col-bpm" data-sort="bpm">BPM</th><th class="col-key" data-sort="key">Key</th><th class="col-dur" data-sort="dur">Durée</th></tr>
             </thead>
             <tbody id="lib-body"></tbody>
           </table>
@@ -114,6 +114,7 @@
         <div class="set-row">
           <label>Comportement</label>
           <div class="set-inline"><input type="checkbox" id="set-autostems" checked> <span class="set-info">Préparer les stems automatiquement au chargement</span></div>
+          <div class="set-inline"><input type="checkbox" id="set-restore"> <span class="set-info">Au démarrage, recharger les sons et réglages de la dernière séance</span></div>
           <div class="set-inline"><input type="checkbox" id="set-snaprelease" checked> <span class="set-info">Recaler sur la grille au lâcher du scratch</span></div>
           <div class="set-inline"><span class="set-info">Taille des vagues :</span>
             <select id="set-wavesize">
