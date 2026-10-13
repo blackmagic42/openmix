@@ -4,6 +4,16 @@
 
 # OpenMix
 
+> **English:** OpenMix is free, open-source (MIT) DJ software for Windows.
+> 4 decks, sync that holds, BPM and key detection (Camelot), local stems
+> (Demucs), any USB-MIDI controller (Pioneer DDJ detected automatically,
+> everything else via MIDI learn), up to 4 players on PS/Xbox gamepads, a
+> phone console over WiFi and crowd requests by QR code. No account, no
+> subscription, no cloud. The interface is in English by default.
+> **Download:** [OpenMix-Setup-0.2.0.exe](https://github.com/blackmagic42/openmix/releases/latest)
+> (Windows; SmartScreen warns because the installer isn't signed: *More info → Run anyway*).
+> Mac users can run it from source (see below). Bugs and ideas: [Issues](https://github.com/blackmagic42/openmix/issues).
+
 **Le logiciel DJ libre et gratuit — 4 decks, platines DDJ et tout matériel DJ
 USB-MIDI, manettes de jeu, téléphones.**
 
@@ -37,6 +47,17 @@ local, sans cloud, sans abonnement.
   ton disque pour reprendre tes grilles existantes sans tout ré-analyser
 - **Platines & contrôleurs DJ** : compatible avec les DDJ Pioneer et tout
   matériel DJ USB-MIDI — chaque bouton est mappable (voir ci-dessous)
+- **Tonalités** détectées dans le son (notation Camelot), KEY SYNC en un
+  appui, key shift avec keylock
+- **Plage de tempo** ±6 / ±16 / WIDE par deck (clic sur la plage du
+  disque) et boutons − / + au 0,1 BPM ; un deck syncé fait suivre tout le groupe
+- **Passation du master** : quand le son master se termine, le master passe
+  au deck qui a les basses, sans changer le BPM — les decks syncés le restent
+- **Bibliothèque** : aperçus de vague sans charger, tri par BPM / tonalité /
+  durée, sons déjà joués pendant la soirée écrits en vert, rangement par
+  glisser-déposer dans « Ma musique OpenMix »
+- **Téléchargement par lien** (yt-dlp) pour ce que tu as le droit de
+  télécharger
 - Enregistrement du mix, mode 2 ou 4 decks
 
 ## Platines & contrôleurs DJ (MIDI)

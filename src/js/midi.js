@@ -124,9 +124,17 @@ export class MidiManager {
     if (this._echoQ.length > 128) this._echoQ.shift();
   }
 
-  _isEcho(status, d1, d2) {
+  _isEcho(status, d1, d2, ts) {
     if (!this._echoQ || !this._echoQ.length) return false;
-    const now = performance.now();
+    // HEURE D'ARRIVÉE du message, pas l'heure où on le traite : pendant un
+    // chargement (décodage, analyse), le logiciel traite les messages MIDI
+    // avec du retard — l'écho de la LED SYNC / MASTER dépassait alors les
+    // 25 ms et passait pour un APPUI (sync qui s'éteint tout seul quand le
+    // master change de deck ou au chargement d'un son)
+    const pnow = performance.now();
+    // (horodatage hors de la base performance.now() : repli sur l'heure
+    // de traitement, l'ancien comportement)
+    const now = ts > pnow - 1000 && ts <= pnow + 5 ? ts : pnow;
     // Un écho USB revient en QUELQUES millisecondes : fenêtre de 25 ms,
     // même note (velocity ignorée — l'écho peut être ré-encodé). L'ancienne
     // fenêtre de 250 ms sur triplet identique AVALAIT les VRAIS re-appuis :
@@ -137,7 +145,8 @@ export class MidiManager {
     while (this._echoQ.length && now - this._echoQ[0].t > 25) this._echoQ.shift();
     const kShort = `${status},${d1},`;
     for (let i = 0; i < this._echoQ.length; i++) {
-      if (this._echoQ[i].k.startsWith(kShort)) {
+      // (un écho ne peut pas arriver AVANT l'émission)
+      if (this._echoQ[i].k.startsWith(kShort) && this._echoQ[i].t <= now + 1) {
         this._echoQ.splice(i, 1);
         return true;
       }
@@ -207,7 +216,9 @@ export class MidiManager {
       let first = null;
       for (const input of this.access.inputs.values()) {
         if (!first) first = input;
-        input.onmidimessage = (e) => this._onMsg(e.data);
+        // (heure d'ARRIVÉE du message : l'anti-écho la compare à l'heure
+        // d'émission — voir _isEcho)
+        input.onmidimessage = (e) => this._onMsg(e.data, e.timeStamp);
       }
       // Ports de SORTIE : LED et vumètres partent vers TOUTES les sorties
       // (certaines platines exposent plusieurs ports — on ne devine plus)
@@ -318,15 +329,19 @@ export class MidiManager {
     this._saveMap();
   }
 
-  _onMsg(data) {
+  _onMsg(data, ts) {
     const [status, d1, d2 = 0] = data;
+    if (!this._tsChecked && ts) {
+      this._tsChecked = true;
+      console.log(`[midi] horodatage : message traité ${(performance.now() - ts).toFixed(1)} ms après son arrivée`);
+    }
     const type = status & 0xF0;
     const ch = status & 0x0F;
     if (type !== 0x90 && type !== 0x80 && type !== 0xB0 && type !== 0xE0) return;
     // Écho d'une LED qu'on vient d'émettre : avalé AVANT tout traitement.
     // (rappel diagnostic : toute trace renderer doit commencer par [midi] —
     // main.js filtre le reste)
-    if ((type === 0x90 || type === 0x80) && this._isEcho(status, d1, d2)) return;
+    if ((type === 0x90 || type === 0x80) && this._isEcho(status, d1, d2, ts)) return;
     // RELEVÉ INTÉGRAL temporaire (diagnostic jog droit) : TOUT est logué,
     // mappé ou non, plafonné à 8 lignes/s
     if (this.monitorAll) {

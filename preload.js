@@ -1,4 +1,4 @@
-const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 contextBridge.exposeInMainWorld('api', {
   // Utilisé côté renderer pour les ajustements spécifiques à une plateforme
@@ -42,5 +42,21 @@ contextBridge.exposeInMainWorld('api', {
   guestGet: () => ipcRenderer.invoke('guest-get'),
   guestQr: (url) => ipcRenderer.invoke('guest-qr', url),
   guestClear: () => ipcRenderer.invoke('guest-clear'),
-  onGuestReq: (cb) => ipcRenderer.on('guest-req', (_e, d) => cb(d))
+  onGuestReq: (cb) => ipcRenderer.on('guest-req', (_e, d) => cb(d)),
+  takeRestoreOnce: () => ipcRenderer.invoke('take-restore-once'),
+  ytdlpStatus: () => ipcRenderer.invoke('ytdlp-status'),
+  ytdlpInstall: () => ipcRenderer.invoke('ytdlp-install'),
+  ytdlpDownload: (url, id, destDir) => ipcRenderer.invoke('ytdlp-download', url, id, destDir),
+  ytdlpCancel: (id) => ipcRenderer.invoke('ytdlp-cancel', id),
+  ytdlpSearch: (q, n) => ipcRenderer.invoke('ytdlp-search', q, n),
+  dlInfo: () => ipcRenderer.invoke('dl-info'),
+  dlMkdir: (rel, parent) => ipcRenderer.invoke('dl-mkdir', rel, parent),
+  dlMoveDir: (src, destDir) => ipcRenderer.invoke('dl-move-dir', src, destDir),
+  dlRename: (p, name) => ipcRenderer.invoke('dl-rename', p, name),
+  dlTrash: (p) => ipcRenderer.invoke('dl-trash', p),
+  // chemin d'un fichier glissé depuis l'Explorateur Windows
+  pathForFile: (f) => { try { return webUtils.getPathForFile(f) || ''; } catch { return ''; } },
+  dlChooseRoot: () => ipcRenderer.invoke('dl-choose-root'),
+  dlPlace: (file, destDir) => ipcRenderer.invoke('dl-place', file, destDir),
+  onYtdlpProgress: (cb) => ipcRenderer.on('ytdlp-progress', (_e, d) => cb(d))
 });

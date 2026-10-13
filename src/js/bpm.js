@@ -13,6 +13,14 @@ export async function detectBPM(buffer, range) {
   // Le choix d'octave intelligent reste actif dans tous les cas.
   const RLO = range && range.lo ? range.lo : 85;
   const RHI = range && range.hi ? range.hi : 170;
+  // PLAFOND D'OCTAVE : au-delà (plage +6 %, 180 au minimum), un tempo est
+  // un DOUBLE TEMPO — les charlestons en croches se replient parfaitement à
+  // 2× le vrai BPM et y font toujours un meilleur score (mesuré : Bon
+  // Appétit 106 → 212, Smells Like Teen Spirit 117 → 236, Say So 111 → 222,
+  // T mimi 100 → 200, Raze It Up 93 → 186). Le score seul ne sait PAS
+  // trancher (un vrai 174 a le même rapport) : c'est la PLAGE qui décide,
+  // comme dans Rekordbox. Plage 100-200 = plafond 212 pour le hardcore.
+  const FOLD_HI = Math.max(RHI * 1.06, 180);
   // Morceau analysé EN ENTIER (jusqu'à 10 min) : la régression s'appuie sur
   // des kicks du début À LA FIN — aucune dérive par extrapolation.
   // Rendu à 8 kHz : on ne garde que les basses, c'est 5x plus rapide.
@@ -146,7 +154,7 @@ export async function detectBPM(buffer, range) {
       let best = bpm0;
       let bestD = Math.abs(Math.log(bpm0 / bpmMed));
       for (const c of [bpm0 / 2, bpm0 * 2]) {
-        if (c < 60 || c > 220) continue;
+        if (c < 60 || c > FOLD_HI) continue;
         const dd = Math.abs(Math.log(c / bpmMed));
         if (dd < bestD) {
           bestD = dd;
@@ -472,6 +480,17 @@ export async function detectBPM(buffer, range) {
       // elle fait UN seul pic — les vraies corrections (96→144) passent ce
       // seuil haut la main, les faux amis du swing jamais.
       if (bt && (!bestC || comb(bt) >= comb(bestC) * 1.15)) bestC = bt;
+      // Au-dessus du plafond : c'est la MOITIÉ (affinée autour de bpm/2 —
+      // l'estimation au double tempo est la plus précise des deux)
+      if (bestC && bestC.bpm > FOLD_HI) {
+        const h0 = bestC.bpm / 2;
+        let hb = dual(h0);
+        for (let c = h0 - 0.1; c <= h0 + 0.1; c += 0.01) {
+          const x = dual(c);
+          if (comb(x) > comb(hb)) hb = x;
+        }
+        bestC = { ...hb, tern: false };
+      }
     }
     if (bestC) {
       // Verrou façon Rekordbox : l'entier (puis le demi) gagne s'il fait
@@ -797,6 +816,28 @@ export async function detectBPM(buffer, range) {
           beats[k] = Math.round(expected * 1000) / 1000;
         }
       }
+    }
+  }
+
+  // DERNIER GARDE-FOU D'OCTAVE (chemins sans balayage : peu d'attaques,
+  // morceau court…) : une grille au-dessus du plafond garde UN TEMPS SUR
+  // DEUX — la parité dont les attaques sont les plus fortes (les temps,
+  // pas les contretemps)
+  if (beats.length > 16) {
+    const ivs = [];
+    for (let i = 1; i < beats.length; i++) ivs.push(beats[i] - beats[i - 1]);
+    ivs.sort((a, b) => a - b);
+    const medI = ivs[ivs.length >> 1];
+    if (medI > 0 && 60 / medI > FOLD_HI) {
+      const strength = [0, 0];
+      for (let k = 0; k < beats.length; k++) {
+        const j = Math.round(beats[k] / hopSec);
+        strength[k % 2] += Math.max(onset[j - 1] || 0, onset[j] || 0, onset[j + 1] || 0);
+      }
+      const par = strength[1] > strength[0] ? 1 : 0;
+      beats = beats.filter((_, k) => k % 2 === par);
+      period *= 2;
+      if (rigidBpm) rigidBpm = Math.round((rigidBpm / 2) * 100) / 100;
     }
   }
 

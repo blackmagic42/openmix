@@ -1,7 +1,7 @@
 {
   "name": "turbo-mix",
   "productName": "OpenMix",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "OpenMix — logiciel DJ libre : 4 decks, platines MIDI (DDJ), manettes PS/Xbox, console téléphone",
   "main": "main.js",
   "scripts": {

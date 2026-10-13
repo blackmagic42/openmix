@@ -712,6 +712,474 @@ ipcMain.handle('stems-separate', async (_e, trackPath) => {
   }
 });
 
+// ---------------------------------------------------------------------------
+// yt-dlp : téléchargement depuis YouTube, SoundCloud et tout site que yt-dlp
+// connaît. OpenMix garde SA PROPRE copie (version officielle, installée une
+// fois depuis GitHub avec l'accord de l'utilisateur) : dépendre d'un yt-dlp
+// « trouvé » dans le PATH, c'est se faire casser par le premier logiciel qui
+// en glisse un autre devant (vécu avec Python et les stems).
+// Rien n'est réencodé : on garde le meilleur flux audio d'origine (m4a si
+// possible, lisible partout, platines comprises).
+// ---------------------------------------------------------------------------
+const YTDLP_ASSET = process.platform === 'win32' ? 'yt-dlp.exe'
+  : process.platform === 'darwin' ? 'yt-dlp_macos' : 'yt-dlp_linux';
+const YTDLP_URL = `https://github.com/yt-dlp/yt-dlp/releases/latest/download/${YTDLP_ASSET}`;
+const ytdlpManaged = () => path.join(app.getPath('userData'), 'bin',
+  process.platform === 'win32' ? 'yt-dlp.exe' : 'yt-dlp');
+// DOSSIER DE MUSIQUE NATIF d'OpenMix : reçoit les téléchargements, toujours
+// en tête de l'explorateur. Par défaut Musique\OpenMix, déplaçable (⚙).
+const ytdlpOutDir = () => settings.dlRoot || path.join(app.getPath('music'), 'OpenMix');
+app.whenReady().then(() => fsp.mkdir(ytdlpOutDir(), { recursive: true }).catch(() => {}));
+
+// Un chemin est-il DANS le dossier natif ? (on n'écrit jamais ailleurs)
+function insideDlRoot(p) {
+  const rel = path.relative(ytdlpOutDir(), String(p || ''));
+  return !!p && !rel.startsWith('..') && !path.isAbsolute(rel);
+}
+const cleanSeg = (s) => String(s || '').replace(/[<>:"/\\|?*\x00-\x1F]/g, '_').replace(/[. ]+$/, '').trim().slice(0, 80);
+
+// Sous-dossiers du dossier natif (3 niveaux), pour choisir où ranger
+ipcMain.handle('dl-info', async () => {
+  const rootDir = ytdlpOutDir();
+  await fsp.mkdir(rootDir, { recursive: true }).catch(() => {});
+  const folders = [];
+  const walkDirs = async (dir, rel, depth) => {
+    if (depth > 3 || folders.length > 300) return;
+    let entries = [];
+    try { entries = await fsp.readdir(dir, { withFileTypes: true }); } catch { return; }
+    const dirs = entries.filter((e) => e.isDirectory() && !e.name.startsWith('.'))
+      .sort((a, b) => a.name.localeCompare(b.name, 'fr', { sensitivity: 'base' }));
+    for (const e of dirs) {
+      const r = rel ? `${rel}/${e.name}` : e.name;
+      folders.push({ rel: r, path: path.join(dir, e.name) });
+      await walkDirs(path.join(dir, e.name), r, depth + 1);
+    }
+  };
+  await walkDirs(rootDir, '', 1);
+  return { root: rootDir, folders };
+});
+
+// Nouveau dossier (« House » ou « House/Deep ») dans le dossier natif
+// (parent = dossier où le créer — l'explorateur crée DANS le dossier ouvert)
+ipcMain.handle('dl-mkdir', async (_e, rel, parent) => {
+  const segs = String(rel || '').split(/[\\/]+/).map(cleanSeg).filter(Boolean);
+  if (!segs.length) return { ok: false, error: 'empty name' };
+  const base = parent && (insideDlRoot(parent) || isDlRoot(parent)) ? parent : ytdlpOutDir();
+  const dir = path.join(base, ...segs);
+  if (!insideDlRoot(dir)) return { ok: false, error: 'outside' };
+  await fsp.mkdir(dir, { recursive: true });
+  return { ok: true, path: dir, rel: path.relative(ytdlpOutDir(), dir).split(path.sep).join('/') };
+});
+
+// --- RANGEMENT dans le dossier natif (glisser-déposer de l'explorateur) ---
+// Tout reste DANS le dossier natif : on n'écrit, ne déplace et ne jette
+// jamais rien ailleurs.
+const isDlRoot = (p) => !!p && path.resolve(p) === path.resolve(ytdlpOutDir());
+// Nom libre dans destDir : « Nom (2) », « Nom (3) »…
+async function freeName(destDir, base, ext = '') {
+  let target = path.join(destDir, base + ext);
+  for (let k = 2; k < 200; k++) {
+    try { await fsp.access(target); } catch { return target; }
+    target = path.join(destDir, `${base} (${k})${ext}`);
+  }
+  return target;
+}
+// Sons d'un dossier (récursif) : leur clé d'analyse suit le déplacement
+async function audioUnder(dir, max = 5000) {
+  const out = [];
+  const walk = async (d) => {
+    if (out.length >= max) return;
+    let entries = [];
+    try { entries = await fsp.readdir(d, { withFileTypes: true }); } catch { return; }
+    for (const e of entries) {
+      const p = path.join(d, e.name);
+      if (e.isDirectory()) await walk(p);
+      else if (AUDIO_EXT.has(path.extname(e.name).toLowerCase())) {
+        try {
+          const st = await fsp.stat(p);
+          out.push({ path: p, size: st.size, mtime: st.mtimeMs });
+        } catch { /* fichier disparu */ }
+      }
+    }
+  };
+  await walk(dir);
+  return out;
+}
+const remapMoves = (files, from, to) => files.map((f) => ({
+  from: f.path, to: path.join(to, path.relative(from, f.path)), size: f.size, mtime: f.mtime
+}));
+
+// Déplacer un DOSSIER dans un autre (les deux dans le dossier natif)
+ipcMain.handle('dl-move-dir', async (_e, src, destDir) => {
+  try {
+    if (!insideDlRoot(src) || isDlRoot(src)) return { ok: false, error: 'outside' };
+    if (!insideDlRoot(destDir) && !isDlRoot(destDir)) return { ok: false, error: 'outside' };
+    const rel = path.relative(src, destDir);
+    if (!rel || (!rel.startsWith('..') && !path.isAbsolute(rel))) return { ok: false, error: 'into itself' };
+    if (path.resolve(path.dirname(src)) === path.resolve(destDir)) return { ok: false, error: 'same folder' };
+    const files = await audioUnder(src);
+    const target = await freeName(destDir, path.basename(src));
+    await fsp.rename(src, target);
+    return { ok: true, path: target, name: path.basename(target), moves: remapMoves(files, src, target) };
+  } catch (err) {
+    return { ok: false, error: String(err.message || err) };
+  }
+});
+
+// Renommer un son ou un dossier du dossier natif
+ipcMain.handle('dl-rename', async (_e, p, newName) => {
+  try {
+    if (!insideDlRoot(p) || isDlRoot(p)) return { ok: false, error: 'outside' };
+    const st = await fsp.stat(p);
+    let name = cleanSeg(newName);
+    if (!name) return { ok: false, error: 'empty name' };
+    const ext = path.extname(p);
+    // un son garde son extension, même si on ne l'a pas retapée
+    if (!st.isDirectory() && path.extname(name).toLowerCase() !== ext.toLowerCase()) name += ext;
+    const target = path.join(path.dirname(p), name);
+    if (path.resolve(target) === path.resolve(p)) return { ok: false, error: 'same name' };
+    try {
+      await fsp.access(target);
+      // (Windows : changer seulement la casse vise le « même » fichier)
+      if (target.toLowerCase() !== p.toLowerCase()) return { ok: false, error: 'exists' };
+    } catch { /* libre */ }
+    const files = st.isDirectory() ? await audioUnder(p) : [{ path: p, size: st.size, mtime: st.mtimeMs }];
+    await fsp.rename(p, target);
+    const moves = st.isDirectory()
+      ? remapMoves(files, p, target)
+      : [{ from: p, to: target, size: st.size, mtime: st.mtimeMs }];
+    return { ok: true, path: target, name: path.parse(target).name, dir: st.isDirectory(), moves };
+  } catch (err) {
+    return { ok: false, error: String(err.message || err) };
+  }
+});
+
+// À la CORBEILLE (récupérable) — seulement dans le dossier natif
+ipcMain.handle('dl-trash', async (_e, p) => {
+  try {
+    if (!insideDlRoot(p) || isDlRoot(p)) return { ok: false, error: 'outside' };
+    await require('electron').shell.trashItem(p);
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: String(err.message || err) };
+  }
+});
+
+// Choisir un autre emplacement pour le dossier natif
+ipcMain.handle('dl-choose-root', async () => {
+  const r = await dialog.showOpenDialog(win, {
+    title: 'OpenMix music folder (downloads)',
+    defaultPath: ytdlpOutDir(),
+    properties: ['openDirectory', 'createDirectory']
+  });
+  if (r.canceled || !r.filePaths[0]) return { ok: false };
+  settings.dlRoot = r.filePaths[0];
+  await saveSettings();
+  return { ok: true, root: settings.dlRoot };
+});
+
+// RANGER un son dans un dossier du dossier natif : TOUJOURS DÉPLACÉ, d'où
+// qu'il vienne — jamais de copie, jamais de doublon (demande David : « on ne
+// fait pas de copier-coller »). Même son déjà présent à l'arrivée (même nom,
+// même taille) : l'original part à la CORBEILLE au lieu de créer « (2) ».
+ipcMain.handle('dl-place', async (_e, file, destDir) => {
+  let target = null;
+  let copied = false;
+  try {
+    if (!insideDlRoot(destDir) && !isDlRoot(destDir)) return { ok: false, error: 'outside' };
+    await fsp.mkdir(destDir, { recursive: true });
+    if (path.resolve(path.dirname(file)) === path.resolve(destDir)) return { ok: false, error: 'same folder' };
+    const st0 = await fsp.stat(file);
+    if (!st0.isFile()) return { ok: false, error: 'not a file' };
+    target = path.join(destDir, path.basename(file));
+    const same = await fsp.stat(target).catch(() => null);
+    if (same && same.isFile() && same.size === st0.size) {
+      await require('electron').shell.trashItem(file);
+      return { ok: true, moved: true, dedup: true, path: target, name: path.parse(target).name, size: same.size, mtime: same.mtimeMs };
+    }
+    if (same) target = await freeName(destDir, path.parse(file).name, path.parse(file).ext);
+    try {
+      await fsp.rename(file, target);
+    } catch (err) {
+      if (err.code !== 'EXDEV') throw err;
+      // autre disque : copie (même date → la clé d'analyse reste valable)
+      // puis suppression de l'original ; si elle échoue, on retire la copie
+      copied = true;
+      await fsp.copyFile(file, target);
+      await fsp.utimes(target, st0.atime, st0.mtime).catch(() => {});
+      await fsp.unlink(file);
+    }
+    const st = await fsp.stat(target);
+    return { ok: true, moved: true, path: target, name: path.parse(target).name, size: st.size, mtime: st.mtimeMs };
+  } catch (err) {
+    if (copied && target) await fsp.unlink(target).catch(() => {});
+    const busy = err && (err.code === 'EBUSY' || err.code === 'EPERM');
+    return { ok: false, error: busy ? 'file in use' : String(err.message || err) };
+  }
+});
+let ytdlpCmd = null;          // { exe, args, source, version }
+const ytdlpJobs = new Map();  // id → processus en cours
+
+function ytdlpVersion(exe, args = []) {
+  const { spawn } = require('child_process');
+  return new Promise((resolve) => {
+    let out = '';
+    let done = false;
+    const finish = (v) => { if (!done) { done = true; resolve(v); } };
+    let p;
+    try {
+      p = spawn(exe, [...args, '--version'], { windowsHide: true });
+    } catch { finish(null); return; }
+    const t = setTimeout(() => { try { p.kill(); } catch { /* rien */ } finish(null); }, 30000);
+    p.stdout.on('data', (d) => { out += d; });
+    p.on('error', () => { clearTimeout(t); finish(null); });
+    p.on('close', (code) => {
+      clearTimeout(t);
+      const v = out.trim().split(/\r?\n/).pop();
+      finish(code === 0 && v ? v : null);
+    });
+  });
+}
+
+async function findYtDlp(force = false) {
+  if (ytdlpCmd && !force) return ytdlpCmd;
+  const fs = require('fs');
+  const cands = [];
+  if (fs.existsSync(ytdlpManaged())) cands.push({ exe: ytdlpManaged(), args: [], source: 'openmix' });
+  if (settings.ytdlpPath && fs.existsSync(settings.ytdlpPath)) cands.push({ exe: settings.ytdlpPath, args: [], source: 'perso' });
+  cands.push({ exe: 'yt-dlp', args: [], source: 'système' });
+  for (const c of cands) {
+    const v = await ytdlpVersion(c.exe, c.args);
+    if (v) {
+      ytdlpCmd = { ...c, version: v };
+      return ytdlpCmd;
+    }
+  }
+  ytdlpCmd = null;
+  return null;
+}
+
+ipcMain.handle('ytdlp-status', async () => {
+  const c = await findYtDlp();
+  return c ? { ok: true, version: c.version, source: c.source, dir: ytdlpOutDir() } : { ok: false, dir: ytdlpOutDir() };
+});
+
+// Installe (ou met à jour) la copie d'OpenMix : la DERNIÈRE version
+// officielle, publiée par le projet yt-dlp sur GitHub
+ipcMain.handle('ytdlp-install', async () => {
+  try {
+    const dest = ytdlpManaged();
+    await fsp.mkdir(path.dirname(dest), { recursive: true });
+    const r = await fetch(YTDLP_URL);
+    if (!r.ok) throw new Error(`GitHub HTTP ${r.status}`);
+    const buf = Buffer.from(await r.arrayBuffer());
+    if (buf.length < 1000000) throw new Error('download too small');
+    const tmp = `${dest}.part`;
+    await fsp.writeFile(tmp, buf);
+    if (process.platform !== 'win32') await fsp.chmod(tmp, 0o755);
+    await fsp.rm(dest, { force: true });
+    await fsp.rename(tmp, dest);
+    const c = await findYtDlp(true);
+    if (!c) throw new Error('yt-dlp does not start');
+    console.log(`[midi] yt-dlp ${c.version} installé (${dest})`);
+    return { ok: true, version: c.version, source: c.source };
+  } catch (err) {
+    return { ok: false, error: String(err.message || err) };
+  }
+});
+
+// Nom de fichier « Artiste - Titre » (la bibliothèque coupe sur le 1er tiret)
+const ytClean = (s) => String(s || '').replace(/[<>:"/\\|?*\x00-\x1F]/g, '_').replace(/\s+/g, ' ').trim().slice(0, 150);
+
+ipcMain.handle('ytdlp-download', async (e, url, id, destDir) => {
+  const { spawn } = require('child_process');
+  const c = await findYtDlp();
+  if (!c) return { ok: false, error: 'yt-dlp not installed' };
+  if (!/^https?:\/\//i.test(String(url || ''))) return { ok: false, error: 'bad url' };
+  // dossier choisi par l'utilisateur, à condition qu'il soit DANS le dossier natif
+  const outDir = destDir && insideDlRoot(destDir) ? destDir : ytdlpOutDir();
+  await fsp.mkdir(outDir, { recursive: true });
+  const send = (msg) => { try { e.sender.send('ytdlp-progress', { id, ...msg }); } catch { /* fenêtre fermée */ } };
+  // YouTube exige désormais un moteur JavaScript : on prête à yt-dlp le
+  // Node.js EMBARQUÉ dans Electron (ELECTRON_RUN_AS_NODE) — rien à installer
+  const args = [
+    ...c.args,
+    '--js-runtimes', `node:${process.execPath}`,
+    '--no-playlist',            // une vidéo avec &list= : seulement la vidéo
+    '--newline', '--progress', '--no-colors', '--encoding', 'utf-8',
+    '-f', 'bestaudio[ext=m4a]/bestaudio/best',
+    '--windows-filenames', '--trim-filenames', '200', // (yt-dlp compte le CHEMIN entier)
+    '-o', path.join(outDir, '%(title)s.%(ext)s'),
+    '--print', 'after_move:OMFILE\t%(filepath)s\t%(uploader)s\t%(title)s',
+    String(url)
+  ];
+  const files = [];
+  let lastErr = '';
+  const code = await new Promise((resolve) => {
+    let p;
+    try {
+      p = spawn(c.exe, args, {
+        windowsHide: true,
+        env: { ...process.env, PYTHONIOENCODING: 'utf-8', ELECTRON_RUN_AS_NODE: '1' }
+      });
+    } catch (err) {
+      lastErr = String(err.message || err);
+      resolve(-1);
+      return;
+    }
+    ytdlpJobs.set(id, p);
+    try { require('os').setPriority(p.pid, 10); } catch { /* rien */ }
+    let item = 1;
+    let of = 1;
+    let title = '';
+    const onLine = (line) => {
+      const l = line.trim();
+      if (!l) return;
+      let m;
+      if (l.startsWith('OMFILE\t')) {
+        const [, fp, up, ti] = l.split('\t');
+        files.push({ fp, up, ti });
+      } else if ((m = l.match(/^\[download\] Downloading item (\d+) of (\d+)/))) {
+        item = +m[1];
+        of = +m[2];
+        send({ item, of, pct: 0, title });
+      } else if ((m = l.match(/^\[download\] Destination: (.+)$/))) {
+        title = path.parse(m[1]).name;
+        send({ item, of, pct: 0, title });
+      } else if ((m = l.match(/^\[download\]\s+([\d.]+)%/))) {
+        send({ item, of, pct: +m[1], title });
+      } else if ((m = l.match(/^\[download\] (.+) has already been downloaded/))) {
+        files.push({ fp: m[1].trim(), up: '', ti: path.parse(m[1].trim()).name });
+      } else if (/^ERROR:/.test(l)) {
+        lastErr = l.replace(/^ERROR:\s*/, '');
+      }
+    };
+    let bufOut = '';
+    let bufErr = '';
+    p.stdout.on('data', (d) => {
+      bufOut += d;
+      const parts = bufOut.split(/\r?\n/);
+      bufOut = parts.pop();
+      parts.forEach(onLine);
+    });
+    p.stderr.on('data', (d) => {
+      bufErr += d;
+      const parts = bufErr.split(/\r?\n/);
+      bufErr = parts.pop();
+      parts.forEach(onLine);
+    });
+    p.on('error', (err) => { lastErr = String(err.message || err); resolve(-1); });
+    p.on('close', (cd) => {
+      if (bufOut) onLine(bufOut);
+      if (bufErr) onLine(bufErr);
+      resolve(cd);
+    });
+  });
+  const cancelled = ytdlpJobs.get(id) && ytdlpJobs.get(id)._omCancelled;
+  ytdlpJobs.delete(id);
+  if (cancelled) return { ok: false, cancelled: true, error: 'cancelled' };
+  // Renommage « Artiste - Titre » quand le titre ne porte pas l'artiste
+  const out = [];
+  for (const f of files) {
+    let fp = f.fp;
+    try {
+      const ext = path.extname(fp);
+      const base = path.parse(fp).name;
+      if (f.up && !/ - /.test(base) && !/ - /.test(f.ti || '')) {
+        const target = path.join(path.dirname(fp), `${ytClean(f.up)} - ${ytClean(base)}${ext}`);
+        try {
+          await fsp.access(target);
+        } catch {
+          await fsp.rename(fp, target);
+          fp = target;
+        }
+      }
+      const st = await fsp.stat(fp);
+      out.push({ path: fp, name: path.parse(fp).name, size: st.size, mtime: st.mtimeMs });
+    } catch { /* fichier introuvable : ignoré */ }
+  }
+  if (!out.length) {
+    return { ok: false, error: lastErr || (code === 0 ? 'nothing downloaded' : `yt-dlp exit ${code}`) };
+  }
+  return { ok: true, files: out, dir: outDir, partial: code !== 0 ? lastErr : null };
+});
+
+// RECHERCHE YouTube (yt-dlp « ytsearch ») : titres, chaîne, durée,
+// miniature — sans rien télécharger
+ipcMain.handle('ytdlp-search', async (_e, query, n = 20) => {
+  const { spawn } = require('child_process');
+  const c = await findYtDlp();
+  if (!c) return { ok: false, error: 'yt-dlp not installed' };
+  const q = String(query || '').trim().slice(0, 200);
+  if (!q) return { ok: true, items: [] };
+  const count = Math.max(1, Math.min(40, n | 0));
+  return new Promise((resolve) => {
+    let out = '';
+    let err = '';
+    let p;
+    try {
+      p = spawn(c.exe, [...c.args, '--flat-playlist', '-J', '--no-warnings', '--encoding', 'utf-8',
+        `ytsearch${count}:${q}`], { windowsHide: true, env: { ...process.env, PYTHONIOENCODING: 'utf-8' } });
+    } catch (ex) {
+      resolve({ ok: false, error: String(ex.message || ex) });
+      return;
+    }
+    const t = setTimeout(() => { try { p.kill(); } catch { /* rien */ } }, 40000);
+    p.stdout.on('data', (d) => { out += d; });
+    p.stderr.on('data', (d) => { err = (err + d).slice(-2000); });
+    p.on('error', (ex) => { clearTimeout(t); resolve({ ok: false, error: String(ex.message || ex) }); });
+    p.on('close', () => {
+      clearTimeout(t);
+      try {
+        const j = JSON.parse(out);
+        const items = (j.entries || []).filter((e) => e && e.id).map((e) => ({
+          src: 'yt',
+          id: e.id,
+          url: e.url && /^https?:/.test(e.url) ? e.url : `https://www.youtube.com/watch?v=${e.id}`,
+          title: e.title || e.id,
+          // « Artiste - Topic » = la chaîne officielle de l'artiste
+          artist: String(e.channel || e.uploader || '').replace(/ - Topic$/, ''),
+          duration: e.duration || null,
+          views: e.view_count || null,
+          thumb: `https://i.ytimg.com/vi/${e.id}/mqdefault.jpg`
+        }));
+        resolve({ ok: true, items });
+      } catch {
+        resolve({ ok: false, error: (err.trim().split(/\r?\n/).pop() || 'search failed').replace(/^ERROR:\s*/, '') });
+      }
+    });
+  });
+});
+
+ipcMain.handle('ytdlp-cancel', async (_e, id) => {
+  const p = ytdlpJobs.get(id);
+  if (!p) return false;
+  p._omCancelled = true;
+  try {
+    if (process.platform === 'win32') {
+      // yt-dlp.exe relance un sous-processus : on arrête tout l'arbre
+      require('child_process').spawn('taskkill', ['/pid', String(p.pid), '/T', '/F'], { windowsHide: true });
+    } else {
+      p.kill();
+    }
+  } catch { /* déjà fini */ }
+  return true;
+});
+
+// Relance pour une mise à jour SANS perdre les decks chargés : un fichier
+// « restore-once » posé dans le dossier de données fait restaurer la séance
+// au prochain démarrage, UNE fois (le fichier est consommé)
+ipcMain.handle('take-restore-once', async () => {
+  const f = path.join(app.getPath('userData'), 'restore-once');
+  try {
+    await fsp.access(f);
+    await fsp.rm(f, { force: true });
+    return true;
+  } catch {
+    return false;
+  }
+});
+
 // --- Explorateur de fichiers (arborescence classique) ---
 ipcMain.handle('fs-roots', async () => {
   const fs = require('fs');
@@ -719,11 +1187,16 @@ ipcMain.handle('fs-roots', async () => {
   const add = (name, p) => {
     try { if (p && fs.existsSync(p)) roots.push({ name, path: p }); } catch { /* rien */ }
   };
-  add('🎵 Musique', app.getPath('music'));
-  add('⬇️ Downloads', app.getPath('downloads'));
-  add('🖥️ Bureau', app.getPath('desktop'));
-  add('📄 Documents', app.getPath('documents'));
-  for (const l of ['C', 'D', 'E', 'F', 'G']) add(`💽 ${l}:`, `${l}:\\`);
+  // dossier NATIF d'OpenMix : toujours en tête (l'interface lui donne son nom)
+  try {
+    await fsp.mkdir(ytdlpOutDir(), { recursive: true });
+    roots.push({ name: '📁 OpenMix', path: ytdlpOutDir(), native: true });
+  } catch { /* emplacement inaccessible */ }
+  add('📁 Musique', app.getPath('music'));
+  add('📁 Téléchargements', app.getPath('downloads'));
+  add('📁 Bureau', app.getPath('desktop'));
+  add('📁 Documents', app.getPath('documents'));
+  for (const l of ['C', 'D', 'E', 'F', 'G']) add(`Disque ${l}:`, `${l}:\\`);
   return roots;
 });
 
@@ -1087,7 +1560,7 @@ ipcMain.handle('sc-my-playlists', async (_e, accountIdx) => {
           items.push({
             scPlaylist: true,
             permalink: p.permalink_url,
-            name: `📂 ${p.title}`,
+            name: p.title,
             trackCount: p.track_count
           });
         }
@@ -1101,7 +1574,7 @@ ipcMain.handle('sc-my-playlists', async (_e, accountIdx) => {
         for (const p of (own.collection || [])) push(p);
       } catch { /* idem */ }
       // Les LIKES en tête, comme une playlist — « une playlist like » (David)
-      items.unshift({ scLikes: true, name: '❤️ Likes', trackCount: null });
+      items.unshift({ scLikes: true, name: '❤ Likes', trackCount: null });
       return { ok: true, username: me.username, accountIdx: idx, playlists: items };
     });
   } catch (err) {
@@ -1239,7 +1712,7 @@ ipcMain.handle('sc-resolve', async (_e, url, accountIdx) => {
       const items = (pl.collection || []).map(p => ({
         scPlaylist: true,
         permalink: p.permalink_url,
-        name: `📂 ${p.title}`,
+        name: p.title,
         trackCount: p.track_count
       }));
       return { ok: true, kind: 'user', title: obj.username, playlists: items };

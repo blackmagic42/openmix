@@ -359,9 +359,9 @@ export class Library {
     // de gauche. Les noms des racines portent déjà leur icône.
     if (this.rootsView) {
       return [
-        { scRootRow: true, name: '☁️ SoundCloud' },
-        { plRootRow: true, name: '🎛 Playlists' },
-        ...(this.fsDirs || []).map(d => ({ fsRow: true, path: d.path, name: d.name }))
+        { scRootRow: true, name: 'SoundCloud' },
+        { plRootRow: true, name: 'Playlists' },
+        ...(this.fsDirs || []).map(d => ({ fsRow: true, path: d.path, name: d.native ? i18n('dl_native_root') : d.name }))
       ];
     }
     // Mode local : ligne « .. » (remonter) puis sous-dossiers navigables
@@ -396,11 +396,38 @@ export class Library {
     // l'ancienne version permanente si elle traîne dans le cache.
     this.played = {};
     delete this.cache.__played;
+    this._refoldOctaves();
     this.playlists = this.cache.__playlists || [];
     this.plOpen = null;
     const last = this.cache.__folder;
     if (last) await this.scan(last);
     else await this.showRoots(); // premier lancement : la balade commence aux racines
+  }
+
+  // UNE FOIS : les analyses déjà en cache au-dessus du plafond d'octave
+  // (double tempo, ex. Bon Appétit lu 212 au lieu de 106 — voir FOLD_HI dans
+  // bpm.js) sont remises à analyser. Un BPM saisi / ÷2×2 à la main et les
+  // grilles Rekordbox sont respectés ; les retouches de calage (◀ ▶, GRID)
+  // faites sur une grille au double tempo n'ont plus de sens : effacées.
+  _refoldOctaves() {
+    if (this.cache.__octFold >= 1) return;
+    const { hi } = this._range();
+    const foldHi = Math.max(hi * 1.06, 180);
+    let n = 0;
+    for (const k of Object.keys(this.cache)) {
+      const c = this.cache[k];
+      if (!c || typeof c !== 'object' || k.startsWith('__') || !(c.bpm > foldHi)) continue;
+      if (c.manualBpm || c.rb) continue;
+      delete c.manual;
+      delete c.manualOffset;
+      delete c.gridShift;
+      delete c.barAnchor;
+      c.v = 2; // BPM gardé à l'affichage, ré-analyse au prochain passage
+      n++;
+    }
+    this.cache.__octFold = 1;
+    if (n) console.log(`[midi] analyse : ${n} sons au double tempo remis à analyser`);
+    this._scheduleSave();
   }
 
   // --- Playlists ---
@@ -485,6 +512,39 @@ export class Library {
   isTaken(t) {
     if (!t || !t.name) return false;
     return !!this.played[trackKey(t)];
+  }
+
+  // Un fichier a été RANGÉ ailleurs (déplacé ou copié) : son analyse (BPM,
+  // grille, cues, tonalité) le suit sous sa nouvelle clé, et les playlists /
+  // l'historique pointent vers le nouvel emplacement s'il a été déplacé
+  relocateTrack(track, info) {
+    const oldKey = trackKey(track);
+    const nt = { path: info.path, size: info.size, mtime: info.mtime };
+    const newKey = trackKey(nt);
+    if (this.cache[oldKey] && !this.cache[newKey]) {
+      this.cache[newKey] = JSON.parse(JSON.stringify(this.cache[oldKey]));
+    }
+    if (info.moved) {
+      const fix = (r) => {
+        if (r && r.key === oldKey) {
+          r.key = newKey;
+          r.path = info.path;
+          r.name = info.name;
+        }
+      };
+      this.playlists.forEach((p) => p.tracks.forEach(fix));
+      this.history.forEach(fix);
+      if (this.played[oldKey]) this.played[newKey] = this.played[oldKey];
+    }
+    this._scheduleSave();
+  }
+
+  // Fichier déplacé / renommé hors de la vue (dossier déplacé, renommé…) :
+  // { from, to, size, mtime } — son analyse, ses playlists suivent
+  relocateMoved(m) {
+    const name = String(m.to).split(/[\\/]/).pop().replace(/\.[^.]+$/, '');
+    this.relocateTrack({ path: m.from, size: m.size, mtime: m.mtime },
+      { path: m.to, size: m.size, mtime: m.mtime, moved: true, name });
   }
 
   // Retirer la marque d'un morceau (clic droit) ou de tous
@@ -737,7 +797,7 @@ export class Library {
     this.scTracks = accounts.map((a, i) => ({
       scAccountRow: true,
       acctIdx: i,
-      name: `👤 ${a.name || `Compte ${i + 1}`}${a.expired ? ' (reconnecter)' : ''}`
+      name: `${a.name || `Compte ${i + 1}`}${a.expired ? ' (reconnecter)' : ''}`
     }));
     this.scAccountsView = true;
     this.scTitle = 'Comptes SoundCloud';
@@ -799,8 +859,8 @@ export class Library {
     this._queueScWaves(this.scTracks);
     // En b2b on précise À QUI sont ces likes — en solo, libellé historique
     this.scTitle = (this.scAccountCount >= 2 && res.username)
-      ? `❤️ Likes de ${res.username}`
-      : '❤️ Likes';
+      ? `❤ Likes de ${res.username}`
+      : '❤ Likes';
     this.setMode('sc');
     this.selection = 0;
     this.applyFilter();

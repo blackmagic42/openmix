@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://*.sndcdn.com">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://*.sndcdn.com https://i.ytimg.com">
   <title>OpenMix</title>
   <link rel="stylesheet" href="styles.css">
   <script src="js/platform.js"></script>
@@ -44,18 +44,21 @@
     <section id="library">
       <div id="lib-toolbar">
         <div id="lib-tabs">
-          <button id="tab-local" class="tab on" data-i18n="tab_files">💻 Fichiers</button>
-          <button id="tab-sc" class="tab" data-i18n="tab_soundcloud">☁️ SoundCloud</button>
-          <button id="tab-hist" class="tab" data-i18n="tab_history">🕘 Historique</button>
+          <button id="tab-local" class="tab on" data-i18n="tab_files">Fichiers</button>
+          <button id="tab-sc" class="tab" data-i18n="tab_soundcloud">SoundCloud</button>
+          <button id="tab-hist" class="tab" data-i18n="tab_history">Historique</button>
           <button id="tab-pl" class="tab" data-i18n="tab_playlists">Playlists</button>
         </div>
         <div id="pl-bar" class="hidden">
           <button id="btn-pl-back" class="hidden" data-i18n-title="back_to_playlists">⬅</button>
-          <button id="btn-pl-new" data-i18n="new_playlist">➕ Nouvelle</button>
+          <button id="btn-pl-new" data-i18n="new_playlist">＋ Nouvelle</button>
           <button id="btn-pl-import" data-i18n="import_rekordbox_label" data-i18n-title="import_rekordbox_title">⬇ Rekordbox XML</button>
           <button id="btn-pl-play" class="hidden" data-i18n="play_active_deck_label" data-i18n-title="play_active_deck_title">▶ Jouer sur deck actif</button>
         </div>
         <button id="btn-folder" data-i18n="music_folder">📁 Dossier musiques</button>
+        <button id="btn-lib-newdir" class="hidden" data-i18n="dl_newdir_btn" data-i18n-title="dl_newdir_here_title">＋ Dossier</button>
+        <button id="btn-ytdlp" data-i18n="ytdlp_button" data-i18n-title="ytdlp_button_title">⬇ Lien</button>
+        <button id="btn-web-search" data-i18n="web_search_button" data-i18n-title="web_search_button_title">🔎 YouTube / SoundCloud</button>
         <div id="sc-bar" class="hidden">
           <button id="btn-sc-back" class="hidden" data-i18n-title="back_to_playlist_list">⬅</button>
           <button id="btn-sc-login" data-i18n="login">Se connecter</button>
@@ -65,6 +68,21 @@
         </div>
         <input id="lib-search" type="text" data-i18n-placeholder="search_placeholder" placeholder="Rechercher…" spellcheck="false">
         <span id="lib-status" data-i18n="choose_music_folder">Choisis ton dossier de musiques pour commencer</span>
+      </div>
+      <!-- RECHERCHE YouTube + SoundCloud avec téléchargement -->
+      <div id="web-search" class="hidden">
+        <div id="ws-bar">
+          <input id="ws-query" type="text" spellcheck="false" data-i18n-placeholder="web_search_placeholder" placeholder="Rechercher un son sur YouTube et SoundCloud…">
+          <label class="ws-src"><input type="checkbox" id="ws-yt" checked> YouTube</label>
+          <label class="ws-src"><input type="checkbox" id="ws-sc" checked> SoundCloud</label>
+          <button id="ws-go" data-i18n="web_search_go">Rechercher</button>
+          <span class="ws-dest-label" data-i18n="dl_dest_label">Ranger dans</span>
+          <select id="ws-dest" data-i18n-title="dl_dest_title"></select>
+          <button id="ws-newdir" data-i18n="dl_newdir_btn" data-i18n-title="dl_newdir_title">＋ Dossier</button>
+          <span id="ws-status" class="set-info"></span>
+          <button id="ws-close" data-i18n-title="close">✕</button>
+        </div>
+        <div id="ws-results"></div>
       </div>
       <div id="lib-content">
         <div id="lib-tree"></div>
@@ -110,8 +128,8 @@
               <option value="85-170" selected data-i18n="bpmrange_85_170">85 – 170 (défaut — octave intelligent inclus)</option>
               <option value="100-200" data-i18n="bpmrange_100_200">100 – 200 (hard techno, hardcore)</option>
             </select>
-            <button id="set-reanalyze" data-i18n="reanalyze_all" data-i18n-title="reanalyze_all_title">🔄 Tout ré-analyser</button>
-            <button id="set-rbimport" data-i18n="rekordbox_grids" data-i18n-title="rekordbox_grids_title">🎚 Grilles Rekordbox</button>
+            <button id="set-reanalyze" data-i18n="reanalyze_all" data-i18n-title="reanalyze_all_title">Tout ré-analyser</button>
+            <button id="set-rbimport" data-i18n="rekordbox_grids" data-i18n-title="rekordbox_grids_title">Grilles Rekordbox</button>
           </div>
           <div class="set-inline" style="margin-top:6px">
             <span class="set-info" data-i18n="grid_offset_label">Décalage global de grille (ms) :</span>
@@ -133,6 +151,14 @@
           </div>
         </div>
         <div class="set-row">
+          <label data-i18n="ytdlp_settings_label">Téléchargement par lien (YouTube, SoundCloud… via yt-dlp)</label>
+          <div class="set-inline"><span id="set-ytdlp-status" class="set-info">—</span>
+            <button id="set-ytdlp-install" data-i18n="ytdlp_install_btn">Installer / mettre à jour yt-dlp</button></div>
+          <div class="set-inline" style="margin-top:6px"><span class="set-info" data-i18n="dl_root_label">Dossier de musique OpenMix :</span>
+            <span id="set-dlroot" class="set-info">—</span>
+            <button id="set-dlroot-change" data-i18n="dl_root_change">Changer…</button></div>
+        </div>
+        <div class="set-row">
           <label data-i18n="waveform_colors">Couleurs de la forme d'onde</label>
           <select id="set-palette">
             <option value="club" data-i18n="palette_club">Club (basses bleues, médiums ambre, aigus blancs)</option>
@@ -145,6 +171,10 @@
         <div class="set-row">
           <label data-i18n="audio_output">Sortie audio du mix</label>
           <select id="set-output"><option value="" data-i18n="default_output">Sortie par défaut</option></select>
+        </div>
+        <div class="set-row">
+          <label data-i18n="phones_output">Sortie casque (pré-écoute CUE)</label>
+          <select id="set-phones"><option value="auto" data-i18n="phones_auto">Auto — contrôleur DJ détecté</option></select>
         </div>
         <div class="set-row">
           <label data-i18n="mics_detected">Micros détectés</label>
@@ -161,7 +191,7 @@
               <option value="3" data-i18n="deck_4">Deck 4</option>
               <option value="g" data-i18n="global">Global</option>
             </select>
-            <span class="set-info" data-i18n="midi_learn_hint">Clique 🎯 puis bouge le contrôle physique à associer</span>
+            <span class="set-info" data-i18n="midi_learn_hint">Clique « Learn » puis bouge le contrôle physique à associer</span>
           </div>
           <div id="midi-learn-table"></div>
         </div>

@@ -22,6 +22,9 @@ const engine = new AudioEngine();
 let activeDeck = 0;
 let deckCount = Number(localStorage.getItem('deckCount')) === 2 ? 2 : 4;
 let dragTrack = null;      // morceau en cours de drag & drop depuis la bibliothèque
+let dragDir = null;        // dossier de la musique OpenMix en cours de glisser
+// dossier de musique NATIF d'OpenMix { root, folders } (voir refreshDlInfo)
+let dlInfo = { root: null, folders: [] };
 let waveWindowSec = 8;     // zoom de la vue empilée (secondes visibles)
 let scratchSound = localStorage.getItem('scratchSound') !== '0'; // scratch audible ?
 let keepBarOnJump = localStorage.getItem('keepBarOnJump') !== '0'; // garder la mesure intacte lors d'un saut ?
@@ -280,9 +283,17 @@ function makeQueueDropTarget(el, deckIdx) {
 }
 
 // Rend un élément capable de recevoir un morceau par drag & drop
+// Un LIEN glissé depuis le navigateur (YouTube, SoundCloud…)
+const dragHasLink = (dt) => !!dt && [...(dt.types || [])].some((ty) => ty === 'text/uri-list' || ty === 'text/plain');
+const linkFromDrop = (dt) => {
+  const raw = (dt && (dt.getData('text/uri-list') || dt.getData('text/plain'))) || '';
+  const m = /https?:\/\/\S+/i.exec(raw);
+  return m ? m[0] : null;
+};
+
 function makeDropTarget(el, deckIdx) {
   el.addEventListener('dragover', (e) => {
-    if (!dragTrack) return;
+    if (!dragTrack && !dragHasLink(e.dataTransfer)) return;
     e.preventDefault();
     e.dataTransfer.dropEffect = 'copy';
     el.classList.add('drop-hover');
@@ -291,7 +302,15 @@ function makeDropTarget(el, deckIdx) {
   el.addEventListener('drop', (e) => {
     e.preventDefault();
     el.classList.remove('drop-hover');
-    if (!dragTrack) return;
+    if (!dragTrack) {
+      // lien déposé sur le deck : téléchargé (yt-dlp) puis chargé ICI
+      const url = linkFromDrop(e.dataTransfer);
+      if (url) {
+        setActiveDeck(deckIdx);
+        ytDownload(url, deckIdx);
+      }
+      return;
+    }
     setActiveDeck(deckIdx);
     loadTrackToDeck(deckIdx, dragTrack);
     dragTrack = null;
@@ -366,12 +385,14 @@ function buildDeckPanel(i) {
       <button class="btn-grid-half" title="${t('grid_half_title')}">÷2</button>
       <button class="btn-grid-dbl" title="${t('grid_double_title')}">×2</button>
       <div class="deck-time">0:00 · -0:00</div>
-      <label class="tempo-wrap" title="${t('tempo_gauge_title')}">
+      <div class="tempo-wrap" title="${t('tempo_gauge_title')}">
+        <button class="tempo-btn tempo-dn" title="${t('tempo_dn_title')}">−</button>
         <span class="tempo-slider">
-          <input type="range" class="tempo" min="-50" max="50" value="0" step="0.1">
+          <input type="range" class="tempo" min="-16" max="16" value="0" step="0.01">
           <i class="tempo-zero"></i>
         </span>
-      </label>
+        <button class="tempo-btn tempo-up" title="${t('tempo_up_title')}">+</button>
+      </div>
     </div>
   `;
   slot.appendChild(el);
@@ -430,6 +451,8 @@ function buildDeckPanel(i) {
     jumpScale: 1,
     time: el.querySelector('.deck-time'),
     tempo: el.querySelector('.tempo'),
+    tempoDn: el.querySelector('.tempo-dn'),
+    tempoUp: el.querySelector('.tempo-up'),
     tempoVal: el.querySelector('.tempo-val'),
     tempoMin: el.querySelector('.tempo-min'),
     tempoMax: el.querySelector('.tempo-max'),
@@ -517,7 +540,22 @@ function buildDeckPanel(i) {
   // (l'ancien affichage BPM de l'en-tête a été retiré : le BPM vit
   // maintenant dans le cadran du disque — c'est LUI qu'on double-clique)
   ui.wheelCv.style.cursor = 'pointer';
-  ui.wheelCv.addEventListener('dblclick', async () => {
+  // Le BAS du cadran affiche la plage de la jauge : un clic dessus la fait
+  // tourner ±6 % → ±16 % → WIDE (±50 %), comme le bouton TEMPO RANGE d'un CDJ
+  const onRangeZone = (e) => {
+    const r = ui.wheelCv.getBoundingClientRect();
+    return (e.clientY - r.top) / r.height > 0.62;
+  };
+  ui.wheelCv.addEventListener('click', (e) => {
+    if (!onRangeZone(e)) return;
+    const k = TEMPO_RANGES.indexOf(deck.tempoRange);
+    deck.tempoRange = TEMPO_RANGES[(k + 1) % TEMPO_RANGES.length];
+    try { localStorage.setItem(`tempoRange${i}`, String(deck.tempoRange)); } catch { /* stockage indisponible */ }
+    applyTempoRange(i);
+    flashStatus(t('tempo_range_status', { n: i + 1, range: tempoRangeLabel(deck.tempoRange) }));
+  });
+  ui.wheelCv.addEventListener('dblclick', async (e) => {
+    if (onRangeZone(e)) return;
     if (!deck.buffer || !deck.bpm) return;
     const val = await askText(t('ask_real_bpm', { n: i + 1, bpm: deck.bpm.toFixed(1) }), deck.bpm.toFixed(1));
     const nb = Number(String(val).replace(',', '.'));
@@ -709,10 +747,12 @@ function buildDeckPanel(i) {
   // Drag & drop d'un morceau sur le panneau du deck ou sur sa forme d'onde
   makeDropTarget(el, i);
   makeDropTarget(wave.el, i);
+  applyTempoRange(i);
   ui.tempo.addEventListener('input', () => {
-    // Zéro aimanté : près du centre, on colle à 0.0 % pile
+    // Zéro aimanté : près du centre, on colle à 0.0 % pile (zone
+    // proportionnelle à la plage : ±0,1 % en ±6, ±0,8 % en WIDE)
     let v = Number(ui.tempo.value);
-    if (Math.abs(v) < 0.8) {
+    if (Math.abs(v) < deck.tempoRange * 1.6) {
       v = 0;
       ui.tempo.value = 0;
     }
@@ -725,6 +765,30 @@ function buildDeckPanel(i) {
     deck.synced = false;
     updateTempoLabel(i);
   });
+  // − / + : ±0,1 BPM par clic (Maj = ±1 BPM), maintenu = ça défile
+  const holdNudge = (btn, dir) => {
+    let timer = null;
+    let n = 0;
+    const stop = () => { clearTimeout(timer); timer = null; };
+    btn.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      btn.setPointerCapture?.(e.pointerId);
+      const big = e.shiftKey;
+      n = 0;
+      deckBpmNudge(i, dir * (big ? 1 : 0.1));
+      const rep = () => {
+        n++;
+        // après ~1,5 s maintenu : pas de 0,5 BPM (on traverse vite)
+        deckBpmNudge(i, dir * (big ? 1 : n > 20 ? 0.5 : 0.1));
+        timer = setTimeout(rep, 75);
+      };
+      timer = setTimeout(rep, 380);
+    });
+    ['pointerup', 'pointercancel', 'lostpointercapture'].forEach((ev) => btn.addEventListener(ev, stop));
+  };
+  holdNudge(ui.tempoDn, -1);
+  holdNudge(ui.tempoUp, 1);
   // Miniature : un simple CLIC (sans bouger) = saut ponctuel, la musique ne
   // s'arrête jamais. Un vrai GLISSER (au-delà de quelques pixels) bascule en
   // navigation continue (avec le son de scrub si activé) — voir DRAG_THRESHOLD_PX.
@@ -1154,7 +1218,7 @@ function drawDeckWheel(ui, deck, t) {
   const pct = (((deck.tempo || 1) / (1 + (deck._pllCorr || 0))) - 1) * 100;
   const pctTxt = `${pct >= 0 ? '+' : ''}${pct.toFixed(1)}%`;
   // à l'arrêt : un seul dessin (signature), en lecture : chaque frame
-  const sig = playing ? null : `stop:${deck.buffer ? 1 : 0}:${pctTxt}:${deck.keylock ? 1 : 0}:${deck.bpm}`;
+  const sig = playing ? null : `stop:${deck.buffer ? 1 : 0}:${pctTxt}:${deck.tempoRange}:${deck.bpm}`;
   if (sig && ui._wheelSig === sig) return;
   ui._wheelSig = sig;
 
@@ -1233,10 +1297,81 @@ function drawDeckWheel(ui, deck, t) {
   g.fillStyle = Math.abs(pct) < 0.05 ? '#5fe08a' : '#ffb054';
   g.fillText(pctTxt, c, c + 8);
 
-  // Tonalité verrouillée / plage du fader
+  // Plage de la jauge (clic = ±6 → ±16 → WIDE). Le keylock a son
+  // propre bouton cadenas dans l'en-tête du deck.
   g.font = `800 10px ${MONO}`;
-  g.fillStyle = deck.keylock ? '#ffd24a' : '#5b6478';
-  g.fillText(deck.keylock ? 'KEYLOCK' : '± 6 %', c, c + 21);
+  g.fillStyle = deck.tempoRange >= 0.5 ? '#ff7a59' : '#8b94a8';
+  g.fillText(tempoRangeLabel(deck.tempoRange), c, c + 21);
+}
+
+// PLAGE DE TEMPO par deck : ±6 %, ±16 % ou WIDE (±50 %). La jauge écran et
+// le fader physique couvrent toute la plage choisie.
+const TEMPO_RANGES = [0.06, 0.16, 0.5];
+function tempoRangeLabel(r) {
+  return r >= 0.5 ? 'WIDE' : `±${Math.round(r * 100)}%`;
+}
+function applyTempoRange(i) {
+  const deck = engine.decks[i];
+  const ui = deckUI[i] || null;
+  if (!TEMPO_RANGES.includes(deck.tempoRange)) {
+    let r = 0.16;
+    try { r = Number(localStorage.getItem(`tempoRange${i}`)) || 0.16; } catch { /* défaut */ }
+    deck.tempoRange = TEMPO_RANGES.includes(r) ? r : 0.16;
+  }
+  const el = ui ? ui.tempo : document.querySelector(`#deck-slot-${i} .tempo`);
+  if (!el) return;
+  const p = deck.tempoRange * 100;
+  el.min = String(-p);
+  el.max = String(p);
+  el.value = String(((deck.tempo || 1) - 1) * 100);
+  if (ui) ui._wheelSig = null;
+}
+
+// Deck qui MÈNE le groupe syncé de i : le master qui joue, sinon i lui-même
+function syncGroupLead(i) {
+  const deck = engine.decks[i];
+  if (deck.synced) {
+    const m = engine.getMasterDeck(i);
+    if (m && m.playing && m.bpm) return engine.decks.indexOf(m);
+  }
+  return i;
+}
+// Change le tempo du GROUPE syncé de i d'un facteur (fader physique d'un
+// deck syncé) : le meneur bouge, les suiveurs suivent dans la même image
+function syncGroupTempoScale(i, factor) {
+  const ti = syncGroupLead(i);
+  const td = engine.decks[ti];
+  if (!td.bpm || !isFinite(factor) || factor <= 0) return;
+  const base = (td.tempo || 1) / (1 + (td._pllCorr || 0));
+  const nt = Math.max(0.5, Math.min(1.6, base * factor));
+  if (td.synced && td._syncBase) td._syncBase = nt;
+  td.setTempo(nt * (1 + (td._pllCorr || 0)));
+  updateTempoLabel(ti);
+  if (ti !== i) updateTempoLabel(i);
+  if (typeof updateMasterBpmVal === 'function') updateMasterBpmVal();
+}
+
+// − / + du deck : monte ou descend le BPM. Deck SYNCÉ = on agit sur le
+// MASTER, tout le groupe suit d'un bloc (le moteur met les suiveurs à
+// l'échelle dans la même image — voir _followMaster).
+function deckBpmNudge(i, delta) {
+  engine.resume();
+  const deck = engine.decks[i];
+  if (!deck.bpm) return;
+  const ti = syncGroupLead(i);
+  const td = engine.decks[ti];
+  const base = (td.tempo || 1) / (1 + (td._pllCorr || 0));
+  const cur = td.bpm * base;
+  // aligné sur le pas : 124,03 + 0,1 → 124,1
+  const step = Math.abs(delta);
+  const nb = Math.round((cur + delta) / step) * step;
+  const nt = Math.max(0.5, Math.min(1.6, nb / td.bpm));
+  if (td.synced && td._syncBase) td._syncBase = nt;
+  td.setTempo(nt);
+  updateTempoLabel(ti);
+  if (ti !== i) updateTempoLabel(i);
+  if (typeof updateMasterBpmVal === 'function') updateMasterBpmVal();
+  flashStatus(t('tempo_nudge_status', { n: ti + 1, bpm: (td.bpm * nt).toFixed(2) }));
 }
 
 // Saut de N mesures (négatif = arrière). Boucle active = c'est elle qui bouge.
@@ -1944,7 +2079,7 @@ function gpSelReset(fallbackDeck, cur) {
       GP_KNOBS[cur.r - 1].key === 'low') {
     const bd = Math.min(cur.c, deckCount - 1);
     gpBassTo(bd);
-    bassTxt = ` · 🔊 basses → deck ${bd + 1}`;
+    bassTxt = ` · basses → deck ${bd + 1}`;
   }
   if (gpCutStore.size) gpCutToggle(fallbackDeck);
   flashStatus(t('reset_r1', { bass: bassTxt }));
@@ -2777,6 +2912,7 @@ function renderLibrary() {
     plBackBtn.classList.toggle('hidden', !inside);
     plPlayBtn.classList.toggle('hidden', !inside);
   }
+  updateNewDirBtn();
   const list = library.filtered.slice(0, 3000);
   const inPlaylist = library.mode === 'pl' && library.plOpen;
   list.forEach((t, idx) => {
@@ -2828,6 +2964,8 @@ function renderLibrary() {
     });
     if (t.fsUpRow) {
       tr.addEventListener('dblclick', () => folderUp());
+      // déposer sur « .. » = ranger dans le dossier parent
+      makeFolderDropTarget(tr, () => (library.fsDir ? parentDir(library.fsDir) : null));
     } else if (t.scRootRow) {
       tr.addEventListener('dblclick', () => openSoundCloud());
     } else if (t.scLikes) {
@@ -2845,6 +2983,19 @@ function renderLibrary() {
     } else if (t.fsRow) {
       // Ligne de dossier : double-clic pour y ENTRER (l'encodeur aussi)
       tr.addEventListener('dblclick', () => enterFolder(t.path));
+      // Musique OpenMix : on y RANGE par glisser-déposer, on le déplace
+      makeFolderDropTarget(tr, () => t.path);
+      if (inNative(t.path)) {
+        if (!isNativeRoot(t.path)) {
+          tr.draggable = true;
+          tr.addEventListener('dragstart', (e) => startDirDrag(e, t.path));
+          tr.addEventListener('dragend', () => { dragDir = null; });
+        }
+        tr.addEventListener('contextmenu', (e) => {
+          e.preventDefault();
+          showNativeFolderMenu(e, t.path);
+        });
+      }
     } else if (t.plRow) {
       // Ligne de playlist : double-clic pour l'ouvrir, clic droit pour gérer
       tr.addEventListener('dblclick', () => openLocalPlaylist(t.pl));
@@ -2862,7 +3013,8 @@ function renderLibrary() {
         library.selection = idx;
         updateSelectionUI();
         e.dataTransfer.setData('text/plain', t.name);
-        e.dataTransfer.effectAllowed = 'copy';
+        // copy (deck, playlist) ou move (rangement dans la musique OpenMix)
+        e.dataTransfer.effectAllowed = 'copyMove';
       });
       tr.addEventListener('dragend', () => { dragTrack = null; });
       tr.addEventListener('dblclick', () => loadSelectedToDeck(activeDeck));
@@ -2952,7 +3104,7 @@ function showPlaylistMenu(e, p) {
       flashStatus(`Export : ${res.error}`);
     }
   });
-  addItem('✏️ Renommer…', async () => {
+  addItem('Renommer…', async () => {
     const name = await askText('Nouveau nom de la playlist', p.name);
     if (name) {
       p.name = name;
@@ -2960,7 +3112,7 @@ function showPlaylistMenu(e, p) {
       renderLibrary();
     }
   });
-  addItem('🗑 Supprimer la playlist', () => library.deletePlaylist(p));
+  addItem('Supprimer la playlist', () => library.deletePlaylist(p));
   ctxMenu.style.left = `${Math.min(e.clientX, window.innerWidth - 260)}px`;
   ctxMenu.style.top = `${Math.min(e.clientY, window.innerHeight - 110)}px`;
   ctxMenu.classList.remove('hidden');
@@ -3842,7 +3994,7 @@ function gpSideLabel(st, side) {
   }
   const li = st.cur.r - 1; // pad gauche de la rangée : IN / OUT / ✕
   return side > 0
-    ? `${p} 🔁${LOOP_ROW_BEATS[st.cur.r - 1]}`
+    ? `${p} ↻${LOOP_ROW_BEATS[st.cur.r - 1]}`
     : `${p} ${li === 0 ? 'IN' : li === 1 ? 'OUT' : '✕'}`;
 }
 
@@ -4211,7 +4363,7 @@ function updateGpCursors() {
     const tag = el.querySelector('.gp-cursor-tag');
     // Étiquette COMPACTE (le nom complet cachait le titre de la tranche) :
     // juste J1/J2, en coin, de l'autre côté si superposition
-    tag.textContent = isNav ? `J${gi + 1} 📂` : `J${gi + 1}`;
+    tag.textContent = isNav ? `J${gi + 1} 📁` : `J${gi + 1}`;
     tag.style.background = col;
     tag.style.left = 'auto';
     tag.style.right = '-2px';
@@ -4450,7 +4602,7 @@ const gamepad = new GamepadManager({
   // Share/View (appui court) : changer le mode DU JOUEUR (CUE→JUMP→LOOP→KEY)
   cycleMode: (st) => {
     st.mode = GP_MODES[(GP_MODES.indexOf(st.mode) + 1) % GP_MODES.length];
-    flashStatus(`🎮 J${st.player} — L2/R2 en mode ${GP_MODE_NAMES[st.mode]}`);
+    flashStatus(`J${st.player} — L2/R2 en mode ${GP_MODE_NAMES[st.mode]}`);
   },
   // --- Mode NAVIGATION (sous la rangée FILTER) — sélection PAR JOUEUR :
   // chaque manette a son propre surlignage dans l'explorateur, on voit qui
@@ -4622,22 +4774,22 @@ const gamepad = new GamepadManager({
       // le stick garde son comportement normal
       const u = Math.min(st.player - 1, 3);
       one(u);
-      flash(`⚡ J${st.player} — FX niveau ${pct(u)} (deck ${mine.map((t) => t + 1).join('+')})`);
+      flash(`J${st.player} — FX niveau ${pct(u)} (deck ${mine.map((t) => t + 1).join('+')})`);
       return;
     }
     if (cur.r === 0) {
       for (let u = 0; u < 4; u++) one(u);
-      flash(`⚡ FX MASTER — ${[0, 1, 2, 3].map(pct).join(' · ')}`);
+      flash(`FX MASTER — ${[0, 1, 2, 3].map(pct).join(' · ')}`);
       return;
     }
     if (cur.c === GP_FX_COL) {
       one(gpFxShown);
-      flash(`⚡ FX ${gpFxShown + 1} — niveau ${pct(gpFxShown)}`);
+      flash(`FX ${gpFxShown + 1} — niveau ${pct(gpFxShown)}`);
       return;
     }
     const u = Math.min(st.player - 1, 3);
     one(u);
-    flash(`⚡ J${st.player} — FX niveau ${pct(u)}`);
+    flash(`J${st.player} — FX niveau ${pct(u)}`);
   },
   // Carré court : durée du FX parmi 1/2 · 3/4 · 1 · 2 (sur la colonne FX :
   // l'unité affichée, sinon l'unité PERSONNELLE du joueur)
@@ -5013,7 +5165,8 @@ function frameBody(now) {
         if (mark.style.display !== 'none') mark.style.display = 'none';
         continue;
       }
-      const pos = (other / deck.bpm - 0.5) / 1.0; // plage du slider : ×0,5 à ×1,5
+      const rg = deck.tempoRange || 0.16;
+      const pos = ((other / deck.bpm - 1) / rg + 1) / 2; // plage de la jauge
       if (pos < 0 || pos > 1) {
         if (mark.style.display !== 'none') mark.style.display = 'none';
         continue;
@@ -5252,6 +5405,10 @@ const tempoHintAt = [0, 0, 0, 0]; // limiteur de l'indicateur de reprise tempo
 // Note de la position COURANTE du sélecteur FX de chaque section (gauche,
 // droite) — apprise au dernier appui du bouton FX : c'est l'adresse de sa lampe
 const midiFxSlotNote = [71, 71];
+// Section FX utilisée en dernier (0 = gauche / canal 0x94, 1 = droite / 0x95) :
+// SEULE sa lampe est pilotée — la platine n'« arme » que la DERNIÈRE adresse
+// reçue, envoyer les deux sections à chaque fois n'allumait jamais la bonne
+let midiFxSide = 0;
 // Bouton FX platine : UN SEUL effet à la fois, sur la cible du channel
 // select. Re-appui = coupé. Le NIVEAU vient de la jauge, jamais d'un défaut.
 function midiFxToggle() {
@@ -5525,7 +5682,8 @@ const midi = new MidiManager({
         // Bouton FX (toutes positions du sélecteur) : mémorise l'adresse
         // de la LAMPE de cette position, puis toggle l'effet
         if (on) {
-          midiFxSlotNote[deck >= 3 ? 1 : 0] = 71 + (deck % 3);
+          midiFxSide = deck >= 3 ? 1 : 0;
+          midiFxSlotNote[midiFxSide] = 71 + (deck % 3);
           midiFxToggle();
         }
         break;
@@ -5611,16 +5769,31 @@ const midi = new MidiManager({
         // tant que la jauge n'est pas REVENUE sur la valeur actuelle (ou
         // ne l'a pas croisée d'un geste) : on remet d'abord la jauge au
         // bon emplacement, et alors seulement elle reprend la main.
-        const target = 0.5 + v;
+        // le fader couvre la PLAGE du deck (±6 %, ±16 % ou WIDE)
+        const rg = d.tempoRange || 0.16;
+        const target = 1 + (v - 0.5) * 2 * rg;
         const cur = d.tempo;
         const nowT = performance.now();
         const pr = deckUI[i]._tempoPrev;
         deckUI[i]._tempoPrev = { v: target, t: nowT };
         // « croisée » = entre DEUX messages d'un MÊME geste (< 200 ms) —
         // une vieille position d'il y a des minutes ne compte pas
+        // DECK SYNCÉ : le fader ne COUPE JAMAIS le sync. Avant, dès qu'un
+        // message tombait sur le tempo courant (son tout juste chargé à
+        // 0 % + fader au centre, ou tempo passé près du fader après un
+        // changement de master), la re-déclaration suivante de la platine
+        // (toucher de jog…) prenait la main et éteignait SYNC — « je dois
+        // remettre le beat sync à chaque son ». Ici seul un VRAI geste (flux
+        // continu < 200 ms) compte, en RELATIF : il monte / descend le BPM
+        // de tout le groupe syncé, qui reste syncé.
+        if (d.synced) {
+          if (!pr || nowT - pr.t > 200 || !pr.v || target === pr.v) break;
+          syncGroupTempoScale(i, target / pr.v);
+          break;
+        }
         const cross = pr && nowT - pr.t < 200
           && ((pr.v <= cur && cur <= target) || (target <= cur && cur <= pr.v));
-        if (Math.abs(target - cur) > 0.005 && !cross) {
+        if (Math.abs(target - cur) > Math.max(0.0015, 0.01 * rg) && !cross) {
           tempoPickupHint(i, target, cur);
           break;
         }
@@ -5887,30 +6060,36 @@ function fxLedTick() {
   // QUE la position apprise au dernier appui du bouton, par section,
   // en éteignant les anciennes adresses quand elle change. Réaffirmé
   // toutes les 200 ms ; JAMAIS de CC16 (bascule la zone en mode merge).
+  // Une SEULE adresse pilotée : la position apprise de la section utilisée
+  // en dernier (voir midiFxSide). Les deux sections recevaient la même
+  // valeur à chaque image : la seconde « désarmait » la première.
   const vv = onLed ? 0x7f : 0;
-  const sig = `${vv}:${midiFxSlotNote[0]}:${midiFxSlotNote[1]}`;
+  const st = midiFxSide ? 0x95 : 0x94;
+  const note = midiFxSlotNote[midiFxSide];
+  const addr = `${st}:${note}`;
+  const sig = `${vv}:${addr}`;
   const nowF = performance.now();
   if (sig !== _fxLedSig || nowF - _fxLedSentAt > 200) {
-    const slotChanged = _fxLedSig != null && _fxLedSig.slice(_fxLedSig.indexOf(':')) !== sig.slice(sig.indexOf(':'));
+    const addrChanged = _fxLedAddr !== addr;
     _fxLedSig = sig;
+    _fxLedAddr = addr;
     _fxLedSentAt = nowF;
-    if (slotChanged) {
-      // position changée : éteindre les AUTRES adresses d'abord (la
-      // dernière envoyée doit rester la position courante)
-      for (const st of [0x94, 0x95]) {
+    if (addrChanged) {
+      // section/position changée : éteindre TOUTES les autres adresses
+      // d'abord — la dernière envoyée doit rester la position courante
+      for (const s2 of [0x94, 0x95]) {
         for (const n of [71, 72, 73]) {
-          if ((st === 0x94 && n === midiFxSlotNote[0]) || (st === 0x95 && n === midiFxSlotNote[1])) continue;
-          midi._pushEcho([st, n, 0]);
-          midi._sendRaw([st, n, 0]);
+          if (s2 === st && n === note) continue;
+          midi._pushEcho([s2, n, 0]);
+          midi._sendRaw([s2, n, 0]);
         }
       }
     }
-    midi._pushEcho([0x94, midiFxSlotNote[0], vv]);
-    midi._sendRaw([0x94, midiFxSlotNote[0], vv]);
-    midi._pushEcho([0x95, midiFxSlotNote[1], vv]);
-    midi._sendRaw([0x95, midiFxSlotNote[1], vv]);
+    midi._pushEcho([st, note, vv]);
+    midi._sendRaw([st, note, vv]);
   }
 }
+let _fxLedAddr = null;
 let _fxLedSig = null;
 let _fxLedSentAt = 0;
 setInterval(fxLedTick, 60);
@@ -6149,7 +6328,7 @@ btnRec.addEventListener('click', async () => {
     recStart = performance.now();
     btnRec.classList.add('on');
     recTime.classList.remove('hidden');
-    flashStatus('🔴 Enregistrement du mix en cours…');
+    flashStatus('● REC — enregistrement du mix en cours…');
   } else {
     recorder.stop();
     recorder = null;
@@ -6386,6 +6565,25 @@ async function refreshDevices() {
       if (d.deviceId === current) o.selected = true;
       outSel.appendChild(o);
     });
+    // Sortie CASQUE : auto (contrôleur DJ détecté), canaux 3/4 du master,
+    // ou une carte précise
+    const phSel = document.getElementById('set-phones');
+    if (phSel) {
+      const curP = phonesPref();
+      phSel.innerHTML = '';
+      const add = (v, label) => {
+        const o = document.createElement('option');
+        o.value = v;
+        o.textContent = label;
+        if (v === curP) o.selected = true;
+        phSel.appendChild(o);
+      };
+      const det = pickPhonesDevice(devices);
+      add('auto', det ? t('phones_auto_found', { name: det.label }) : t('phones_auto'));
+      add('', t('phones_master_34'));
+      devices.filter(d => d.kind === 'audiooutput' && d.deviceId !== 'default' && d.deviceId !== 'communications')
+        .forEach(d => add(d.deviceId, d.label || t('output_label', { id: d.deviceId.slice(0, 6) })));
+    }
     const mics = devices.filter(d => d.kind === 'audioinput');
     document.getElementById('set-mics').textContent = mics.length
       ? mics.map(m => m.label || t('no_mic_named')).join(' · ')
@@ -6401,9 +6599,68 @@ document.getElementById('set-output').addEventListener('change', async (e) => {
     engine._wireOutput(); // le nombre de canaux (casque !) dépend du périphérique
     localStorage.setItem('audioOutput', e.target.value);
     flashStatus(t('audio_output_changed'));
+    applyPhonesOutput();
   } catch (err) {
     flashStatus(t('audio_output_error', { error: err.message || err }));
   }
+});
+
+// --- SORTIE CASQUE ---
+// Préférence : 'auto' (défaut) = le contrôleur DJ branché (FLX6…) reçoit la
+// pré-écoute sur ses canaux 3/4, même si le master sort sur une autre carte.
+function phonesPref() {
+  try { return localStorage.getItem('phonesOutput') ?? 'auto'; } catch { return 'auto'; }
+}
+const DJ_CARD_RE = /DDJ|Pioneer|FLX|XDJ|Numark|Hercules|Traktor|Kontrol|Denon|Rane|Reloop|Mixtrack|Roland DJ/i;
+function pickPhonesDevice(devices) {
+  const outs = devices.filter((d) => d.kind === 'audiooutput'
+    && d.deviceId !== 'default' && d.deviceId !== 'communications');
+  return outs.find((d) => DJ_CARD_RE.test(d.label || '')) || null;
+}
+let _phonesBusy = false;
+async function applyPhonesOutput(announce) {
+  if (_phonesBusy) return;
+  _phonesBusy = true;
+  try {
+    const pref = phonesPref();
+    let id = '';
+    let devices = [];
+    try { devices = await navigator.mediaDevices.enumerateDevices(); } catch { /* aucun */ }
+    if (pref === 'auto') {
+      const dj = pickPhonesDevice(devices);
+      id = dj ? dj.deviceId : '';
+    } else if (pref && devices.some((d) => d.kind === 'audiooutput' && d.deviceId === pref)) {
+      id = pref;
+    }
+    // la carte casque EST la sortie master ? le câblage 4 canaux suffit
+    let masterId = '';
+    try { masterId = localStorage.getItem('audioOutput') || ''; } catch { /* défaut */ }
+    if (id && masterId === id) id = '';
+    if (id && !masterId) {
+      // master sur « sortie par défaut » : est-ce déjà la platine ?
+      const def = devices.find((d) => d.kind === 'audiooutput' && d.deviceId === 'default');
+      const card = devices.find((d) => d.deviceId === id);
+      if (def && card && card.label && (def.label || '').includes(card.label)) id = '';
+    }
+    const before = engine.phonesDevice || '';
+    const ok = await engine.setPhonesDevice(id);
+    if (announce || before !== (engine.phonesDevice || '')) {
+      const card = devices.find((d) => d.deviceId === id);
+      if (id && ok) flashStatus(t('phones_on_card', { name: card ? card.label : id }));
+      else if (id && !ok) flashStatus(t('phones_card_error'));
+    }
+  } finally {
+    _phonesBusy = false;
+  }
+}
+document.getElementById('set-phones')?.addEventListener('change', (e) => {
+  try { localStorage.setItem('phonesOutput', e.target.value); } catch { /* stockage indisponible */ }
+  applyPhonesOutput(true);
+});
+// contrôleur branché / débranché en cours de route : la sortie casque suit
+navigator.mediaDevices?.addEventListener?.('devicechange', () => {
+  clearTimeout(applyPhonesOutput._t);
+  applyPhonesOutput._t = setTimeout(() => applyPhonesOutput(), 800);
 });
 
 // --- Tableau d'apprentissage MIDI ---
@@ -6428,15 +6685,15 @@ function renderMidiTable() {
     row.innerHTML = `
       <span class="midi-label"></span>
       <span class="midi-bind">${bound ? bound : '—'}</span>
-      <button class="midi-learn" title="${t('midi_learn_button_title')}">🎯</button>
+      <button class="midi-learn" title="${t('midi_learn_button_title')}">Learn</button>
       <button class="midi-clear" title="Effacer">✕</button>
     `;
     row.querySelector('.midi-label').textContent = label;
     row.querySelector('.midi-learn').addEventListener('click', async (e) => {
       const btn = e.target;
-      btn.textContent = '👂…';
+      btn.textContent = '…';
       const key = await midi.learn(action, deck);
-      btn.textContent = '🎯';
+      btn.textContent = 'Learn';
       if (key) {
         row.querySelector('.midi-bind').textContent = key;
         flashStatus(t('midi_learned', { label, key }));
@@ -6470,7 +6727,10 @@ document.getElementById('btn-close-settings').addEventListener('click', () => {
 if (localStorage.getItem('audioOutput')) {
   engine.ctx.setSinkId(localStorage.getItem('audioOutput'))
     .then(() => engine._wireOutput())
-    .catch(() => {});
+    .catch(() => {})
+    .then(() => applyPhonesOutput());
+} else {
+  applyPhonesOutput();
 }
 
 // --- Console téléphone : exécution des commandes reçues du téléphone ---
@@ -6484,7 +6744,7 @@ window.api.onRemoteCmd((c) => {
     case 'sync':
       if (d.synced) {
         d.synced = false;
-        flashStatus(`📱 Deck ${(c.deck ?? 0) + 1} — SYNC OFF`);
+        flashStatus(`Deck ${(c.deck ?? 0) + 1} — SYNC OFF`);
       } else {
         syncDeck(c.deck);
       }
@@ -6658,6 +6918,26 @@ function makeTreeNode(item, depth) {
     if (item.onClick) item.onClick();
   });
 
+  // Dossiers DISQUE de l'arbre : on peut y ranger (musique OpenMix) et
+  // déplacer ceux de la musique OpenMix
+  if (item.path && /^([a-z]:[\\/]|\\\\)/i.test(item.path)) {
+    makeFolderDropTarget(row, () => item.path);
+    row.draggable = true;
+    row.addEventListener('dragstart', (e) => {
+      if (!inNative(item.path) || isNativeRoot(item.path)) {
+        e.preventDefault();
+        return;
+      }
+      startDirDrag(e, item.path);
+    });
+    row.addEventListener('dragend', () => { dragDir = null; });
+    row.addEventListener('contextmenu', (e) => {
+      if (!inNative(item.path)) return;
+      e.preventDefault();
+      showNativeFolderMenu(e, item.path);
+    });
+  }
+
   if (item.path) {
     treeRowsByPath.set(normTreePath(item.path), {
       row,
@@ -6717,7 +6997,8 @@ async function treeRevealKey(parentKey, childKey) {
 // racines C:..G: + Musique/Bureau/Documents/Téléchargements)
 function fsTreeItem(r) {
   return {
-    name: r.name,
+    name: r.native ? t('dl_native_root') : r.name,
+    path: r.path,
     onClick: () => enterFolder(r.path),
     getChildren: async () => (await window.api.fsList(r.path)).map(fsTreeItem)
   };
@@ -6727,13 +7008,15 @@ async function buildTree() {
   const roots = await window.api.fsRoots();
   libTree.textContent = '';
   treeRowsByPath.clear();
+  // Le dossier de musique NATIF d'OpenMix (téléchargements) : tout en haut
+  roots.filter((r) => r.native).forEach((r) => libTree.appendChild(makeTreeNode(fsTreeItem(r), 0)));
   // SoundCloud DANS l'explorateur : 1 compte = SES playlists (❤️ Likes
   // comprise) en enfants directs, comme toujours ; ≥ 2 comptes (b2b) = un
   // nœud 👤 par compte, chacun dépliant SES playlists avec SON jeton.
   // Les playlists sont demandées DIRECTEMENT au main (sans passer par la
   // vue) : déplier l'arbre ne change plus la liste affichée à droite.
   libTree.appendChild(makeTreeNode({
-    name: '☁️ SoundCloud',
+    name: 'SoundCloud',
     path: 'sc:',
     onClick: () => openSoundCloud(),
     getChildren: async () => {
@@ -6751,7 +7034,7 @@ async function buildTree() {
       };
       if (!multi) return plChildren(0);
       return accounts.map((a, i) => ({
-        name: `👤 ${a.name || `Compte ${i + 1}`}`,
+        name: a.name || `Compte ${i + 1}`,
         path: `sc:acct:${i}`,
         onClick: () => openScAccount(i),
         getChildren: () => plChildren(i)
@@ -6760,7 +7043,7 @@ async function buildTree() {
   }, 0));
   // Playlists locales (dont celles importées de Rekordbox)
   libTree.appendChild(makeTreeNode({
-    name: '🎛 Playlists',
+    name: 'Playlists',
     path: 'pl:',
     onClick: () => openPlaylistsRoot(),
     getChildren: async () => library.playlists.map((p) => ({
@@ -6769,7 +7052,7 @@ async function buildTree() {
       onClick: () => openLocalPlaylist(p)
     }))
   }, 0));
-  roots.forEach((r) => libTree.appendChild(makeTreeNode(fsTreeItem(r), 0)));
+  roots.filter((r) => !r.native).forEach((r) => libTree.appendChild(makeTreeNode(fsTreeItem(r), 0)));
 }
 buildTree();
 
@@ -6782,6 +7065,619 @@ const scBar = document.getElementById('sc-bar');
 const plBar = document.getElementById('pl-bar');
 const btnFolder = document.getElementById('btn-folder');
 const scUrlInput = document.getElementById('sc-url');
+
+// ---------------------------------------------------------------------------
+// TÉLÉCHARGEMENT PAR LIEN (yt-dlp) : YouTube, SoundCloud et les autres sites
+// que yt-dlp connaît. Bouton « ⬇ Lien », ou lien glissé sur un deck (il s'y
+// charge dès qu'il est arrivé). Fichiers dans Musique › OpenMix, au format
+// audio d'origine (aucun réencodage).
+// ---------------------------------------------------------------------------
+// DESTINATION des téléchargements : un dossier du dossier natif d'OpenMix
+// (chemin relatif mémorisé, '' = la racine)
+let dlDestRel = (() => { try { return localStorage.getItem('dlDest') || ''; } catch { return ''; } })();
+const dlDestPath = () => {
+  if (!dlInfo.root) return null;
+  const f = dlInfo.folders.find((x) => x.rel === dlDestRel);
+  return f ? f.path : dlInfo.root;
+};
+async function refreshDlInfo() {
+  if (!window.api.dlInfo) return;
+  dlInfo = await window.api.dlInfo().catch(() => dlInfo);
+  if (dlDestRel && !dlInfo.folders.some((x) => x.rel === dlDestRel)) dlDestRel = '';
+  const sel = document.getElementById('ws-dest');
+  if (sel) {
+    sel.textContent = '';
+    const opt = (v, label) => {
+      const o = document.createElement('option');
+      o.value = v;
+      o.textContent = label;
+      sel.appendChild(o);
+    };
+    opt('', t('dl_root_option'));
+    dlInfo.folders.forEach((f) => opt(f.rel, `📁 ${f.rel.replace(/\//g, ' › ')}`));
+    sel.value = dlDestRel;
+  }
+  const rootEl = document.getElementById('set-dlroot');
+  if (rootEl) rootEl.textContent = dlInfo.root || '—';
+}
+function setDlDest(rel) {
+  dlDestRel = rel || '';
+  try { localStorage.setItem('dlDest', dlDestRel); } catch { /* rien */ }
+  const sel = document.getElementById('ws-dest');
+  if (sel) sel.value = dlDestRel;
+}
+// Créer un dossier (« House » ou « House/Deep ») et le choisir comme destination
+async function dlNewFolder() {
+  const name = await askText(t('dl_newdir_prompt'), '');
+  if (!name) return null;
+  const r = await window.api.dlMkdir(name);
+  if (!r.ok) {
+    flashStatus(t('dl_newdir_failed', { error: r.error }));
+    return null;
+  }
+  await refreshDlInfo();
+  setDlDest(r.rel);
+  buildTree().then(() => { if (library.fsDir) treeReveal(library.fsDir); });
+  flashStatus(t('dl_newdir_done', { name: r.rel }));
+  return r;
+}
+
+// ---------------------------------------------------------------------------
+// RANGER « Ma musique OpenMix » À LA SOURIS. Dans le dossier natif :
+//  - glisser un SON sur une ligne 📁 (ou sur un dossier de l'arbre, ou sur
+//    « .. ») = il y est rangé — DÉPLACÉ s'il est déjà dans la musique
+//    OpenMix, COPIÉ s'il vient d'ailleurs ;
+//  - glisser un DOSSIER sur un autre = déplacé dedans ;
+//  - fichiers glissés depuis l'Explorateur Windows, liens YouTube /
+//    SoundCloud : copiés / téléchargés DANS le dossier visé ;
+//  - « ＋ Dossier » crée un dossier dans le dossier ouvert ; clic droit =
+//    renommer, nouveau sous-dossier, corbeille.
+// Hors du dossier natif, rien ne change : on ne touche JAMAIS aux autres
+// fichiers du PC.
+// ---------------------------------------------------------------------------
+// (fonctions DÉCLARÉES, pas de const : la liste peut se dessiner avant
+// que le module n'arrive ici)
+const DIR_MIME = 'application/x-openmix-dir';
+function normFsPath(p) { return String(p || '').replace(/\//g, '\\').replace(/\\+$/, '').toLowerCase(); }
+function parentDir(p) { return String(p || '').replace(/[\\/]+$/, '').replace(/[\\/][^\\/]+$/, ''); }
+const AUDIO_FILE_RE = /\.(mp3|wav|flac|ogg|m4a|aac|opus|webm)$/i;
+function inNative(p) {
+  if (!dlInfo || !dlInfo.root || !p) return false;
+  const r = normFsPath(dlInfo.root);
+  const x = normFsPath(p);
+  return x === r || x.startsWith(`${r}\\`);
+}
+function isNativeRoot(p) { return !!(dlInfo && dlInfo.root) && normFsPath(p) === normFsPath(dlInfo.root); }
+// Le dossier ouvert dans la liste est-il dans la musique OpenMix ?
+function browsingNative() { return library.mode === 'local' && !library.rootsView && inNative(library.fsDir); }
+
+function startDirDrag(e, p) {
+  dragDir = p;
+  e.dataTransfer.setData(DIR_MIME, p);
+  e.dataTransfer.effectAllowed = 'move';
+}
+function canDropDir(src, dest) {
+  if (!src || !dest || !inNative(src) || isNativeRoot(src) || !inNative(dest)) return false;
+  const s = normFsPath(src);
+  const d = normFsPath(dest);
+  return d !== s && !d.startsWith(`${s}\\`) && normFsPath(parentDir(src)) !== d;
+}
+function dragHasFiles(dt) { return !!dt && [...(dt.types || [])].includes('Files'); }
+// Ce qui est glissé peut-il être rangé dans dest ? → 'move' / 'copy' / null
+function folderDropEffect(dt, dest) {
+  if (!dest || !inNative(dest)) return null;
+  if (dragDir) return canDropDir(dragDir, dest) ? 'move' : null;
+  if (dragTrack) {
+    if (!dragTrack.path || dragTrack.sc) return null;
+    if (normFsPath(parentDir(dragTrack.path)) === normFsPath(dest)) return null; // déjà là
+    return 'move'; // TOUJOURS déplacé, jamais copié
+  }
+  if (dragHasFiles(dt)) return 'move';
+  if (dragHasLink(dt)) return 'copy';
+  return null;
+}
+
+// Rend une ligne / un nœud capable de RECEVOIR un rangement
+function makeFolderDropTarget(el, getDir) {
+  el.addEventListener('dragover', (e) => {
+    const eff = folderDropEffect(e.dataTransfer, getDir());
+    if (!eff) return;
+    e.preventDefault();
+    e.stopPropagation();
+    e.dataTransfer.dropEffect = eff;
+    el.classList.add('folder-drop');
+  });
+  el.addEventListener('dragleave', () => el.classList.remove('folder-drop'));
+  el.addEventListener('drop', (e) => {
+    el.classList.remove('folder-drop');
+    const dest = getDir();
+    if (!folderDropEffect(e.dataTransfer, dest)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    dropIntoFolder(dest, e.dataTransfer);
+  });
+}
+
+async function dropIntoFolder(dest, dt) {
+  const track = dragTrack;
+  const dir = dragDir;
+  dragTrack = null;
+  dragDir = null;
+  if (dir) {
+    const r = await window.api.dlMoveDir(dir, dest);
+    if (!r.ok) {
+      flashStatus(t('dl_place_failed', { error: r.error }));
+      return;
+    }
+    applyMoves(r.moves);
+    // le dossier ouvert était dans celui qu'on vient de déplacer : on le suit
+    if (library.fsDir && inNative(library.fsDir)) {
+      const s = normFsPath(dir);
+      const cur = normFsPath(library.fsDir);
+      if (cur === s || cur.startsWith(`${s}\\`)) followDir = r.path + library.fsDir.slice(dir.length);
+    }
+    flashStatus(t('dl_dir_moved', { name: r.name, dest: folderLabel(dest) }));
+    afterOrganize(true);
+    return;
+  }
+  if (track) {
+    await placeFiles([track.path], dest, track);
+    return;
+  }
+  const files = [...(dt.files || [])].map((f) => window.api.pathForFile?.(f)).filter(Boolean);
+  if (files.length) {
+    const audio = files.filter((p) => AUDIO_FILE_RE.test(p));
+    if (!audio.length) {
+      flashStatus(t('dl_drop_no_audio'));
+      return;
+    }
+    await placeFiles(audio, dest, null);
+    return;
+  }
+  const url = linkFromDrop(dt);
+  if (url) ytDownload(url, null, dest);
+}
+
+function folderLabel(p) { return isNativeRoot(p) ? t('dl_native_root') : `📁 ${String(p).split(/[\\/]/).pop()}`; }
+
+async function placeFiles(paths, dest, track) {
+  let ok = 0;
+  let lastErr = '';
+  for (const p of paths) {
+    const r = await window.api.dlPlace(p, dest);
+    if (!r.ok) {
+      lastErr = r.error;
+      continue;
+    }
+    ok++;
+    if (track) library.relocateTrack(track, r);
+    else applyMoves([{ from: p, to: r.path, size: r.size, mtime: r.mtime }]);
+    followDeckPath(p, r.path);
+  }
+  if (!ok) {
+    flashStatus(t('dl_place_failed', { error: lastErr }));
+    return;
+  }
+  flashStatus(paths.length === 1
+    ? t('dl_place_moved', { name: String(paths[0]).split(/[\\/]/).pop().replace(/\.[^.]+$/, '') })
+    : t('dl_place_many', { n: ok, dest: folderLabel(dest) }));
+  afterOrganize(false);
+}
+
+// Fichiers déplacés / renommés : analyses, playlists, historique et decks suivent
+function applyMoves(moves) {
+  (moves || []).forEach((m) => {
+    library.relocateMoved(m);
+    followDeckPath(m.from, m.to);
+  });
+}
+function followDeckPath(from, to) {
+  engine.decks.forEach((d) => {
+    if (d.track && d.track.path && normFsPath(d.track.path) === normFsPath(from)) {
+      d.track.path = to;
+      d.track.key = undefined;
+    }
+  });
+}
+
+// Après un rangement : liste, dossiers de téléchargement, arbre
+// (followDir : le dossier ouvert a été déplacé / renommé / jeté — on le suit)
+let followDir = null;
+async function afterOrganize(foldersChanged) {
+  await refreshDlInfo();
+  const fd = followDir;
+  followDir = null;
+  if (foldersChanged) await buildTree();
+  if (fd) {
+    enterFolder(fd);
+  } else if (library.mode === 'local' && !library.rootsView && library.fsDir) {
+    library.scan(library.fsDir);
+    if (foldersChanged) treeReveal(library.fsDir);
+  } else if (library.rootsView) {
+    library.applyFilter();
+  }
+}
+
+// ＋ Dossier : créé DANS le dossier ouvert (ou à la racine de la musique OpenMix)
+async function newFolderIn(parent) {
+  const name = await askText(t('dl_newdir_here_prompt', { dir: folderLabel(parent) }), '');
+  if (!name) return null;
+  const r = await window.api.dlMkdir(name, parent);
+  if (!r.ok) {
+    flashStatus(t('dl_newdir_failed', { error: r.error }));
+    return null;
+  }
+  flashStatus(t('dl_newdir_made', { name: r.rel.replace(/\//g, ' › ') }));
+  afterOrganize(true);
+  return r;
+}
+
+async function renameNative(p, isDir) {
+  const base = String(p).split(/[\\/]/).pop();
+  const cur = isDir ? base : base.replace(/\.[^.]+$/, '');
+  const name = await askText(t('dl_rename_prompt'), cur);
+  if (!name || name === cur) return;
+  const r = await window.api.dlRename(p, name);
+  if (!r.ok) {
+    flashStatus(t('dl_rename_failed', { error: r.error === 'exists' ? t('dl_name_taken') : r.error }));
+    return;
+  }
+  applyMoves(r.moves);
+  if (r.dir && library.fsDir) {
+    const s = normFsPath(p);
+    const c = normFsPath(library.fsDir);
+    if (c === s || c.startsWith(`${s}\\`)) followDir = r.path + library.fsDir.slice(p.length);
+  }
+  flashStatus(t('dl_renamed', { name: r.name }));
+  afterOrganize(!!r.dir);
+}
+
+async function trashNative(p, isDir) {
+  const name = String(p).split(/[\\/]/).pop();
+  if (!window.confirm(t(isDir ? 'dl_trash_dir_confirm' : 'dl_trash_confirm', { name }))) return;
+  const r = await window.api.dlTrash(p);
+  if (!r.ok) {
+    flashStatus(t('dl_trash_failed', { error: r.error }));
+    return;
+  }
+  if (isDir && library.fsDir) {
+    const s = normFsPath(p);
+    const c = normFsPath(library.fsDir);
+    if (c === s || c.startsWith(`${s}\\`)) followDir = parentDir(p);
+  }
+  flashStatus(t('dl_trashed', { name }));
+  afterOrganize(!!isDir);
+}
+
+// Clic droit sur un dossier de la musique OpenMix
+function showNativeFolderMenu(e, p) {
+  ctxMenu.textContent = '';
+  const addItem = (label, fn) => {
+    const d = document.createElement('div');
+    d.className = 'ctx-item';
+    d.textContent = label;
+    d.addEventListener('click', () => { hideCtxMenu(); fn(); });
+    ctxMenu.appendChild(d);
+  };
+  addItem(t('dl_menu_open'), () => enterFolder(p));
+  addItem(t('dl_menu_newdir'), () => newFolderIn(p));
+  addItem(t('dl_menu_dest'), () => {
+    const f = dlInfo.folders.find((x) => normFsPath(x.path) === normFsPath(p));
+    setDlDest(f ? f.rel : '');
+    flashStatus(t('dl_dest_set', { dir: folderLabel(p) }));
+  });
+  if (!isNativeRoot(p) && !isNativeRoot(parentDir(p))) {
+    addItem(t('dl_menu_out', { name: String(parentDir(p)).split(/[\\/]/).pop() }), async () => {
+      dragDir = p;
+      await dropIntoFolder(parentDir(parentDir(p)), null);
+    });
+  }
+  if (!isNativeRoot(p)) {
+    addItem(t('dl_menu_rename'), () => renameNative(p, true));
+    addItem(t('dl_menu_trash'), () => trashNative(p, true));
+  }
+  ctxMenu.style.left = `${Math.min(e.clientX, window.innerWidth - 260)}px`;
+  ctxMenu.style.top = `${Math.min(e.clientY, window.innerHeight - ctxMenu.childElementCount * 30 - 10)}px`;
+  ctxMenu.classList.remove('hidden');
+}
+
+// Bouton « ＋ Dossier » de la barre : visible dans la musique OpenMix
+document.getElementById('btn-lib-newdir')?.addEventListener('click', () => newFolderIn(browsingNative() ? library.fsDir : dlInfo.root));
+function updateNewDirBtn() {
+  document.getElementById('btn-lib-newdir')?.classList.toggle('hidden', !browsingNative());
+}
+
+let ytJob = null; // téléchargement en cours { id, url, deck, pct, title }
+let ytSeq = 0;
+const ytQueue = []; // téléchargements en attente { url, deck }
+const btnYt = document.getElementById('btn-ytdlp');
+
+async function refreshYtStatus() {
+  const el = document.getElementById('set-ytdlp-status');
+  if (!el || !window.api.ytdlpStatus) return;
+  const st = await window.api.ytdlpStatus().catch(() => null);
+  el.textContent = st && st.ok
+    ? t('ytdlp_status_ok', { v: st.version, src: t(st.source === 'openmix' ? 'ytdlp_src_openmix' : 'ytdlp_src_system'), dir: st.dir })
+    : t('ytdlp_status_none');
+}
+
+async function ytInstall() {
+  flashStatus(t('ytdlp_installing'));
+  const r = await window.api.ytdlpInstall();
+  if (!r.ok) {
+    flashStatus(t('ytdlp_install_failed', { error: r.error }));
+    return false;
+  }
+  flashStatus(t('ytdlp_installed', { v: r.version }));
+  refreshYtStatus();
+  return true;
+}
+
+// yt-dlp prêt ? Sinon on propose de l'installer (une fois, avec accord)
+async function ytEnsure() {
+  const st = await window.api.ytdlpStatus();
+  if (st.ok) return true;
+  if (!window.confirm(t('ytdlp_install_confirm'))) return false;
+  return ytInstall();
+}
+
+function ytUpdateButton() {
+  if (!btnYt) return;
+  btnYt.textContent = ytJob
+    ? t('ytdlp_button_busy', { pct: Math.round(ytJob.pct || 0) }) + (ytQueue.length ? ` (+${ytQueue.length})` : '')
+    : t('ytdlp_button');
+  btnYt.classList.toggle('on', !!ytJob);
+}
+
+async function ytDownload(url, deckIdx = null, destDir = null) {
+  url = String(url || '').trim();
+  if (!/^https?:\/\/\S+$/i.test(url)) {
+    flashStatus(t('ytdlp_bad_url'));
+    return;
+  }
+  if (ytJob) {
+    // un téléchargement tourne déjà : celui-ci attend son tour
+    ytQueue.push({ url, deck: deckIdx, dest: destDir || dlDestPath() });
+    ytUpdateButton();
+    flashStatus(t('ytdlp_queued', { n: ytQueue.length }));
+    return;
+  }
+  if (!(await ytEnsure())) return;
+  const id = ++ytSeq;
+  ytJob = { id, url, deck: deckIdx, pct: 0, title: '' };
+  ytUpdateButton();
+  flashStatus(t('ytdlp_started'));
+  let res;
+  try {
+    res = await window.api.ytdlpDownload(url, id, destDir || dlDestPath());
+  } catch (err) {
+    res = { ok: false, error: String(err.message || err) };
+  } finally {
+    ytJob = null;
+    ytUpdateButton();
+  }
+  // le suivant de la file part dès que celui-ci est fini
+  const next = () => {
+    const n = ytQueue.shift();
+    if (n) setTimeout(() => ytDownload(n.url, n.deck, n.dest), 50);
+    ytUpdateButton();
+  };
+  if (!res.ok) {
+    flashStatus(res.cancelled ? t('ytdlp_cancelled') : t('ytdlp_failed', { error: res.error }));
+    if (res.cancelled) ytQueue.length = 0; // annuler = vider la file aussi
+    next();
+    return;
+  }
+  next();
+  const files = res.files;
+  flashStatus(files.length > 1
+    ? t('ytdlp_done_many', { n: files.length, dir: res.dir })
+    : t('ytdlp_done', { name: files[0].name, dir: res.dir }));
+  // l'explorateur affiche déjà ce dossier : il se met à jour
+  const norm = (p) => String(p || '').replace(/[\\/]+$/, '').toLowerCase();
+  if (library.mode === 'local' && norm(library.fsDir) === norm(res.dir)) library.scan(library.fsDir);
+  if (deckIdx != null && files[0]) loadTrackToDeck(deckIdx, { ...files[0] });
+}
+
+if (window.api.onYtdlpProgress) {
+  window.api.onYtdlpProgress((p) => {
+    if (!ytJob || p.id !== ytJob.id) return;
+    ytJob.pct = p.pct || 0;
+    if (p.title) ytJob.title = p.title;
+    ytUpdateButton();
+    const items = p.of > 1 ? ` (${p.item}/${p.of})` : '';
+    libStatus.textContent = t('ytdlp_progress', { pct: Math.round(ytJob.pct), title: ytJob.title || '…', items });
+  });
+}
+
+if (btnYt) {
+  btnYt.addEventListener('click', async () => {
+    if (ytJob) {
+      if (window.confirm(t('ytdlp_cancel_confirm'))) window.api.ytdlpCancel(ytJob.id);
+      return;
+    }
+    // un lien déjà copié est proposé d'office
+    let clip = '';
+    try { clip = (await navigator.clipboard.readText()) || ''; } catch { /* presse-papiers refusé */ }
+    const pre = /^https?:\/\/\S+$/i.test(clip.trim()) ? clip.trim() : '';
+    await refreshDlInfo();
+    const url = await askText(t('ytdlp_prompt_dest', { dir: dlDestRel ? dlDestRel.replace(/\//g, ' › ') : t('dl_native_root') }), pre);
+    if (url) ytDownload(url, null);
+  });
+}
+// lien glissé sur la LISTE : simple téléchargement
+const libWrapEl = document.getElementById('lib-list-wrap');
+if (libWrapEl) {
+  libWrapEl.addEventListener('dragover', (e) => {
+    // dans la musique OpenMix : ce qu'on dépose arrive dans le dossier OUVERT
+    if (browsingNative()) {
+      const eff = folderDropEffect(e.dataTransfer, library.fsDir);
+      if (!eff) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = eff;
+      return;
+    }
+    if (dragTrack || dragDir || !dragHasLink(e.dataTransfer)) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+  });
+  libWrapEl.addEventListener('drop', (e) => {
+    if (browsingNative()) {
+      if (!folderDropEffect(e.dataTransfer, library.fsDir)) return;
+      e.preventDefault();
+      dropIntoFolder(library.fsDir, e.dataTransfer);
+      return;
+    }
+    if (dragTrack || dragDir) return;
+    const url = linkFromDrop(e.dataTransfer);
+    if (!url) return;
+    e.preventDefault();
+    ytDownload(url, null);
+  });
+}
+const setYtInstall = document.getElementById('set-ytdlp-install');
+if (setYtInstall) setYtInstall.addEventListener('click', () => ytInstall());
+refreshYtStatus();
+
+// ---------------------------------------------------------------------------
+// RECHERCHE YouTube + SoundCloud, avec téléchargement (yt-dlp). Chaque
+// résultat : ⬇ (dans Musique › OpenMix) ou 1 2 3 4 (téléchargé puis chargé
+// sur ce deck). On peut aussi GLISSER un résultat sur un deck.
+// ---------------------------------------------------------------------------
+const wsPanel = document.getElementById('web-search');
+const wsQuery = document.getElementById('ws-query');
+const wsResults = document.getElementById('ws-results');
+const wsStatus = document.getElementById('ws-status');
+let wsSeq = 0;
+
+function wsOpen() {
+  wsPanel.classList.remove('hidden');
+  // le bouton RESTE ALLUMÉ tant que le panneau est ouvert : on sait qu'un
+  // nouveau clic ramène la bibliothèque
+  document.getElementById('btn-web-search')?.classList.add('on');
+  refreshDlInfo(); // dossiers créés entre-temps (explorateur Windows…)
+  wsQuery.focus();
+  wsQuery.select();
+}
+function wsClose() {
+  wsPanel.classList.add('hidden');
+  document.getElementById('btn-web-search')?.classList.remove('on');
+}
+
+function wsRow(it) {
+  const row = document.createElement('div');
+  row.className = `ws-row ws-${it.src}${it.drm ? ' ws-drm' : ''}`;
+  row.draggable = !it.drm;
+  const dur = it.duration ? formatTime(it.duration) : '';
+  row.innerHTML = `
+    <span class="ws-badge">${it.src === 'yt' ? 'YT' : 'SC'}</span>
+    <img class="ws-thumb" alt="" loading="lazy">
+    <span class="ws-main"><span class="ws-title"></span><span class="ws-artist"></span></span>
+    <span class="ws-dur">${dur}</span>
+    <span class="ws-actions"></span>`;
+  if (it.thumb) row.querySelector('.ws-thumb').src = it.thumb;
+  else row.querySelector('.ws-thumb').classList.add('empty');
+  row.querySelector('.ws-title').textContent = it.title;
+  row.querySelector('.ws-artist').textContent = it.artist || '';
+  const acts = row.querySelector('.ws-actions');
+  if (it.drm) {
+    acts.textContent = t('web_search_drm');
+    return row;
+  }
+  const btn = (label, title, fn) => {
+    const b = document.createElement('button');
+    b.textContent = label;
+    b.title = title;
+    b.addEventListener('click', (e) => {
+      e.stopPropagation();
+      fn();
+      b.classList.add('done');
+    });
+    acts.appendChild(b);
+  };
+  btn('⬇', t('web_search_dl_title'), () => ytDownload(it.url, null));
+  for (let d = 0; d < deckCount; d++) {
+    btn(String(d + 1), t('web_search_deck_title', { n: d + 1 }), () => ytDownload(it.url, d));
+  }
+  // glisser le résultat sur un deck = téléchargé puis chargé dessus
+  row.addEventListener('dragstart', (e) => {
+    e.dataTransfer.setData('text/uri-list', it.url);
+    e.dataTransfer.setData('text/plain', it.url);
+    e.dataTransfer.effectAllowed = 'copy';
+  });
+  row.addEventListener('dblclick', () => ytDownload(it.url, activeDeck));
+  return row;
+}
+
+async function wsSearch() {
+  const q = wsQuery.value.trim();
+  if (!q) return;
+  const useYt = document.getElementById('ws-yt').checked;
+  const useSc = document.getElementById('ws-sc').checked;
+  const seq = ++wsSeq;
+  wsResults.textContent = '';
+  wsStatus.textContent = t('web_search_running');
+  const jobs = [];
+  if (useYt) {
+    jobs.push((async () => {
+      if (!(await ytEnsure())) return { src: 'yt', items: [], error: t('ytdlp_status_none') };
+      const r = await window.api.ytdlpSearch(q, 20).catch((e) => ({ ok: false, error: String(e) }));
+      return { src: 'yt', items: r.ok ? r.items : [], error: r.ok ? null : r.error };
+    })());
+  }
+  if (useSc) {
+    jobs.push((async () => {
+      const r = await window.api.scSearch(q, library.scAcctIdx ?? 0).catch((e) => ({ ok: false, error: String(e) }));
+      const items = r.ok ? (r.tracks || []).map((tr) => {
+        const sep = (tr.name || '').indexOf(' - ');
+        return {
+          src: 'sc',
+          url: tr.permalink,
+          title: sep > 0 ? tr.name.slice(sep + 3) : tr.name,
+          artist: sep > 0 ? tr.name.slice(0, sep) : '',
+          duration: tr.duration,
+          thumb: tr.artwork ? tr.artwork.replace('-t500x500', '-large') : null,
+          drm: !!tr.drm || !tr.permalink
+        };
+      }) : [];
+      return { src: 'sc', items, error: r.ok ? null : r.error };
+    })());
+  }
+  const res = await Promise.all(jobs);
+  if (seq !== wsSeq) return; // une autre recherche a été lancée entre-temps
+  // résultats ENTRELACÉS (le 1er YouTube, le 1er SoundCloud, le 2e…)
+  const lists = res.map((r) => r.items);
+  const merged = [];
+  for (let k = 0; k < 40; k++) for (const l of lists) if (l[k]) merged.push(l[k]);
+  merged.forEach((it) => wsResults.appendChild(wsRow(it)));
+  const errs = res.filter((r) => r.error).map((r) => `${r.src === 'yt' ? 'YouTube' : 'SoundCloud'} : ${r.error}`);
+  wsStatus.textContent = (merged.length ? t('web_search_count', { n: merged.length }) : t('web_search_none'))
+    + (errs.length ? ` — ${errs.join(' · ')}` : '');
+}
+
+document.getElementById('ws-dest')?.addEventListener('change', (e) => setDlDest(e.target.value));
+document.getElementById('ws-newdir')?.addEventListener('click', () => dlNewFolder());
+document.getElementById('set-dlroot-change')?.addEventListener('click', async () => {
+  const r = await window.api.dlChooseRoot();
+  if (!r.ok) return;
+  setDlDest('');
+  await refreshDlInfo();
+  buildTree();
+  flashStatus(t('dl_root_changed', { dir: r.root }));
+});
+refreshDlInfo();
+
+document.getElementById('btn-web-search')?.addEventListener('click', () => {
+  if (wsPanel.classList.contains('hidden')) wsOpen();
+  else wsClose();
+});
+document.getElementById('ws-close')?.addEventListener('click', wsClose);
+document.getElementById('ws-go')?.addEventListener('click', wsSearch);
+wsQuery?.addEventListener('keydown', (e) => {
+  e.stopPropagation(); // les raccourcis clavier du logiciel ne doivent pas se déclencher
+  if (e.key === 'Enter') wsSearch();
+  if (e.key === 'Escape') wsClose();
+});
 
 function setLibTab(mode) {
   tabLocal.classList.toggle('on', mode === 'local');
@@ -6857,11 +7753,11 @@ async function importRekordboxXml() {
     const text = new TextDecoder('utf-8').decode(raw);
     doc = new DOMParser().parseFromString(text, 'text/xml');
   } catch {
-    flashStatus('⛔ Impossible de lire ce fichier XML');
+    flashStatus('Impossible de lire ce fichier XML');
     return;
   }
   if (!doc || doc.querySelector('parsererror') || !doc.querySelector('DJ_PLAYLISTS')) {
-    flashStatus('⛔ Ce fichier n\'est pas un export XML Rekordbox');
+    flashStatus('Ce fichier n\'est pas un export XML Rekordbox');
     return;
   }
   // 1) Collection : TrackID -> référence de morceau (chemin décodé, BPM et
@@ -7004,6 +7900,37 @@ function showTrackMenu(e, track, idx) {
     markTakenRows();
     flashStatus(t('played_cleared'));
   });
+  if (track.path && !track.sc) {
+    const place = async (destDir) => {
+      const r = await window.api.dlPlace(track.path, destDir);
+      if (!r.ok) {
+        flashStatus(t('dl_place_failed', { error: r.error }));
+        return;
+      }
+      library.relocateTrack(track, r);
+      followDeckPath(track.path, r.path);
+      flashStatus(t('dl_place_moved', { name: r.name }));
+      afterOrganize(false);
+    };
+    const here = normFsPath(parentDir(track.path));
+    // Dans un sous-dossier de la musique OpenMix : le SORTIR d'un niveau
+    if (inNative(track.path) && !isNativeRoot(parentDir(track.path))) {
+      const up = parentDir(parentDir(track.path));
+      addItem(t('dl_menu_out', { name: String(parentDir(track.path)).split(/[\\/]/).pop() }), () => place(up));
+    }
+    if (here !== normFsPath(dlInfo.root)) addItem(t('dl_place_root'), () => place(dlInfo.root));
+    dlInfo.folders.filter((f) => normFsPath(f.path) !== here).slice(0, 15).forEach((f) => {
+      addItem(t('dl_place_into', { name: f.rel.replace(/\//g, ' › ') }), () => place(f.path));
+    });
+    addItem(t('dl_place_new'), async () => {
+      const r = await dlNewFolder();
+      if (r) place(r.path);
+    });
+    if (inNative(track.path)) {
+      addItem(t('dl_menu_rename'), () => renameNative(track.path, false));
+      addItem(t('dl_menu_trash'), () => trashNative(track.path, false));
+    }
+  }
   addItem(t('reanalyze_track_label'), async () => {
     flashStatus(t('reanalyzing_track', { name: track.name }));
     try {
@@ -7172,7 +8099,12 @@ window.addEventListener('beforeunload', saveSession);
 async function restoreSession() {
   // OPTION (⚙ Comportement), désactivée par défaut : au lancement, decks
   // vides et réglages neufs — « à chaque relance, tout est à 0 »
-  if (localStorage.getItem('restoreSession') !== '1') {
+  // restoreOnce : restauration UNIQUE (relance pour une mise à jour) — le
+  // drapeau est consommé, la séance suivante repart bien de zéro
+  let once = localStorage.getItem('restoreOnce') === '1';
+  if (once) localStorage.removeItem('restoreOnce');
+  if (window.api.takeRestoreOnce && (await window.api.takeRestoreOnce().catch(() => false))) once = true;
+  if (!once && localStorage.getItem('restoreSession') !== '1') {
     sessionReady = true;
     return;
   }
