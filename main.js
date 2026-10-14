@@ -991,7 +991,7 @@ ipcMain.handle('ytdlp-install', async () => {
 // "Artist - Title" file name (the library splits on the 1st dash)
 const ytClean = (s) => String(s || '').replace(/[<>:"/\\|?*\x00-\x1F]/g, '_').replace(/\s+/g, ' ').trim().slice(0, 150);
 
-ipcMain.handle('ytdlp-download', async (e, url, id, destDir) => {
+ipcMain.handle('ytdlp-download', async (e, url, id, destDir, opts = {}) => {
   const { spawn } = require('child_process');
   const c = await findYtDlp();
   if (!c) return { ok: false, error: 'yt-dlp not installed' };
@@ -1005,6 +1005,7 @@ ipcMain.handle('ytdlp-download', async (e, url, id, destDir) => {
   const args = [
     ...c.args,
     '--js-runtimes', `node:${process.execPath}`,
+    ...(await ytCookieArgs(!!opts.browserCookies)), // signed-in YouTube account (age-restricted videos)
     '--no-playlist',            // a video with &list=: only the video
     '--newline', '--progress', '--no-colors', '--encoding', 'utf-8',
     '-f', 'bestaudio[ext=m4a]/bestaudio/best',
@@ -1113,12 +1114,13 @@ ipcMain.handle('ytdlp-search', async (_e, query, n = 20) => {
   const q = String(query || '').trim().slice(0, 200);
   if (!q) return { ok: true, items: [] };
   const count = Math.max(1, Math.min(40, n | 0));
+  const cookieArgs = await ytCookieArgs();
   return new Promise((resolve) => {
     let out = '';
     let err = '';
     let p;
     try {
-      p = spawn(c.exe, [...c.args, '--flat-playlist', '-J', '--no-warnings', '--encoding', 'utf-8',
+      p = spawn(c.exe, [...c.args, ...cookieArgs, '--flat-playlist', '-J', '--no-warnings', '--encoding', 'utf-8',
         `ytsearch${count}:${q}`], { windowsHide: true, env: { ...process.env, PYTHONIOENCODING: 'utf-8' } });
     } catch (ex) {
       resolve({ ok: false, error: String(ex.message || ex) });
@@ -1150,6 +1152,147 @@ ipcMain.handle('ytdlp-search', async (_e, query, n = 20) => {
     });
   });
 });
+
+// --- YOUTUBE / GOOGLE ACCOUNT for yt-dlp ---
+// Age-restricted videos ("Sign in to confirm your age") and YouTube's bot
+// checks need a signed-in account. The user signs in to Google in an
+// OpenMix window (persistent session of its own); its YouTube/Google
+// cookies are then exported to a Netscape cookie file that yt-dlp reads
+// with --cookies. The window is closed right after the login, so YouTube
+// stops rotating the cookies and the exported ones stay valid (the method
+// the yt-dlp wiki recommends).
+const YT_PARTITION = 'persist:youtube-login';
+const ytCookiesFile = () => path.join(app.getPath('userData'), 'yt-cookies.txt');
+// Plain Chrome user agent: Google refuses sign-ins from browsers that
+// announce themselves as Electron
+const chromeUA = () => `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${process.versions.chrome} Safari/537.36`;
+
+async function ytWriteCookies(ses) {
+  const all = await ses.cookies.get({});
+  const keep = all.filter((c) => /(^|\.)(youtube\.com|google\.[a-z.]+)$/i.test(String(c.domain || '').replace(/^\./, '')));
+  const later = Math.floor(Date.now() / 1000) + 180 * 86400;
+  const lines = ['# Netscape HTTP Cookie File', '# Exported by OpenMix for yt-dlp — do not share this file', ''];
+  for (const c of keep) {
+    const sub = !c.hostOnly;
+    const dom = sub && !c.domain.startsWith('.') ? `.${c.domain}` : c.domain;
+    // session cookies get an expiry: yt-dlp would skip them otherwise
+    const exp = c.expirationDate ? Math.floor(c.expirationDate) : later;
+    lines.push([dom, sub ? 'TRUE' : 'FALSE', c.path || '/', c.secure ? 'TRUE' : 'FALSE', exp, c.name, c.value].join('\t'));
+  }
+  const signedIn = keep.some((c) => c.name === 'LOGIN_INFO' && /youtube\.com$/i.test(c.domain));
+  // not signed in (window closed before the end): no cookie file at all
+  if (!signedIn) {
+    await fsp.rm(ytCookiesFile(), { force: true }).catch(() => {});
+    return false;
+  }
+  await fsp.writeFile(ytCookiesFile(), lines.join('\n') + '\n', 'utf8');
+  return true;
+}
+
+// DEFAULT BROWSER of the Windows user (fastest route: the YouTube session
+// the user already has there, read by yt-dlp's --cookies-from-browser).
+// Registry: HKCU\…\UrlAssociations\https\UserChoice → ProgId.
+const BROWSER_PROGIDS = [
+  [/^ChromeHTML/i, 'chrome', 'Chrome'],
+  [/^MSEdge/i, 'edge', 'Edge'],
+  [/^Firefox/i, 'firefox', 'Firefox'],
+  [/^Brave/i, 'brave', 'Brave'],
+  [/^Opera/i, 'opera', 'Opera'],
+  [/^Vivaldi/i, 'vivaldi', 'Vivaldi'],
+  [/^Chromium/i, 'chromium', 'Chromium']
+];
+let defaultBrowserCache;
+function defaultBrowser() {
+  if (defaultBrowserCache !== undefined) return Promise.resolve(defaultBrowserCache);
+  return new Promise((resolve) => {
+    if (process.platform !== 'win32') { defaultBrowserCache = null; resolve(null); return; }
+    require('child_process').execFile('reg', ['query',
+      'HKCU\\Software\\Microsoft\\Windows\\Shell\\Associations\\UrlAssociations\\https\\UserChoice', '/v', 'ProgId'],
+    { windowsHide: true }, (err, out) => {
+      const m = !err && /ProgId\s+REG_SZ\s+(\S+)/i.exec(String(out));
+      const hit = m && BROWSER_PROGIDS.find(([re]) => re.test(m[1]));
+      defaultBrowserCache = hit ? { id: hit[1], name: hit[2] } : null;
+      resolve(defaultBrowserCache);
+    });
+  });
+}
+
+function ytLoginWindow() {
+  return new Promise((resolve) => {
+    const ses = session.fromPartition(YT_PARTITION);
+    ses.setUserAgent(chromeUA());
+    const lw = new BrowserWindow({
+      width: 520,
+      height: 720,
+      parent: win,
+      title: 'YouTube / Google sign-in',
+      autoHideMenuBar: true,
+      webPreferences: { nodeIntegration: false, contextIsolation: true, session: ses }
+    });
+    lw.webContents.setUserAgent(chromeUA());
+    lw.loadURL(`https://accounts.google.com/ServiceLogin?service=youtube&continue=${encodeURIComponent('https://www.youtube.com/')}`);
+    let done = false;
+    // (closing the window by hand after signing in counts too)
+    const finish = async () => {
+      if (done) return;
+      done = true;
+      clearInterval(timer);
+      let signedIn = false;
+      try { signedIn = await ytWriteCookies(ses); } catch { /* nothing exported */ }
+      resolve(signedIn);
+      if (!lw.isDestroyed()) lw.close();
+    };
+    // LOGIN_INFO on youtube.com = signed in on YouTube (set once Google
+    // redirects back to youtube.com); a short delay lets the other cookies land
+    const timer = setInterval(async () => {
+      try {
+        const c = await ses.cookies.get({ name: 'LOGIN_INFO' });
+        if (c.some((k) => /youtube\.com$/i.test(k.domain)) && !done) setTimeout(finish, 2500);
+      } catch { /* try again */ }
+    }, 800);
+    lw.on('closed', () => { finish(); });
+  });
+}
+
+ipcMain.handle('yt-login', async () => {
+  try {
+    const ok = await ytLoginWindow();
+    return { ok };
+  } catch (err) {
+    return { ok: false, error: String(err.message || err) };
+  }
+});
+
+ipcMain.handle('yt-logout', async () => {
+  try { await session.fromPartition(YT_PARTITION).clearStorageData(); } catch { /* nothing */ }
+  await fsp.rm(ytCookiesFile(), { force: true }).catch(() => {});
+  return { ok: true };
+});
+
+ipcMain.handle('yt-account', async () => {
+  const browser = await defaultBrowser();
+  try {
+    const txt = await fsp.readFile(ytCookiesFile(), 'utf8');
+    return { signedIn: /\tLOGIN_INFO\t/.test(txt), browser };
+  } catch {
+    return { signedIn: false, browser };
+  }
+});
+
+// Cookies for yt-dlp: the account signed in through OpenMix first; else,
+// when asked (useBrowser: retry of a video that needs a sign-in), the
+// session of the default browser
+async function ytCookieArgs(useBrowser) {
+  try {
+    await fsp.access(ytCookiesFile());
+    return ['--cookies', ytCookiesFile()];
+  } catch { /* no OpenMix sign-in */ }
+  if (useBrowser) {
+    const b = await defaultBrowser();
+    if (b) return ['--cookies-from-browser', b.id];
+  }
+  return [];
+}
 
 ipcMain.handle('ytdlp-cancel', async (_e, id) => {
   const p = ytdlpJobs.get(id);

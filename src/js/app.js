@@ -7404,6 +7404,46 @@ let ytSeq = 0;
 const ytQueue = []; // pending downloads { url, deck }
 const btnYt = document.getElementById('btn-ytdlp');
 
+// YOUTUBE ACCOUNT: age-restricted videos ("Sign in to confirm your age")
+// and YouTube's bot checks need a signed-in Google account — see yt-login
+// in main.js. yt-dlp then downloads with that account's cookies.
+const YT_AUTH_RE = /sign in|confirm your age|age[- ]restricted|inappropriate for some users|--cookies|login required|members[- ]only/i;
+// yt-dlp couldn't read the browser's cookies (database locked while the
+// browser is open, Chrome/Edge app-bound encryption on Windows…)
+// (yt-dlp: "Could not copy Chrome cookie database", "Failed to decrypt with
+// DPAPI", "could not find firefox cookies database"…). Not the "Sign in…
+// use --cookies" message, which also contains the word "cookies".
+const YT_COOKIE_READ_RE = /could not copy .*cookie|failed to decrypt|dpapi|app.bound|cookies? database|could not find .*cookies/i;
+const ytAuthRetried = new Map(); // url → { browser, window }: routes already tried
+
+async function refreshYtAccount() {
+  if (!window.api.ytAccount) return false;
+  const st = await window.api.ytAccount().catch(() => ({ signedIn: false }));
+  const el = document.getElementById('set-yt-account');
+  if (el) {
+    el.textContent = st.signedIn
+      ? t('yt_account_on')
+      : (st.browser ? t('yt_account_browser', { browser: st.browser.name }) : t('yt_account_off'));
+  }
+  document.getElementById('set-yt-logout')?.classList.toggle('hidden', !st.signedIn);
+  return !!st.signedIn;
+}
+
+async function ytLogin() {
+  flashStatus(t('yt_login_opening'));
+  const r = await window.api.ytLogin().catch(() => ({ ok: false }));
+  await refreshYtAccount();
+  flashStatus(r.ok ? t('yt_login_ok') : t('yt_login_cancelled'));
+  return !!r.ok;
+}
+document.getElementById('set-yt-login')?.addEventListener('click', () => ytLogin());
+document.getElementById('set-yt-logout')?.addEventListener('click', async () => {
+  await window.api.ytLogout();
+  await refreshYtAccount();
+  flashStatus(t('yt_logout_done'));
+});
+refreshYtAccount();
+
 async function refreshYtStatus() {
   const el = document.getElementById('set-ytdlp-status');
   if (!el || !window.api.ytdlpStatus) return;
@@ -7441,7 +7481,7 @@ function ytUpdateButton() {
   btnYt.classList.toggle('on', !!ytJob);
 }
 
-async function ytDownload(url, deckIdx = null, destDir = null) {
+async function ytDownload(url, deckIdx = null, destDir = null, opts = {}) {
   url = String(url || '').trim();
   if (!/^https?:\/\/\S+$/i.test(url)) {
     flashStatus(t('ytdlp_bad_url'));
@@ -7449,7 +7489,7 @@ async function ytDownload(url, deckIdx = null, destDir = null) {
   }
   if (ytJob) {
     // a download is already running: this one waits its turn
-    ytQueue.push({ url, deck: deckIdx, dest: destDir || dlDestPath() });
+    ytQueue.push({ url, deck: deckIdx, dest: destDir || dlDestPath(), opts });
     ytUpdateButton();
     flashStatus(t('ytdlp_queued', { n: ytQueue.length }));
     return;
@@ -7461,7 +7501,7 @@ async function ytDownload(url, deckIdx = null, destDir = null) {
   flashStatus(t('ytdlp_started'));
   let res;
   try {
-    res = await window.api.ytdlpDownload(url, id, destDir || dlDestPath());
+    res = await window.api.ytdlpDownload(url, id, destDir || dlDestPath(), opts);
   } catch (err) {
     res = { ok: false, error: String(err.message || err) };
   } finally {
@@ -7471,9 +7511,47 @@ async function ytDownload(url, deckIdx = null, destDir = null) {
   // the next one in the queue starts as soon as this one is done
   const next = () => {
     const n = ytQueue.shift();
-    if (n) setTimeout(() => ytDownload(n.url, n.deck, n.dest), 50);
+    if (n) setTimeout(() => ytDownload(n.url, n.deck, n.dest, n.opts || {}), 50);
     ytUpdateButton();
   };
+  // Video that needs a SIGN-IN (age restriction, bot check):
+  //  1) retry right away with the session of the DEFAULT BROWSER, without
+  //     asking anything (the fastest route);
+  //  2) browser cookies unreadable (Chrome/Edge encrypt and lock them on
+  //     Windows) or still refused: offer the OpenMix sign-in window;
+  //  3) refused even with that account: the account isn't confirmed adult.
+  const dest = destDir || dlDestPath();
+  const authErr = !res.ok && !res.cancelled && YT_AUTH_RE.test(res.error || '');
+  const cookieErr = !res.ok && !authErr && opts.browserCookies && YT_COOKIE_READ_RE.test(res.error || '');
+  if (authErr || cookieErr) {
+    const tried = ytAuthRetried.get(url) || {};
+    ytAuthRetried.set(url, tried);
+    const acct = await window.api.ytAccount().catch(() => ({}));
+    if (!tried.browser && !acct.signedIn && acct.browser && !cookieErr) {
+      tried.browser = true;
+      flashStatus(t('yt_using_browser_cookies', { browser: acct.browser.name }));
+      ytQueue.unshift({ url, deck: deckIdx, dest, opts: { ...opts, browserCookies: true } });
+      next();
+      return;
+    }
+    if (!tried.window) {
+      tried.window = true;
+      const ask = cookieErr
+        ? t('yt_browser_cookies_unreadable_confirm', { browser: (acct.browser && acct.browser.name) || '?' })
+        : t('yt_auth_needed_confirm');
+      if (window.confirm(ask) && (await ytLogin())) {
+        ytQueue.unshift({ url, deck: deckIdx, dest, opts: { ...opts, browserCookies: false } });
+        next();
+        return;
+      }
+    } else {
+      // already retried with an account: the account itself is refused
+      flashStatus(t('yt_auth_still_blocked'));
+      next();
+      return;
+    }
+  }
+  if (res.ok) ytAuthRetried.delete(url);
   if (!res.ok) {
     flashStatus(res.cancelled ? t('ytdlp_cancelled') : t('ytdlp_failed', { error: res.error }));
     if (res.cancelled) ytQueue.length = 0; // cancel = empty the queue too
