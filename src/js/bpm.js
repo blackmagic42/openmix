@@ -1,33 +1,33 @@
-// Détection de BPM et de grille.
+// BPM and grid detection.
 //
-// 1. Basses isolées (passe-bas) puis FORCE D'ATTAQUE (onset) : on mesure les
-//    montées d'énergie, pas l'amplitude brute — robuste même quand la basse
-//    « wobble » sans transitoires nettes.
-// 2. Histogramme des intervalles entre attaques -> BPM approché.
-// 3. Ancrage de phase sur les attaques, puis RÉGRESSION LINÉAIRE sur les
-//    positions réelles des attaques -> période au ~millième de BPM.
-//    Sans cet affinage, un BPM arrondi fait dériver la grille petit à petit.
+// 1. Isolated bass (low-pass) then ONSET STRENGTH: we measure rises in
+//    energy, not raw amplitude — robust even when the bass
+//    "wobbles" without clear transients.
+// 2. Histogram of inter-onset intervals -> approximate BPM.
+// 3. Phase anchoring on the onsets, then LINEAR REGRESSION on the
+//    actual onset positions -> period to ~a thousandth of a BPM.
+//    Without this refinement, a rounded BPM makes the grid drift little by little.
 
 export async function detectBPM(buffer, range) {
-  // Plage BPM de base (défaut 85-170, réglable dans les paramètres).
-  // Le choix d'octave intelligent reste actif dans tous les cas.
+  // Base BPM range (default 85-170, adjustable in the settings).
+  // Smart octave selection stays active in every case.
   const RLO = range && range.lo ? range.lo : 85;
   const RHI = range && range.hi ? range.hi : 170;
-  // PLAFOND D'OCTAVE : au-delà (plage +6 %, 180 au minimum), un tempo est
-  // un DOUBLE TEMPO — les charlestons en croches se replient parfaitement à
-  // 2× le vrai BPM et y font toujours un meilleur score (mesuré : Bon
+  // OCTAVE CEILING: above it (range +6 %, 180 minimum), a tempo is
+  // a DOUBLE TEMPO — eighth-note hi-hats fold perfectly onto
+  // 2× the real BPM and always score better there (measured: Bon
   // Appétit 106 → 212, Smells Like Teen Spirit 117 → 236, Say So 111 → 222,
-  // T mimi 100 → 200, Raze It Up 93 → 186). Le score seul ne sait PAS
-  // trancher (un vrai 174 a le même rapport) : c'est la PLAGE qui décide,
-  // comme dans Rekordbox. Plage 100-200 = plafond 212 pour le hardcore.
+  // T mimi 100 → 200, Raze It Up 93 → 186). The score alone CANNOT
+  // decide (a real 174 has the same ratio): the RANGE decides,
+  // as in Rekordbox. Range 100-200 = ceiling 212 for hardcore.
   const FOLD_HI = Math.max(RHI * 1.06, 180);
-  // Morceau analysé EN ENTIER (jusqu'à 10 min) : la régression s'appuie sur
-  // des kicks du début À LA FIN — aucune dérive par extrapolation.
-  // Rendu à 8 kHz : on ne garde que les basses, c'est 5x plus rapide.
+  // Track analyzed IN FULL (up to 10 min): the regression relies on
+  // kicks from the start TO THE END — no drift from extrapolation.
+  // Rendered at 8 kHz: only the bass is kept, it is 5x faster.
   const seconds = Math.min(buffer.duration, 600);
   const sr = 8000;
   const length = Math.floor(seconds * sr);
-  if (length < sr * 5) return null; // morceau trop court
+  if (length < sr * 5) return null; // track too short
 
   const off = new OfflineAudioContext(1, length, sr);
   const src = off.createBufferSource();
@@ -50,7 +50,7 @@ export async function detectBPM(buffer, range) {
   const rendered = await off.startRendering();
   const data = rendered.getChannelData(0);
 
-  // Enveloppe par pas de 5 ms puis force d'attaque
+  // Envelope in 5 ms steps, then onset strength
   const hop = Math.max(1, Math.floor(sr * 0.005));
   const nH = Math.floor(data.length / hop);
   if (nH < 200) return null;
@@ -76,7 +76,7 @@ export async function detectBPM(buffer, range) {
   }
   if (maxO <= 0) return null;
 
-  // Pics d'attaque (maxima locaux), seuil abaissé jusqu'à en avoir assez
+  // Onset peaks (local maxima), threshold lowered until there are enough
   const minGap = Math.round(0.25 / 0.005); // 240 BPM max
   let peaks = [];
   for (let thr = maxO * 0.5; thr > maxO * 0.06; thr *= 0.72) {
@@ -92,7 +92,7 @@ export async function detectBPM(buffer, range) {
   }
   if (peaks.length < 8) return null;
 
-  // Position sub-milliseconde de chaque attaque (interpolation parabolique)
+  // Sub-millisecond position of each onset (parabolic interpolation)
   const times = peaks.map((j) => {
     const y1 = onset[j - 1] || 0;
     const y2 = onset[j];
@@ -104,15 +104,15 @@ export async function detectBPM(buffer, range) {
     return ((j + 0.5 + delta) * hop) / sr;
   });
 
-  // --- Tempo par AUTOCORRÉLATION de la force d'attaque ---
-  // La méthode de référence : la périodicité du beat ressort naturellement,
-  // même avec des basses en contretemps, du swing ou des breaks (là où les
-  // intervalles entre attaques se font piéger).
+  // --- Tempo by AUTOCORRELATION of the onset strength ---
+  // The reference method: the beat periodicity comes out naturally,
+  // even with off-beat basslines, swing or breaks (where the
+  // inter-onset intervals get fooled).
   const hopSec = hop / sr;
   const acMin = Math.max(4, Math.floor((60 / RHI) / hopSec));
   const acMax = Math.min(nH - 10, Math.ceil((60 / RLO) / hopSec));
   if (acMax <= acMin + 2) return null;
-  const acLen = Math.min(nH, Math.floor(240 / hopSec)); // 4 min suffisent
+  const acLen = Math.min(nH, Math.floor(240 / hopSec)); // 4 min is enough
   const acTop = Math.min(acMax * 2 + 1, nH - 2);
   const ac = new Float32Array(acTop + 1);
   for (let lag = acMin; lag <= acTop; lag++) {
@@ -121,7 +121,7 @@ export async function detectBPM(buffer, range) {
     for (let j = 0; j < lim; j++) s += onset[j] * onset[j + lag];
     ac[lag] = s;
   }
-  // Meilleur lag avec renfort harmonique (le double du lag doit corréler aussi)
+  // Best lag with harmonic reinforcement (twice the lag must correlate too)
   let bestLag = acMin;
   let bestScore = -1;
   for (let lag = acMin; lag <= acMax; lag++) {
@@ -131,7 +131,7 @@ export async function detectBPM(buffer, range) {
       bestLag = lag;
     }
   }
-  // Affinage parabolique du lag
+  // Parabolic refinement of the lag
   const ay1 = ac[bestLag - 1] || 0;
   const ay2 = ac[bestLag];
   const ay3 = ac[bestLag + 1] || 0;
@@ -141,9 +141,9 @@ export async function detectBPM(buffer, range) {
   if (dl < -0.5) dl = -0.5;
   let bpm0 = 60 / ((bestLag + dl) * hopSec);
 
-  // Choix d'octave automatique : en techno/hard, le kick est sur CHAQUE temps,
-  // donc la médiane des intervalles entre attaques donne le vrai tempo.
-  // Un morceau à 190 BPM ne sera plus affiché 95.
+  // Automatic octave choice: in techno/hard, the kick is on EVERY beat,
+  // so the median inter-onset interval gives the real tempo.
+  // A 190 BPM track will no longer be shown as 95.
   if (times.length > 10) {
     const ivs = [];
     for (let i = 1; i < times.length; i++) ivs.push(times[i] - times[i - 1]);
@@ -167,10 +167,10 @@ export async function detectBPM(buffer, range) {
 
   let period = 60 / bpm0;
 
-  // Ancrage : phase qui maximise la force d'attaque aux positions attendues
+  // Anchoring: the phase that maximizes onset strength at the expected positions
   let offset = bestPhase(onset, hop, sr, period);
 
-  // Affinage par régression linéaire (3 passes, fenêtre qui se resserre)
+  // Refinement by linear regression (3 passes, narrowing window)
   const windows = [0.22, 0.15, 0.12];
   for (const win of windows) {
     const ks = [];
@@ -206,19 +206,19 @@ export async function detectBPM(buffer, range) {
     offset = a;
   }
 
-  // Normalise l'ancrage dans [0, période)
+  // Normalize the anchor into [0, period)
   offset -= Math.floor(offset / period) * period;
 
   const dur = data.length / sr;
 
-  // --- Enveloppe LARGE BANDE du fichier original (transitoires vrais) ---
-  // Construite tôt car elle sert deux fois : départager kick/contretemps
-  // pour la phase de la grille rigide, puis recalage final (le passe-bas
-  // d'analyse retarde les attaques de quelques ms — retard de groupe).
+  // --- WIDEBAND envelope of the original file (true transients) ---
+  // Built early because it is used twice: to tell kick from off-beat
+  // for the rigid grid's phase, then for the final realignment (the analysis
+  // low-pass delays onsets by a few ms — group delay).
   const osr = buffer.sampleRate;
   const ch0 = buffer.getChannelData(0);
   const ch1 = buffer.numberOfChannels > 1 ? buffer.getChannelData(1) : ch0;
-  const whop = Math.max(1, Math.floor(osr * 0.002)); // pas de 2 ms
+  const whop = Math.max(1, Math.floor(osr * 0.002)); // 2 ms steps
   const wn = Math.floor(Math.min(ch0.length, seconds * osr) / whop);
   const wenv = new Float32Array(wn);
   for (let j = 0; j < wn; j++) {
@@ -234,7 +234,7 @@ export async function detectBPM(buffer, range) {
   const wons = new Float32Array(wn);
   for (let j = 1; j < wn; j++) wons[j] = Math.max(0, wenv[j] - wenv[j - 1]);
   const whopSec = whop / osr;
-  // Plus forte attaque large bande autour d'un instant (rayon en secondes)
+  // Strongest wideband onset around a given time (radius in seconds)
   const wPeakNear = (center, radius) => {
     const R = Math.max(1, Math.round(radius / whopSec));
     const jc = Math.round(center / whopSec);
@@ -253,16 +253,16 @@ export async function detectBPM(buffer, range) {
     return { t: (bj + dd) * whopSec, v: bv };
   };
 
-  // ---- GRILLE RIGIDE : le vrai système Rekordbox ----
-  // Mesuré sur 61 grilles d'analyse ANLZ trouvées sur le disque : 61/61
-  // grilles sont parfaitement RIGIDES (un seul tempo, temps équidistants au
-  // ms près) et 60/61 ont un BPM ENTIER — la musique électronique est
-  // produite en DAW à tempo fixe. Une grille rigide ne PEUT PAS dériver.
-  // On cherche donc le BPM constant qui aligne le mieux TOUTES les attaques
-  // du morceau (histogramme de phase circulaire : le bon tempo donne un pic
-  // net, un tempo faux l'étale), avec verrou sur l'entier. Le suivi
-  // beat-par-beat ne sert plus qu'en repli si le tempo varie vraiment
-  // (live, vinyle, vieux funk).
+  // ---- RIGID GRID: the real Rekordbox system ----
+  // Measured on 61 ANLZ analysis grids found on disk: 61/61
+  // grids are perfectly RIGID (a single tempo, beats equally spaced to
+  // the ms) and 60/61 have an INTEGER BPM — electronic music is
+  // produced in a DAW at a fixed tempo. A rigid grid CANNOT drift.
+  // So we look for the constant BPM that best aligns ALL the onsets
+  // of the track (circular phase histogram: the right tempo gives a sharp
+  // peak, a wrong tempo smears it out), with a lock on the integer. Beat-by-beat
+  // tracking is now only a fallback when the tempo really varies
+  // (live, vinyl, old funk).
   const strengths = peaks.map((j) => onset[j]);
   const histPhase = (p, ts, ws) => {
     const bins = Math.max(48, Math.round(p / 0.002));
@@ -271,7 +271,7 @@ export async function detectBPM(buffer, range) {
       const ph = ts[i] - Math.floor(ts[i] / p) * p;
       hist[Math.min(bins - 1, Math.floor((ph / p) * bins))] += ws[i];
     }
-    // Lissage circulaire triangulaire ±3 bins (≈ ±6 ms)
+    // Triangular circular smoothing ±3 bins (≈ ±6 ms)
     const sm = (i) => {
       let s = 0;
       for (let d = -3; d <= 3; d++) s += hist[(i + d + bins) % bins] * (4 - Math.abs(d));
@@ -291,21 +291,21 @@ export async function detectBPM(buffer, range) {
     if (dd < -0.5) dd = -0.5;
     return { score: best, phase: ((((bestI + 0.5 + dd) / bins) * p) % p + p) % p };
   };
-  // Série CONTINUE de puissance des basses (env², sous-échantillonnée ×2).
-  // Mesuré contre les grilles Rekordbox : son pic de phase tombe 0 à 70 ms
-  // après le temps officiel (le sub du kick se développe juste après
-  // l'attaque) sur 7 morceaux sur 8 — c'est le marqueur de phase le plus
-  // fiable, bien plus que les pics d'onset (qui élisent la bassline en
-  // contretemps) ou les transitoires bruts (qui élisent hats et claps).
+  // CONTINUOUS bass power series (env², downsampled ×2).
+  // Measured against Rekordbox grids: its phase peak falls 0 to 70 ms
+  // after the official beat (the kick's sub builds up just after
+  // the attack) on 7 tracks out of 8 — it is the most reliable phase
+  // marker, far more than onset peaks (which pick the off-beat
+  // bassline) or raw transients (which pick hats and claps).
   const lpT = [];
   const lpW = [];
   for (let j = 0; j < nH; j += 2) {
     lpT.push(j * hopSec);
     lpW.push(env[j] * env[j]);
   }
-  // Attaques large bande brutes (maxima locaux ≥ 12 % du max, espacées
-  // d'au moins 100 ms) : servent à retrouver l'ATTAQUE du kick juste avant
-  // le pic de puissance des basses.
+  // Raw wideband onsets (local maxima ≥ 12 % of the max, spaced
+  // at least 100 ms apart): used to find the kick ATTACK just before
+  // the bass power peak.
   const wpTimes = [];
   const wpW = [];
   {
@@ -327,9 +327,9 @@ export async function detectBPM(buffer, range) {
     if (d > p / 2) d = p - d;
     return d;
   };
-  // Argmax du histogramme lissé restreint à une fenêtre circulaire [lo, hi].
-  // pickLatest : prend le DERNIER pic ≥ 60 % du max de la fenêtre (l'attaque
-  // du kick est le dernier transitoire avant l'épanouissement du sub).
+  // Argmax of the smoothed histogram restricted to a circular window [lo, hi].
+  // pickLatest: takes the LAST peak ≥ 60 % of the window max (the kick
+  // attack is the last transient before the sub blooms).
   const histArgmaxWin = (p, ts, ws, lo, hi, pickLatest) => {
     const bins = Math.max(48, Math.round(p / 0.002));
     const hist = new Float64Array(bins);
@@ -349,7 +349,7 @@ export async function detectBPM(buffer, range) {
     let best = -1;
     let mass = 0;
     let tot = 0;
-    const inWin = []; // {i, s, x} des bins de la fenêtre
+    const inWin = []; // {i, s, x} of the bins inside the window
     for (let i = 0; i < bins; i++) {
       const s = sm(i);
       tot += s;
@@ -385,18 +385,18 @@ export async function detectBPM(buffer, range) {
   let rigidDev = -1;
   if (times.length >= 40 && dur > 30) {
     const bpmEst = 60 / period;
-    // L'octave est revérifiée ici : kicks un temps sur deux → l'estimation
-    // arrive à la moitié du vrai tempo. On balaye chaque octave plausible et
-    // celle DANS la plage choisie gagne sauf si elle aligne nettement moins bien.
-    // Octaves ET rapports ternaires : les rythmes pointés/triolets piègent
-    // l'autocorrélation à ⅔ ou 4/3 du vrai tempo (mesuré : 96 au lieu de
-    // 144, 103,3 au lieu de 155, 192 au lieu de 144). Les octaves pures
-    // (×2, ×½) peuvent sortir de la plage (un vrai 190 existe) ; les
-    // rapports ternaires n'ont le droit de gagner QUE dans la plage —
-    // hors plage, un ternaire est toujours une erreur de lecture.
-    // Fenêtre ±1,2 autour des octaves, ±3 autour des ternaires (l'erreur
-    // d'estimation est amplifiée par le rapport : 1,5 × 94,7 = 142 alors que
-    // le vrai tempo est 144 — il faut qu'il soit DANS la fenêtre pour gagner)
+    // The octave is re-checked here: kicks on every other beat → the estimate
+    // lands at half the real tempo. We sweep every plausible octave and
+    // the one INSIDE the chosen range wins unless it aligns clearly worse.
+    // Octaves AND ternary ratios: dotted/triplet rhythms trap
+    // the autocorrelation at ⅔ or 4/3 of the real tempo (measured: 96 instead of
+    // 144, 103.3 instead of 155, 192 instead of 144). Pure octaves
+    // (×2, ×½) may fall outside the range (a real 190 exists); ternary
+    // ratios are only allowed to win INSIDE the range —
+    // outside the range, a ternary is always a misreading.
+    // Window ±1.2 around octaves, ±3 around ternaries (the estimation
+    // error is amplified by the ratio: 1.5 × 94.7 = 142 while
+    // the real tempo is 144 — it has to be INSIDE the window to win)
     const octs = [bpmEst, bpmEst * 2, bpmEst / 2]
       .filter((c) => c >= 40 && c <= 240)
       .map((c) => ({ c0: c, span: 1.2, tern: false }));
@@ -407,10 +407,10 @@ export async function detectBPM(buffer, range) {
     for (let i = octs.length - 1; i > 0; i--) {
       if (octs.findIndex((x) => Math.abs(x.c0 - octs[i].c0) < 0.5) < i) octs.splice(i, 1);
     }
-    // Score DOUBLE pour chaque candidat : netteté du pic de phase de la
-    // puissance des basses ET des transitoires large bande. Les deux se
-    // complètent : la basse peut groover (funk) mais les hats sont
-    // métronomiques ; les hats peuvent manquer mais le sub est là.
+    // DUAL score for each candidate: sharpness of the phase peak of the
+    // bass power AND of the wideband transients. The two complement
+    // each other: the bass may groove (funk) but the hats are
+    // metronomic; the hats may be missing but the sub is there.
     const dual = (bpm) => {
       const p2 = 60 / bpm;
       return { bpm, s1: scorePhase(p2).score, s2: histPhase(p2, wpTimes, wpW).score };
@@ -421,12 +421,12 @@ export async function detectBPM(buffer, range) {
         cands.push({ ...dual(c), tern: o.tern });
       }
     }
-    // BALAYAGE COMPLET de la plage (le correctif du « 162 au lieu de
-    // 145 ») : l'autocorrélation peut accrocher un tempo SANS rapport
-    // simple avec le vrai (162/145 = 1,117 — ni octave ni ternaire) et
-    // dans ce cas AUCUN candidat proche du vrai n'existait même dans la
-    // course. Ici TOUTE la plage concourt : passe grossière (0,5 BPM) sur
-    // le double score de phase, puis affinage fin des 3 meilleurs bassins.
+    // FULL SWEEP of the range (the fix for "162 instead of
+    // 145"): the autocorrelation can lock onto a tempo with NO simple
+    // ratio to the real one (162/145 = 1.117 — neither octave nor ternary) and
+    // in that case NO candidate close to the real one was even in the
+    // race. Here the WHOLE range competes: a coarse pass (0.5 BPM) on
+    // the dual phase score, then fine refinement of the 3 best basins.
     {
       const coarse = [];
       for (let c = RLO; c <= RHI; c += 0.5) coarse.push(dual(c));
@@ -462,9 +462,9 @@ export async function detectBPM(buffer, range) {
     const comb = (x) => (m1 ? x.s1 / m1 : 0) + (m2 ? x.s2 / m2 : 0);
     let bestC = null;
     if (cands.length) {
-      let bo = null; // meilleure octave (toutes, même hors plage — un vrai 190 existe)
-      let boIn = null; // meilleure octave dans la plage
-      let bt = null; // meilleur ternaire (déjà restreint à la plage)
+      let bo = null; // best octave (all of them, even out of range — a real 190 exists)
+      let boIn = null; // best octave inside the range
+      let bt = null; // best ternary (already restricted to the range)
       for (const x of cands) {
         if (!x.tern) {
           if (!bo || comb(x) > comb(bo)) bo = x;
@@ -475,13 +475,13 @@ export async function detectBPM(buffer, range) {
       }
       bestC = bo;
       if (boIn && bo && comb(boIn) >= comb(bo) * 0.7) bestC = boIn;
-      // Un ternaire ne gagne que s'il ÉCRASE l'octave : au sous-harmonique la
-      // masse d'alignement se divise en 3 pics (~⅓ chacun), au vrai tempo
-      // elle fait UN seul pic — les vraies corrections (96→144) passent ce
-      // seuil haut la main, les faux amis du swing jamais.
+      // A ternary only wins if it CRUSHES the octave: at the subharmonic the
+      // alignment mass splits into 3 peaks (~⅓ each), at the real tempo
+      // it forms ONE single peak — genuine corrections (96→144) clear this
+      // threshold easily, swing's false friends never do.
       if (bt && (!bestC || comb(bt) >= comb(bestC) * 1.15)) bestC = bt;
-      // Au-dessus du plafond : c'est la MOITIÉ (affinée autour de bpm/2 —
-      // l'estimation au double tempo est la plus précise des deux)
+      // Above the ceiling: it is the HALF (refined around bpm/2 —
+      // the double-tempo estimate is the more precise of the two)
       if (bestC && bestC.bpm > FOLD_HI) {
         const h0 = bestC.bpm / 2;
         let hb = dual(h0);
@@ -493,8 +493,8 @@ export async function detectBPM(buffer, range) {
       }
     }
     if (bestC) {
-      // Verrou façon Rekordbox : l'entier (puis le demi) gagne s'il fait
-      // quasi aussi bien que le meilleur candidat fractionnaire
+      // Rekordbox-style lock: the integer (then the half) wins if it does
+      // almost as well as the best fractional candidate
       for (const snap of [Math.round(bestC.bpm), Math.round(bestC.bpm * 2) / 2]) {
         if (Math.abs(snap - bestC.bpm) < 0.005) break;
         const sc = dual(snap);
@@ -504,30 +504,30 @@ export async function detectBPM(buffer, range) {
         }
       }
       const p = 60 / bestC.bpm;
-      // ANCRE : pic de phase de la puissance des basses (traîne 0-70 ms
-      // après le vrai temps), puis on remonte au TRANSITOIRE large bande
-      // qui le précède — l'attaque du kick. C'est exactement là que
-      // Rekordbox pose ses temps.
+      // ANCHOR: phase peak of the bass power (lags 0-70 ms
+      // behind the real beat), then we step back to the wideband TRANSIENT
+      // that precedes it — the kick attack. That is exactly where
+      // Rekordbox places its beats.
       const lp = histPhase(p, lpT, lpW);
       let phiLP = lp.phase;
       const kick = histArgmaxWin(p, wpTimes, wpW, phiLP - 0.09, phiLP + 0.005);
       bestC.phase = kick ? kick.phase : (phiLP - 0.03 + p) % p;
-      // Même refusée ensuite, la grille du balayage donne l'octave et la
-      // phase de départ du suivi dynamique (corrige les « 73 au lieu de
-      // 146 » du choix d'octave par médiane d'intervalles)
+      // Even if rejected later, the sweep's grid gives the octave and the
+      // starting phase for dynamic tracking (fixes the "73 instead of
+      // 146" from the octave choice by median interval)
       period = p;
       offset = bestC.phase;
-      // Le tempo est-il vraiment constant ? Par TRONÇONS : si le pic de
-      // puissance des basses garde exactement la même phase du début à la
-      // fin, la grille rigide est parfaite (DAW). S'il glisse (live,
-      // vinyle) on repasse au suivi dynamique. Les tronçons sans basses
-      // (breaks) sont ignorés.
+      // Is the tempo really constant? By CHUNKS: if the bass power
+      // peak keeps exactly the same phase from start to
+      // end, the rigid grid is perfect (DAW). If it slides (live,
+      // vinyl) we fall back to dynamic tracking. Chunks without bass
+      // (breaks) are ignored.
       const CH = Math.max(4, Math.min(10, Math.floor(dur / 30)));
       const clen = dur / CH;
-      // Chaque tronçon est jugé sur DEUX signaux : puissance des basses ET
-      // transitoires large bande (hats/caisse métronomiques même quand la
-      // bassline groove). Le tronçon vaut le meilleur des deux — un
-      // changement de pattern touche rarement les deux à la fois.
+      // Each chunk is judged on TWO signals: bass power AND
+      // wideband transients (hats/snare stay metronomic even when the
+      // bassline grooves). The chunk takes the better of the two — a
+      // pattern change rarely affects both at once.
       const chunkDevList = (Ts, Ws, phi, minCount) => {
         let tot = 0;
         for (const w of Ws) tot += w;
@@ -544,7 +544,7 @@ export async function detectBPM(buffer, range) {
             chMass += Ws[k0];
             k0++;
           }
-          // tronçon quasi muet : pas d'information de phase
+          // nearly silent chunk: no phase information
           if (ts.length < minCount || chMass < (tot / CH) * 0.15) continue;
           const r = histArgmaxWin(p, ts, ws, phi - p / 5, phi + p / 5);
           if (!r || r.mass < r.tot * 0.08) continue;
@@ -561,9 +561,9 @@ export async function detectBPM(buffer, range) {
         else if (dWB[c] != null) devs.push(dWB[c]);
       }
       devs.sort((a, b) => a - b);
-      // Seuils volontairement stricts : une grille rigide à MAUVAIS BPM est
-      // bien pire qu'un repli dynamique approché (testé : les assouplir
-      // faisait accepter 142 au lieu de 144 sur du funk groovy)
+      // Deliberately strict thresholds: a rigid grid with the WRONG BPM is
+      // much worse than an approximate dynamic fallback (tested: loosening them
+      // made it accept 142 instead of 144 on groovy funk)
       const rigidOk =
         (devs.length >= 3 && devs[devs.length >> 1] <= 0.015 && devs[Math.floor(devs.length * 0.75)] <= 0.03) ||
         (devs.length === 2 && devs[0] <= 0.01 && devs[1] <= 0.02);
@@ -576,14 +576,14 @@ export async function detectBPM(buffer, range) {
     }
   }
 
-  // ---- GRILLE DYNAMIQUE : suivi battement par battement ----
-  // Sert de repli quand le tempo varie, ET de contre-vérification du
-  // verrou rigide.
+  // ---- DYNAMIC GRID: beat-by-beat tracking ----
+  // Serves as a fallback when the tempo varies, AND as a cross-check of the
+  // rigid lock.
   const buildDynamic = () => {
   const beats = [];
-  // Chaque temps est posé sur l'attaque réelle la plus proche de la
-  // prédiction (la période s'adapte doucement). Une grille à BPM fixe ne
-  // peut pas être parfaite sur un tempo qui varie — celle-ci, si.
+  // Each beat is placed on the actual onset closest to the
+  // prediction (the period adapts gently). A fixed-BPM grid cannot
+  // be perfect on a varying tempo — this one can.
   const findPeakNear = (center, radius) => {
     const j0 = Math.max(2, Math.round((center - radius) * sr / hop));
     const j1 = Math.min(nH - 3, Math.round((center + radius) * sr / hop));
@@ -594,8 +594,8 @@ export async function detectBPM(buffer, range) {
     let bScore = 0;
     for (let j = j0; j <= j1; j++) {
       if (onset[j] >= onset[j - 1] && onset[j] >= onset[j + 1]) {
-        // Score = force × proximité de la prédiction : on ne saute plus sur
-        // une caisse claire voisine juste parce qu'elle est plus forte
+        // Score = strength × closeness to the prediction: no more jumping onto
+        // a neighboring snare just because it is louder
         const w = 1 - Math.pow((j - jc) / jr, 2);
         const score = onset[j] * Math.max(0.1, w);
         if (score > bScore) {
@@ -616,12 +616,12 @@ export async function detectBPM(buffer, range) {
     return { t: ((bj + 0.5 + delta) * hop) / sr, v: bv };
   };
 
-  // --- Découpage en SECTIONS : basses actives vs breaks/moments chill ---
-  // Dans les trous sans kick, l'ancien suivi dérivait puis repartait faux
-  // pour toute la fin du morceau. Ici chaque section de basses est
-  // RE-ANCRÉE sur son propre kick de reprise, et les breaks sont pontés
-  // proprement entre deux sections.
-  const segStep = Math.max(1, Math.round(0.25 / hopSec)); // pas de 0,25 s
+  // --- Splitting into SECTIONS: active bass vs breaks/chill moments ---
+  // In the gaps without a kick, the old tracker drifted and then restarted wrong
+  // for the whole rest of the track. Here each bass section is
+  // RE-ANCHORED on its own re-entry kick, and breaks are bridged
+  // cleanly between two sections.
+  const segStep = Math.max(1, Math.round(0.25 / hopSec)); // 0.25 s steps
   const nSegs = Math.max(1, Math.floor(nH / segStep));
   const segE = new Float32Array(nSegs);
   for (let s2 = 0; s2 < nSegs; s2++) {
@@ -634,7 +634,7 @@ export async function detectBPM(buffer, range) {
   const refE = sortedE[Math.floor(nSegs * 0.8)] || 0;
   const smooth = [];
   for (let s2 = 0; s2 < nSegs; s2++) smooth.push(segE[s2] > refE * 0.22);
-  // Combler les petits trous (< 2 s) puis retirer les îlots isolés (< 1,5 s)
+  // Fill small holes (< 2 s) then remove isolated islands (< 1.5 s)
   const holeMax = Math.round(2 / 0.25);
   const isleMin = Math.round(1.5 / 0.25);
   let i2 = 0;
@@ -671,7 +671,7 @@ export async function detectBPM(buffer, range) {
   }
   if (!sections.length) sections.push({ a: 0, b: dur });
 
-  // Kick de reprise d'une section : la plus forte attaque dans ses 2,5 premières secondes
+  // Re-entry kick of a section: the strongest onset in its first 2.5 seconds
   const anchorIn = (a, b) => {
     const j0 = Math.max(2, Math.round(a / hopSec));
     const j1 = Math.min(nH - 3, Math.round(Math.min(b, a + 2.5) / hopSec));
@@ -700,9 +700,9 @@ export async function detectBPM(buffer, range) {
     if (beats.length) {
       const last = beats[beats.length - 1];
       if (anchor <= last + p * 0.5) {
-        anchor = last + p; // sections qui se touchent : continuité simple
+        anchor = last + p; // touching sections: simple continuity
       } else {
-        // Pont du break : nombre entier de temps réparti uniformément
+        // Bridging the break: a whole number of beats spread evenly
         const gapBeats = Math.max(1, Math.round((anchor - last) / p));
         const step = (anchor - last) / gapBeats;
         if (step > p * 0.7 && step < p * 1.3) {
@@ -718,7 +718,7 @@ export async function detectBPM(buffer, range) {
         }
       }
     } else if (anchor > p * 0.6) {
-      // Remonter du premier ancrage vers le début du fichier
+      // Walk back from the first anchor to the start of the file
       const pre = [];
       let tb = anchor - p;
       while (tb > 0.02) {
@@ -727,7 +727,7 @@ export async function detectBPM(buffer, range) {
       }
       pre.reverse().forEach(v => beats.push(Math.round(v * 1000) / 1000));
     }
-    // Suivi kick par kick à l'intérieur de la section
+    // Kick-by-kick tracking inside the section
     let t = anchor;
     let prev = beats.length ? beats[beats.length - 1] : null;
     while (t < sec.b + p * 0.5 && beats.length < 5000) {
@@ -738,13 +738,13 @@ export async function detectBPM(buffer, range) {
       }
       if (prev != null) {
         const d = bt - prev;
-        if (d > p * 0.7 && d < p * 1.3) p = 0.92 * p + 0.08 * d; // adaptation douce
+        if (d > p * 0.7 && d < p * 1.3) p = 0.92 * p + 0.08 * d; // gentle adaptation
       }
       prev = bt;
       t = bt + p;
     }
   }
-  // Prolonger jusqu'à la fin du fichier (outro silencieuse)
+  // Extend to the end of the file (silent outro)
   if (beats.length) {
     let tb = beats[beats.length - 1] + p;
     while (tb < dur + p * 0.5 && beats.length < 5000) {
@@ -753,14 +753,14 @@ export async function detectBPM(buffer, range) {
     }
   }
   return beats;
-  }; // fin de buildDynamic
+  }; // end of buildDynamic
 
   let beats = [];
   if (rigidBpm) {
-    // Grille rigide : période constante, une seule ancre — zéro dérive.
-    // Précision 0,1 ms (Rekordbox arrondit à la ms).
-    // (contre-vérifier par le tracker dynamique a été testé et retiré : le
-    // tracker divague sur les contretemps et démolissait des grilles justes)
+    // Rigid grid: constant period, a single anchor — zero drift.
+    // 0.1 ms precision (Rekordbox rounds to the ms).
+    // (cross-checking with the dynamic tracker was tested and removed: the
+    // tracker wanders off on off-beats and was wrecking correct grids)
     for (let t = rigidPhase; t < dur + period * 0.5 && beats.length < 6000; t += period) {
       beats.push(Math.round(t * 10000) / 10000);
     }
@@ -768,15 +768,15 @@ export async function detectBPM(buffer, range) {
     beats = buildDynamic();
   }
 
-  // --- Recalage final sur les transitoires LARGE BANDE du fichier original ---
-  // Le filtre passe-bas de l'analyse retarde les attaques de quelques ms
-  // (retard de groupe) : c'était le micro-décalage constant sur TOUS les sons.
+  // --- Final realignment on the WIDEBAND transients of the original file ---
+  // The analysis low-pass filter delays onsets by a few ms
+  // (group delay): that was the constant micro-offset on ALL tracks.
   if (beats.length > 8) {
     const snapAt = (k) => wPeakNear(beats[k], 0.014);
     if (rigidBpm) {
-      // Grille rigide : on ne resnappe PAS chaque temps (ça recréerait du
-      // jitter) — on mesure le décalage MÉDIAN vers les vrais transitoires
-      // et on décale la grille entière une seule fois.
+      // Rigid grid: do NOT re-snap each beat (that would recreate
+      // jitter) — measure the MEDIAN offset to the true transients
+      // and shift the whole grid just once.
       const deltas = [];
       for (let k = 0; k < beats.length; k++) {
         const f = snapAt(k);
@@ -801,9 +801,9 @@ export async function detectBPM(buffer, range) {
     }
   }
 
-  // Lissage des aberrations : un temps qui casse la régularité locale
-  // (accroché sur un contretemps) est repositionné entre ses voisins.
-  // Inutile sur une grille rigide (parfaitement régulière par construction).
+  // Outlier smoothing: a beat that breaks the local regularity
+  // (caught on an off-beat) is repositioned between its neighbors.
+  // Useless on a rigid grid (perfectly regular by construction).
   if (!rigidBpm && beats.length > 8) {
     const ivs = [];
     for (let i = 1; i < beats.length; i++) ivs.push(beats[i] - beats[i - 1]);
@@ -819,10 +819,10 @@ export async function detectBPM(buffer, range) {
     }
   }
 
-  // DERNIER GARDE-FOU D'OCTAVE (chemins sans balayage : peu d'attaques,
-  // morceau court…) : une grille au-dessus du plafond garde UN TEMPS SUR
-  // DEUX — la parité dont les attaques sont les plus fortes (les temps,
-  // pas les contretemps)
+  // LAST OCTAVE SAFEGUARD (paths without a sweep: few onsets,
+  // short track…): a grid above the ceiling keeps EVERY OTHER
+  // BEAT — the parity whose onsets are strongest (the beats,
+  // not the off-beats)
   if (beats.length > 16) {
     const ivs = [];
     for (let i = 1; i < beats.length; i++) ivs.push(beats[i] - beats[i - 1]);
@@ -841,9 +841,9 @@ export async function detectBPM(buffer, range) {
     }
   }
 
-  // --- Détection du « 1 » (downbeat) et des phrases de 4 mesures ---
-  // Comme Rekordbox : le trait rouge doit tomber sur le kick qui lance la
-  // mesure, et l'ancre de phrase sur celui qui relance après 4/8/16 mesures.
+  // --- Detection of the "1" (downbeat) and of 4-bar phrases ---
+  // Like Rekordbox: the red line must fall on the kick that starts the
+  // bar, and the phrase anchor on the one that kicks back in after 4/8/16 bars.
   let barAnchor = 0;
   if (beats.length > 32) {
     const onsB = [];
@@ -859,7 +859,7 @@ export async function detectBPM(buffer, range) {
       onsB.push(o);
       envB.push(e);
     }
-    // Nouveauté : hausse d'énergie après un creux = début de phrase (drop)
+    // Novelty: energy rise after a dip = start of a phrase (drop)
     const nB = beats.length;
     const novelty = new Array(nB).fill(0);
     for (let k = 8; k < nB - 8; k++) {
@@ -871,12 +871,12 @@ export async function detectBPM(buffer, range) {
       }
       novelty[k] = Math.max(0, (next - prev) / 8);
     }
-    // 1) Downbeat : la phase (mod 4) où les kicks sont les plus marqués
+    // 1) Downbeat: the phase (mod 4) where the kicks are most pronounced
     const s4 = [0, 0, 0, 0];
     for (let k = 0; k < nB; k++) s4[k % 4] += onsB[k] + novelty[k] * 2;
     let p4 = 0;
     for (let p = 1; p < 4; p++) if (s4[p] > s4[p4]) p4 = p;
-    // 2) Phrase : parmi les 4 mesures candidates, celle où l'énergie relance
+    // 2) Phrase: among the 4 candidate bars, the one where the energy picks back up
     const s16 = [0, 0, 0, 0];
     for (let k = 0; k < nB; k++) {
       if (k % 4 === p4 % 4) s16[(Math.floor(k / 4) % 4 + 4) % 4] += novelty[k];
@@ -886,8 +886,8 @@ export async function detectBPM(buffer, range) {
     barAnchor = p4 + q * 4;
   }
 
-  // BPM affiché : la valeur verrouillée exacte (143.00 comme Rekordbox) en
-  // grille rigide, sinon la médiane des périodes réelles
+  // Displayed BPM: the exact locked value (143.00 like Rekordbox) on a
+  // rigid grid, otherwise the median of the actual periods
   let bpmOut = 60 / period;
   if (rigidBpm) {
     bpmOut = rigidBpm;
@@ -904,24 +904,24 @@ export async function detectBPM(buffer, range) {
     beatOffset: beats.length ? beats[0] : Math.round(offset * 10000) / 10000,
     beats: beats.length > 8 ? beats : null,
     barAnchor,
-    // Diagnostic (non persisté) : grille rigide ? déviation médiane de phase
-    // par tronçons (ms) — grand = tempo variable
+    // Diagnostic (not persisted): rigid grid? median phase deviation
+    // per chunk (ms) — large = variable tempo
     rigid: !!rigidBpm,
     q: rigidDev
   };
 }
 
-// Recale une grille IMPORTÉE (Rekordbox) sur la timeline de NOTRE décodeur.
-// Mesuré : les mp3 encodés LAME ont ~51 ms d'écart de timeline entre le
-// décodeur de Chrome (qui retire le délai d'encodeur) et celui de Rekordbox
-// (qui le garde). On mesure le décalage médian grille → transitoires réels
-// du fichier décodé et on l'applique une seule fois à toute la grille.
+// Realigns an IMPORTED grid (Rekordbox) onto OUR decoder's timeline.
+// Measured: LAME-encoded mp3s have a ~51 ms timeline offset between
+// Chrome's decoder (which strips the encoder delay) and Rekordbox's
+// (which keeps it). We measure the median offset grid → real transients
+// of the decoded file and apply it once to the whole grid.
 export function alignImportedGrid(buffer, beats) {
   if (!beats || beats.length < 8) return { beats, shift: 0 };
   const osr = buffer.sampleRate;
   const ch0 = buffer.getChannelData(0);
   const ch1 = buffer.numberOfChannels > 1 ? buffer.getChannelData(1) : ch0;
-  const whop = Math.max(1, Math.floor(osr * 0.002)); // pas de 2 ms
+  const whop = Math.max(1, Math.floor(osr * 0.002)); // 2 ms steps
   const wn = Math.floor(ch0.length / whop);
   if (wn < 100) return { beats, shift: 0 };
   const wenv = new Float32Array(wn);
@@ -938,7 +938,7 @@ export function alignImportedGrid(buffer, beats) {
   const wons = new Float32Array(wn);
   for (let j = 1; j < wn; j++) wons[j] = Math.max(0, wenv[j] - wenv[j - 1]);
   const whopSec = whop / osr;
-  const R = Math.round(0.08 / whopSec); // ±80 ms : couvre 0/±26/±51 ms
+  const R = Math.round(0.08 / whopSec); // ±80 ms: covers 0/±26/±51 ms
   const deltas = [];
   for (const b of beats) {
     const jc = Math.round(b / whopSec);
@@ -956,7 +956,7 @@ export function alignImportedGrid(buffer, beats) {
   if (deltas.length < 16) return { beats, shift: 0 };
   deltas.sort((a, b) => a - b);
   const shift = deltas[deltas.length >> 1];
-  // sous 4 ms ce n'est pas un écart de décodeur, au-delà de 80 ms c'est louche
+  // under 4 ms it is not a decoder offset, beyond 80 ms it is suspicious
   if (Math.abs(shift) < 0.004 || Math.abs(shift) > 0.08) return { beats, shift: 0 };
   return { beats: beats.map((b) => Math.round((b + shift) * 10000) / 10000), shift };
 }

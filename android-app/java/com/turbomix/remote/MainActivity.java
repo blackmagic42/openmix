@@ -16,16 +16,24 @@ import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.EditText;
+import java.util.Locale;
 
 /**
- * Turbo Mix Remote — app minimaliste : une WebView plein écran paysage qui
- * embarque la console téléphone servie par le PC (port 8722). Au premier
- * lancement (ou si le PC est injoignable), on demande l'adresse IP du PC.
+ * Turbo Mix Remote — minimal app: a full-screen landscape WebView that
+ * embeds the phone console served by the computer (port 8722). On first
+ * launch (or if the computer is unreachable), it asks for the computer's IP address.
  */
 public class MainActivity extends Activity {
   private WebView web;
   private SharedPreferences prefs;
   private boolean dialogOpen = false;
+
+  // UI language: English by default, French when the phone is set to French
+  private static final boolean FR = Locale.getDefault().getLanguage().equals("fr");
+
+  private static String tr(String en, String fr) {
+    return FR ? fr : en;
+  }
 
   @Override
   protected void onCreate(Bundle savedInstanceState) {
@@ -45,14 +53,14 @@ public class MainActivity extends Activity {
     web.setWebViewClient(new WebViewClient() {
       @Override
       public void onReceivedError(WebView view, WebResourceRequest req, WebResourceError err) {
-        if (req.isForMainFrame()) askIp("PC injoignable — vérifie l'adresse (même WiFi que le PC)");
+        if (req.isForMainFrame()) askIp(tr("Computer unreachable — check the address (same WiFi as the computer)", "PC injoignable — vérifie l'adresse (même WiFi que le PC)"));
       }
     });
     setContentView(web);
     hideBars();
 
     String ip = prefs.getString("ip", null);
-    if (ip == null) askIp("Adresse IP du PC (affichée dans OpenMix, ⚙ → téléphone)");
+    if (ip == null) askIp(tr("Computer IP address (shown in OpenMix, ⚙ → Phone remote)", "Adresse IP du PC (affichée dans OpenMix, ⚙ → téléphone)"));
     else load(ip);
   }
 
@@ -65,13 +73,13 @@ public class MainActivity extends Activity {
     dialogOpen = true;
     final EditText input = new EditText(this);
     input.setInputType(InputType.TYPE_CLASS_TEXT);
-    input.setHint("ex : 192.168.1.20");
+    input.setHint(tr("e.g. 192.168.1.20", "ex : 192.168.1.20"));
     input.setText(prefs.getString("ip", ""));
     new AlertDialog.Builder(this)
         .setTitle(title)
         .setView(input)
         .setCancelable(false)
-        .setPositiveButton("Connecter", (d, w) -> {
+        .setPositiveButton(tr("Connect", "Connecter"), (d, w) -> {
           dialogOpen = false;
           String ip = input.getText().toString().trim();
           prefs.edit().putString("ip", ip).apply();
@@ -97,9 +105,9 @@ public class MainActivity extends Activity {
 
   @Override
   public boolean onKeyDown(int keyCode, KeyEvent event) {
-    // Retour : appui long = changer d'IP, appui court ignoré (pas de nav web)
+    // Back: long press = change IP, short press ignored (no web navigation)
     if (keyCode == KeyEvent.KEYCODE_BACK) {
-      askIp("Changer l'adresse IP du PC ?");
+      askIp(tr("Change the computer's IP address?", "Changer l'adresse IP du PC ?"));
       return true;
     }
     return super.onKeyDown(keyCode, event);

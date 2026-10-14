@@ -1,25 +1,25 @@
-// Détection de la TONALITÉ d'un morceau, et outils de mix harmonique
-// (roue Camelot). Principe : spectre du morceau entier → « chroma » (énergie
-// de chacune des 12 notes, toutes octaves confondues) → corrélation avec les
-// profils de tonalité majeurs et mineurs → la tonalité la plus probable.
+// Detection of a track's KEY, and harmonic mixing tools
+// (Camelot wheel). Principle: spectrum of the whole track → "chroma" (energy
+// of each of the 12 notes, all octaves combined) → correlation with the
+// major and minor key profiles → the most likely key.
 //
-// Chaque trame est normalisée (un break mélodique compte autant qu'un drop)
-// et les silences/fondus sont écartés.
+// Each frame is normalized (a melodic break counts as much as a drop)
+// and silences/fades are discarded.
 
-const SR = 8000;         // le chroma n'a besoin que de 65 Hz – 2 kHz
-const N = 8192;          // ~1 Hz par case : on sépare les notes graves
+const SR = 8000;         // the chroma only needs 65 Hz – 2 kHz
+const N = 8192;          // ~1 Hz per bin: separates the low notes
 const HOP = 4096;
-const MAX_FRAMES = 1400; // ~12 min analysées au pas plein, au-delà échantillonné
+const MAX_FRAMES = 1400; // ~12 min analyzed at the full hop, sampled beyond that
 const MIDI_LO = 36;      // C2 (65 Hz)
-const SEMIS = 60;        // 5 octaves : C2 → B6
-const SUB = 3;           // 3 sous-cases par demi-ton (accordage à ±1/3)
+const SEMIS = 60;        // 5 octaves: C2 → B6
+const SUB = 3;           // 3 sub-bins per semitone (tuning to ±1/3)
 const NB = SEMIS * SUB;
 
-// Profils de tonalité de KeyFinder (Ibrahim Sha'ath — ceux de Mixxx et de
-// la plupart des logiciels DJ), avec un léger PENCHANT MINEUR : la musique
-// électronique est très majoritairement mineure. Réglages choisis sur un
-// banc d'essai contre les analyses rekordbox de vrais morceaux (16/28 à
-// l'identique, 19/28 harmoniquement compatibles — contre 4/28 avant).
+// KeyFinder key profiles (Ibrahim Sha'ath — the ones used by Mixxx and
+// most DJ software), with a slight MINOR BIAS: electronic
+// music is overwhelmingly in minor keys. Settings chosen on a
+// test bench against rekordbox analyses of real tracks (16/28
+// identical, 19/28 harmonically compatible — versus 4/28 before).
 const PROFILES = {
   major: [7.23900502618145, 3.5035183304246, 3.5844599761337, 2.84511477063833,
     5.81898391564628, 4.55865043428244, 2.4477861994943, 6.99473684210526,
@@ -30,7 +30,7 @@ const PROFILES = {
 };
 const MINOR_BIAS = 0.1;
 
-// --- FFT radix-2 en place (tables précalculées une fois) ---
+// --- In-place radix-2 FFT (tables precomputed once) ---
 let fftTables = null;
 function tables() {
   if (fftTables) return fftTables;
@@ -49,15 +49,15 @@ function tables() {
   }
   const win = new Float64Array(N);
   for (let i = 0; i < N; i++) win[i] = 0.5 - 0.5 * Math.cos((2 * Math.PI * i) / (N - 1));
-  // case FFT → deux sous-cases de demi-ton voisines (interpolation
-  // linéaire : une note entre deux cases n'est pas perdue)
+  // FFT bin → two neighboring semitone sub-bins (linear
+  // interpolation: a note between two bins is not lost)
   const kMax = Math.min(N / 2 - 1, Math.ceil((440 * Math.pow(2, (MIDI_LO + SEMIS - 69) / 12) * N) / SR) + 2);
   const binJ = new Int16Array(kMax + 1).fill(-1);
   const binW = new Float32Array(kMax + 1);
   for (let k = 2; k <= kMax; k++) {
     const f = (k * SR) / N;
     const midi = 69 + 12 * Math.log2(f / 440);
-    // sous-case j : centre = MIDI_LO + (j − 1)/3 → j = 3s + 1 tombe pile sur la note
+    // sub-bin j: center = MIDI_LO + (j − 1)/3 → j = 3s + 1 lands exactly on the note
     const u = (midi - MIDI_LO) * SUB + 1;
     const j0 = Math.floor(u);
     if (j0 < -1 || j0 >= NB) continue;
@@ -116,8 +116,8 @@ function pearson(a, b) {
   return da && db ? num / Math.sqrt(da * db) : 0;
 }
 
-// Chroma → tonalité. Retourne { code, confidence } avec code = tonique
-// (0 = do … 11 = si) + 12 si MINEUR.
+// Chroma → key. Returns { code, confidence } with code = tonic
+// (0 = C … 11 = B) + 12 if MINOR.
 export function keyFromChroma(chroma) {
   const scores = [];
   for (let mode = 0; mode < 2; mode++) {
@@ -132,10 +132,10 @@ export function keyFromChroma(chroma) {
   return { code: scores[0].code, confidence: scores[0].s - scores[1].s, score: scores[0].s };
 }
 
-// Cœur du calcul sur un signal MONO échantillonné à 8 kHz. `yieldEvery` :
-// rend la main au navigateur toutes les N trames (pas de gel de l'interface).
+// Core computation on a MONO signal sampled at 8 kHz. `yieldEvery`:
+// yields to the browser every N frames (no UI freeze).
 export async function keyFromMono(x, sr = SR, yieldEvery = 0) {
-  if (sr !== SR) throw new Error('keyFromMono : signal attendu à 8 kHz');
+  if (sr !== SR) throw new Error('keyFromMono: expected an 8 kHz signal');
   const T = tables();
   const total = Math.floor((x.length - N) / HOP) + 1;
   if (total < 8) return null;
@@ -144,9 +144,9 @@ export async function keyFromMono(x, sr = SR, yieldEvery = 0) {
   const im = new Float64Array(N);
   const S = new Float64Array(NB);
   const C36 = new Float64Array(SUB * 12);
-  // Chaque trame → sa contribution normalisée (36 sous-cases) et son
-  // énergie spectrale ; les silences/fondus (< 10 % de la médiane) sont
-  // écartés à la fin
+  // Each frame → its normalized contribution (36 sub-bins) and its
+  // spectral energy; silences/fades (< 10 % of the median) are
+  // discarded at the end
   const contrib = [];
   const energy = [];
   let done = 0;
@@ -169,8 +169,8 @@ export async function keyFromMono(x, sr = SR, yieldEvery = 0) {
     let sum = 0;
     for (let j = 0; j < NB; j++) sum += S[j];
     if (sum > 0) {
-      // chaque trame pèse pareil : un break mélodique compte autant qu'un
-      // drop (pas de blanchiment : au banc d'essai, il dégradait le résultat)
+      // every frame weighs the same: a melodic break counts as much as a
+      // drop (no whitening: on the test bench, it made the result worse)
       const c = new Float32Array(SUB * 12);
       for (let j = 0; j < NB; j++) c[j % (SUB * 12)] += S[j] / sum;
       contrib.push(c);
@@ -182,14 +182,14 @@ export async function keyFromMono(x, sr = SR, yieldEvery = 0) {
   const med = [...energy].sort((p, q) => p - q)[energy.length >> 1] || 0;
   let used = 0;
   for (let n = 0; n < contrib.length; n++) {
-    if (energy[n] < med * 0.1) continue; // silence / fondu
+    if (energy[n] < med * 0.1) continue; // silence / fade
     for (let j = 0; j < SUB * 12; j++) C36[j] += contrib[n][j];
     used++;
   }
   if (used < 4) return null;
-  // ACCORDAGE : le décalage de sous-case (−1/3, 0, +1/3 de demi-ton) qui
-  // concentre le plus d'énergie — un morceau accordé à 432 Hz ou ralenti
-  // reste lu dans la bonne tonalité
+  // TUNING: the sub-bin offset (−1/3, 0, +1/3 of a semitone) that
+  // concentrates the most energy — a track tuned to 432 Hz or slowed down
+  // is still read in the right key
   let off = 1;
   let best = -1;
   for (let o = 0; o < SUB; o++) {
@@ -197,15 +197,15 @@ export async function keyFromMono(x, sr = SR, yieldEvery = 0) {
     for (let c = 0; c < 12; c++) e += C36[c * SUB + o];
     if (e > best) { best = e; off = o; }
   }
-  // C36 indexé depuis C2 : la case c*3+off est la note c (0 = do)
+  // C36 indexed from C2: bin c*3+off is note c (0 = C)
   const chroma = new Array(12);
   for (let c = 0; c < 12; c++) chroma[c] = C36[c * SUB + off];
   const res = keyFromChroma(chroma);
   return { ...res, tuning: (off - 1) / SUB };
 }
 
-// Version navigateur : rééchantillonnage natif en 8 kHz mono (hors du fil
-// principal), puis calcul découpé pour ne jamais figer l'interface.
+// Browser version: native resampling to 8 kHz mono (off the main
+// thread), then a chunked computation so the UI never freezes.
 export async function detectKey(buffer) {
   const dur = Math.min(buffer.duration, 900);
   const off = new OfflineAudioContext(1, Math.ceil(dur * SR), SR);
@@ -217,18 +217,18 @@ export async function detectKey(buffer) {
   return keyFromMono(rendered.getChannelData(0), SR, 12);
 }
 
-// --- Notation et roue Camelot ---
+// --- Notation and Camelot wheel ---
 const NAMES_MAJ = ['C', 'Db', 'D', 'Eb', 'E', 'F', 'F#', 'G', 'Ab', 'A', 'Bb', 'B'];
 const NAMES_MIN = ['Cm', 'C#m', 'Dm', 'Ebm', 'Em', 'Fm', 'F#m', 'Gm', 'G#m', 'Am', 'Bbm', 'Bm'];
 
-// code 0..23 → { num 1..12, letter 'A' (mineur) | 'B' (majeur) }
+// code 0..23 → { num 1..12, letter 'A' (minor) | 'B' (major) }
 export function camelot(code) {
   if (code == null || code < 0) return null;
   const minor = code >= 12;
   const t = code % 12;
-  // la tonalité relative majeure d'un mineur porte le même numéro
+  // the relative major of a minor key has the same number
   const maj = minor ? (t + 3) % 12 : t;
-  const num = ((maj * 7) % 12 + 7) % 12 + 1; // do majeur = 8B
+  const num = ((maj * 7) % 12 + 7) % 12 + 1; // C major = 8B
   return { num, letter: minor ? 'A' : 'B' };
 }
 
@@ -242,7 +242,7 @@ export function keyName(code) {
   return code >= 12 ? NAMES_MIN[code % 12] : NAMES_MAJ[code % 12];
 }
 
-// Transposer une tonalité de n demi-tons
+// Transpose a key by n semitones
 export function shiftKey(code, semis) {
   if (code == null || code < 0) return code;
   const minor = code >= 12;
@@ -250,8 +250,8 @@ export function shiftKey(code, semis) {
   return t + (minor ? 12 : 0);
 }
 
-// Compatibilité harmonique (roue Camelot) : 0 = même tonalité,
-// 1 = voisine directe (±1 ou relative), 2 = ±2 / diagonale (« énergie »),
+// Harmonic compatibility (Camelot wheel): 0 = same key,
+// 1 = direct neighbor (±1 or relative), 2 = ±2 / diagonal ("energy"),
 // 3 = dissonant
 export function keyDistance(a, b) {
   const ca = camelot(a);
@@ -264,9 +264,9 @@ export function keyDistance(a, b) {
   return 3;
 }
 
-// Tonalité ENTENDUE d'un deck : tonalité du morceau + transposition KEY
-// + l'effet du tempo quand le keylock est coupé (accélérer = monter).
-// Retourne { code, cents } — cents = écart à la note juste (±50).
+// The key a deck is HEARD in: the track's key + KEY transposition
+// + the effect of tempo when keylock is off (speeding up = pitching up).
+// Returns { code, cents } — cents = deviation from the in-tune note (±50).
 export function heardKey(deck) {
   if (deck.musicKey == null) return null;
   let semis = deck.keyShift || 0;

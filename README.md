@@ -4,100 +4,94 @@
 
 # OpenMix
 
-> **English:** OpenMix is free, open-source (MIT) DJ software for Windows.
-> 4 decks, sync that holds, BPM and key detection (Camelot), local stems
-> (Demucs), any USB-MIDI controller (Pioneer DDJ detected automatically,
-> everything else via MIDI learn), up to 4 players on PS/Xbox gamepads, a
-> phone console over WiFi and crowd requests by QR code. No account, no
-> subscription, no cloud. The interface is in English by default.
-> **Download:** [OpenMix-Setup-0.2.0.exe](https://github.com/blackmagic42/openmix/releases/latest)
-> (Windows; SmartScreen warns because the installer isn't signed: *More info → Run anyway*).
-> Mac users can run it from source (see below). Bugs and ideas: [Issues](https://github.com/blackmagic42/openmix/issues).
+🇫🇷 Version française : [README.fr.md](README.fr.md)
 
-**Le logiciel DJ libre et gratuit — 4 decks, platines DDJ et tout matériel DJ
-USB-MIDI, manettes de jeu, téléphones.**
+**Free and open-source DJ software — 4 decks, DDJ controllers and any USB-MIDI
+DJ gear, gamepads, phones.**
 
-![OpenMix — 4 decks, vagues 3 bandes, mixer 4 voies, bibliothèque](docs/screenshot-main.png)
+![OpenMix — 4 decks, 3-band waveforms, 4-channel mixer, library](docs/screenshot-main.png)
 
-OpenMix est un logiciel DJ complet, libre et gratuit : détection de BPM et
-grilles de temps précises, mix à 4 platines, et une idée que personne d'autre
-n'a : **jusqu'à 4 joueurs mixent ensemble à la manette**, plus une console
-tactile sur téléphone et un système de demandes du public — le tout 100 %
-local, sans cloud, sans abonnement.
+OpenMix is complete DJ software, free and open source: BPM detection and
+accurate beat grids, 4-deck mixing, and an idea no one else has had: **up to
+4 players mixing together on gamepads**, plus a touch console on your phone
+and an audience request system — all 100% local, no cloud, no subscription.
 
-## Fonctionnalités
+The interface is in English by default (French is available in ⚙ Settings).
+Bugs and ideas are welcome in the [Issues](https://github.com/blackmagic42/openmix/issues).
 
-- **4 decks** avec vagues 3 bandes, grilles de temps rigides (analyse v13 :
-  balayage BPM double-score, verrouillage entier, ancrage kick), sync
-  intelligent (le master n'est jamais recalé, ton placement au jog est
-  respecté), key shift, beat jump, boucles calées **et** manuelles IN/OUT,
-  hot cues persistants (10 par piste)
-- **Multi-joueurs à la manette** (PS/Xbox) : matrice de contrôle navigable,
-  modes JUMP/LOOP/CUE/KEY par joueur, sélections par joueur avec effets FX
-  personnels, bascule de basses exclusive, reset du mix sur R1
-- **STEMS** : séparation voix/batterie/basse/instru (Demucs, local) avec
-  mute par groupe
-- **SoundCloud** : connexion à ton compte, playlists, et recherche dans TOUT
-  le catalogue (Entrée dans la barre de recherche)
-- **Console téléphone** (page web ou APK Android fournie) : 2 platines
-  paysage, jog wheels, pads, EQ, faders, bibliothèque — pilote le PC en WiFi
-- **Demandes du public** : tes invités scannent une URL, votent les morceaux
-  et t'envoient des messages — sans appli à installer, sans compte, en local
-- **Import de grilles** : lit les fichiers d'analyse (ANLZ) déjà présents sur
-  ton disque pour reprendre tes grilles existantes sans tout ré-analyser
-- **Platines & contrôleurs DJ** : compatible avec les DDJ Pioneer et tout
-  matériel DJ USB-MIDI — chaque bouton est mappable (voir ci-dessous)
-- **Tonalités** détectées dans le son (notation Camelot), KEY SYNC en un
-  appui, key shift avec keylock
-- **Plage de tempo** ±6 / ±16 / WIDE par deck (clic sur la plage du
-  disque) et boutons − / + au 0,1 BPM ; un deck syncé fait suivre tout le groupe
-- **Passation du master** : quand le son master se termine, le master passe
-  au deck qui a les basses, sans changer le BPM — les decks syncés le restent
-- **Bibliothèque** : aperçus de vague sans charger, tri par BPM / tonalité /
-  durée, sons déjà joués pendant la soirée écrits en vert, rangement par
-  glisser-déposer dans « Ma musique OpenMix »
-- **Téléchargement par lien** (yt-dlp) pour ce que tu as le droit de
-  télécharger
-- Enregistrement du mix, mode 2 ou 4 decks
+## Features
 
-## Platines & contrôleurs DJ (MIDI)
+- **4 decks** with 3-band waveforms, rigid beat grids (v13 analysis:
+  dual-score BPM sweep, integer lock, kick anchoring), smart sync (the master
+  is never re-aligned, and your jog-wheel placement is kept), key shift, beat
+  jump, beat-snapped **and** manual IN/OUT loops, persistent hot cues (10 per
+  track)
+- **Multiplayer on gamepads** (PS/Xbox): navigable control grid,
+  JUMP/LOOP/CUE/KEY modes per player, per-player selections with personal FX,
+  exclusive bass switching, mix reset on R1
+- **STEMS**: vocals/drums/bass/instrumental separation (Demucs, local) with
+  per-group mute
+- **SoundCloud**: connect your account, playlists, and search the ENTIRE
+  catalog (Enter in the search bar)
+- **Phone console** (web page or the provided Android APK): 2 landscape
+  decks, jog wheels, pads, EQ, faders, library — controls the PC over WiFi
+- **Audience requests**: your guests scan a URL, vote for tracks and send you
+  messages — no app to install, no account, all local
+- **Grid import**: reads the analysis files (ANLZ) already on your drive so
+  you can reuse your existing grids without re-analyzing everything
+- **DJ decks & controllers**: works with Pioneer DDJ controllers and any
+  USB-MIDI DJ gear — every button can be mapped (see below)
+- **Keys** detected from the audio (Camelot notation), one-press KEY SYNC,
+  key shift with keylock
+- **Tempo range** ±6 / ±16 / WIDE per deck (click the range on the jog
+  wheel) and − / + buttons in 0.1 BPM steps; a synced deck makes the whole
+  group follow
+- **Master handoff**: when the master track ends, master passes to the deck
+  that has the bass, without changing the BPM — synced decks stay synced
+- **Library**: waveform previews without loading, sort by BPM / key /
+  duration, tracks already played during the night shown in green,
+  drag-and-drop organizing into "My OpenMix music"
+- **Download by link** (yt-dlp) for what you are allowed to download
+- Mix recording, 2- or 4-deck mode
 
-OpenMix fonctionne avec **n'importe quel contrôleur DJ USB-MIDI** — aucun
-driver à installer, branche et c'est parti :
+## DJ decks & controllers (MIDI)
 
-- **Pioneer DDJ reconnues automatiquement** : préréglage 4 voies complet,
-  relevé sur une vraie DDJ-FLX6 — jogs à deux surfaces (dessus = scratch,
-  côté = calage fin), volumes, trim, EQ 3 bandes, filtres, tempo, play/cue/
-  sync, boucles IN/OUT/reloop, pads performance, section FX, channel select,
-  crossfader, et navigation complète de la bibliothèque à l'encodeur
-  (entrer/sortir des dossiers et playlists, bouton VIEW)
-- **Tout autre matériel** (Numark, Hercules, Traktor, Denon, claviers MIDI…) :
-  **chaque bouton, fader, knob ou jog est mappable par apprentissage** —
-  ouvre ⚙ Paramètres, clique l'action voulue, touche le contrôle physique,
-  c'est lié. Le mapping est mémorisé PAR appareil et survit aux redémarrages
-- Notes, CC (absolus et relatifs) et pitch bend 14 bits sont gérés — les
-  faders tempo haute résolution marchent aussi
+OpenMix works with **any USB-MIDI DJ controller** — no driver to install,
+just plug it in and play:
+
+- **Pioneer DDJ recognized automatically**: full 4-channel preset, mapped on
+  a real DDJ-FLX6 — two-surface jogs (top = scratch, side = fine nudge),
+  volumes, trim, 3-band EQ, filters, tempo, play/cue/sync, IN/OUT/reloop
+  loops, performance pads, FX section, channel select, crossfader, and full
+  library navigation with the encoder (enter/leave folders and playlists,
+  VIEW button)
+- **Any other hardware** (Numark, Hercules, Traktor, Denon, MIDI keyboards…):
+  **every button, fader, knob or jog can be mapped by MIDI learn** — open
+  ⚙ Settings, click the action you want, touch the physical control, and it's
+  linked. The mapping is saved PER device and survives restarts
+- Notes, CC (absolute and relative) and 14-bit pitch bend are supported —
+  high-resolution tempo faders work too
 
 ## Installation (PC)
 
-### Le plus simple : l'installeur Windows — **aucun prérequis**
+### Easiest: the Windows installer — **no prerequisites**
 
-1. Va sur la page [Releases](https://github.com/blackmagic42/openmix/releases)
-2. Télécharge **`OpenMix-Setup-x.y.z.exe`**
-3. Double-clique : OpenMix s'installe et se lance tout seul (raccourci créé)
+1. Go to the [Releases](https://github.com/blackmagic42/openmix/releases) page
+2. Download **`OpenMix-Setup-x.y.z.exe`**
+3. Double-click it: OpenMix installs and starts on its own (a shortcut is created)
 
-> **Rien d'autre à installer.** Ni Node.js, ni npm, ni Python : l'installeur
-> contient déjà tout ce dont le logiciel a besoin (~96 Mo). Tu télécharges,
-> tu double-cliques, tu mixes. La désinstallation se fait normalement depuis
-> « Applications » de Windows, et tes réglages sont conservés.
+> **Nothing else to install.** No Node.js, no npm, no Python: the installer
+> already contains everything the software needs (~96 MB). Download,
+> double-click, mix. Uninstalling works the usual way from Windows "Apps",
+> and your settings are kept.
 
-> Windows SmartScreen peut afficher un avertissement (application non signée —
-> les certificats coûtent cher, OpenMix est gratuit) : clique sur
-> « Informations complémentaires » → « Exécuter quand même ».
+> Windows SmartScreen may show a warning (unsigned app — certificates are
+> expensive, and OpenMix is free): click "More info" → "Run anyway".
 
-### Depuis les sources (développeurs)
+### From source (developers, macOS)
 
-Prérequis : [Node.js](https://nodejs.org) 20+.
+Prerequisite: [Node.js](https://nodejs.org) 20+. There is no macOS installer
+yet: Mac users can run OpenMix from source with the commands below.
 
 ```bash
 git clone https://github.com/blackmagic42/openmix.git
@@ -106,113 +100,113 @@ npm install
 npm start
 ```
 
-### Construire soi-même l'installeur
+### Building the installer yourself
 
 ```bash
 cd openmix
 npm install
-npm run icon          # (optionnel) régénère build/icon.ico depuis build/logo.png
-npm run dist          # → dist/OpenMix-Setup-x.y.z.exe (installeur NSIS)
-npm run dist:portable # → version portable sans installation
+npm run icon          # (optional) regenerates build/icon.ico from build/logo.png
+npm run dist          # → dist/OpenMix-Setup-x.y.z.exe (NSIS installer)
+npm run dist:portable # → portable version, no installation needed
 ```
 
-> ⚠️ Si la fenêtre ne s'ouvre pas : vérifie que la variable d'environnement
-> `ELECTRON_RUN_AS_NODE` n'est pas définie dans ton terminal.
+> ⚠️ If the window doesn't open: make sure the `ELECTRON_RUN_AS_NODE`
+> environment variable isn't set in your terminal.
 
-Optionnel :
-- **STEMS** : `pip install demucs` (Python 3.10+). La séparation se fait en
-  arrière-plan, en priorité basse, jamais pendant la lecture.
-- **Import de grilles** : si un dossier d'analyses existe sur le même PC, bouton
-  d'import dans ⚙ Paramètres.
+Optional:
+- **STEMS**: `pip install demucs` (Python 3.10+). Separation runs in the
+  background, at low priority, never during playback.
+- **Grid import**: if an analysis folder exists on the same PC, there is an
+  import button in ⚙ Settings.
 
-## Console téléphone
+## Phone console
 
-Le serveur démarre automatiquement avec l'app (port **8722**).
+The server starts automatically with the app (port **8722**).
 
-- **Navigateur** : ouvre `http://IP_DU_PC:8722` sur le téléphone (même WiFi)
-- **APK Android** : télécharge `OpenMix.apk` dans les [Releases](https://github.com/blackmagic42/openmix/releases) — plein écran
-  paysage, l'IP est demandée au premier lancement puis mémorisée
-- **Invités / demandes** : fais scanner `http://IP_DU_PC:8722/guest` — votes
-  et messages arrivent dans le bouton DEMANDES de la barre du haut
+- **Browser**: open `http://PC_IP:8722` on the phone (same WiFi)
+- **Android APK**: download `OpenMix.apk` from the [Releases](https://github.com/blackmagic42/openmix/releases) — fullscreen
+  landscape; the IP is asked for on first launch, then remembered
+- **Guests / requests**: have your guests scan `http://PC_IP:8722/guest` —
+  votes and messages arrive under the REQUESTS button in the top bar
 
-L'interface téléphone est servie depuis `src/remote.html` : elle est relue à
-chaque chargement, donc modifiable sans réinstaller l'APK.
+The phone interface is served from `src/remote.html`: it is re-read on every
+load, so you can change it without reinstalling the APK.
 
-## Manette
+## Gamepad
 
-Branche une manette (jusqu'à 4). Appui long sur Share/View = aide complète
-des commandes à l'écran. Chaque joueur a sa couleur, son mode de pads, ses
-sélections et son unité FX personnelle.
+Plug in a gamepad (up to 4). Long-press Share/View = full on-screen controls
+help. Each player has their own color, pad mode, selections and personal FX
+unit.
 
-### Les boutons
+### The buttons
 
-La croix directionnelle déplace ton curseur sur la **matrice de contrôle** :
-les colonnes sont les decks (+ le rack FX à droite), les rangées sont les
-knobs (TRIM → HI → MID → LOW → FILTER), la rangée du haut est le MASTER, et
-sous FILTER on passe en **navigation bibliothèque**.
+The D-pad moves your cursor around the **control grid**: columns are the
+decks (+ the FX rack on the right), rows are the knobs (TRIM → HI → MID →
+LOW → FILTER), the top row is MASTER, and below FILTER you switch to
+**library navigation**.
 
-| Bouton | Action |
+| Button | Action |
 |---|---|
-| **Croix ◀▶▲▼** | Se déplacer sur la matrice (decks × knobs, MASTER en haut, rack FX à droite, bibliothèque en bas) |
-| **Croix / A** | Play/Pause · en navigation : ouvrir une playlist ou **charger et lancer** le morceau (re-appui = pause) |
-| **Rond / B** (court) | FX + FILTRE à 0 (la sélection est conservée) + knob survolé remis au neutre · en navigation : retour |
-| **Rond / B** (long) | Sélection **CUT** (voir plus bas) |
-| **Carré / X** (court) | Durée du FX : 1/2 → 3/4 → 1 → 2 temps |
-| **Carré / X** (enfoncé) | La liste des effets s'affiche et défile — relâche sur celui que tu veux |
-| **Triangle / Y** | **CUT** : coupe d'un coup les decks sélectionnés — re-appui, tout revient d'un coup |
-| **L1 / R1** | Volume de la piste − / + (maintenir) · rangée MASTER : le knob master survolé · **R1 avec une sélection : TOUT à 0 + désélection** |
-| **L2 / R2** | Les **pads** : moitié gauche / droite, la rangée donne la force (TRIM = fort → FILTER = fin) · colonne FX : durée ÷2 / ×2 · rangée MASTER : BPM − / + (les decks syncés suivent) |
-| **Share/View** (court) | Changer TON mode de pads : JUMP → LOOP → CUE → KEY → PAD FX → SAMPLER (chaque joueur garde le sien) |
-| **Share/View** (long) | L'aide complète à l'écran |
-| **Options/Menu** | BEAT SYNC du deck ON/OFF |
-| **Stick gauche ▲▼** | Le knob survolé · **avec une sélection : les FILTRES de toutes tes tracks sélectionnées** |
-| **Stick gauche ◀▶** (maintenu ½ s) | Décaler le son façon jog CDJ (au relâcher, le calage auto garde ton alignement) · **boucle active : régler la boucle** (▶ +1 segment, ◀ réduire) |
-| **Stick droit ▲▼** | **Niveau du FX** de la track (rangée MASTER = tous) |
-| **Stick droit ◀▶** (maintenu ½ s) | Zoom / dézoom des vagues |
-| **L3** (clic stick gauche) | FILTRE général ON/OFF (COLOR) |
-| **R3** (clic stick droit) | **Sélectionner la track** (voir plus bas) · colonne FX : unité ON/OFF |
-| **Bouton PS/Xbox** | Couper / remettre le knob survolé · sur LOW : les **basses passent à ce deck** (jamais deux basses en même temps) |
+| **D-pad ◀▶▲▼** | Move around the grid (decks × knobs, MASTER at the top, FX rack on the right, library at the bottom) |
+| **Cross / A** | Play/Pause · in navigation: open a playlist or **load and play** the track (press again = pause) |
+| **Circle / B** (short) | FX + FILTER to 0 (the selection is kept) + hovered knob back to neutral · in navigation: back |
+| **Circle / B** (long) | **CUT** selection (see below) |
+| **Square / X** (short) | FX duration: 1/2 → 3/4 → 1 → 2 beats |
+| **Square / X** (held) | The effect list appears and scrolls — release on the one you want |
+| **Triangle / Y** | **CUT**: cuts the selected decks all at once — press again and everything comes back at once |
+| **L1 / R1** | Track volume − / + (hold) · MASTER row: the hovered master knob · **R1 with a selection: EVERYTHING to 0 + deselect** |
+| **L2 / R2** | The **pads**: left / right half, the row sets the strength (TRIM = strong → FILTER = fine) · FX column: duration ÷2 / ×2 · MASTER row: BPM − / + (synced decks follow) |
+| **Share/View** (short) | Change YOUR pad mode: JUMP → LOOP → CUE → KEY → PAD FX → SAMPLER (each player keeps their own) |
+| **Share/View** (long) | Full on-screen help |
+| **Options/Menu** | Deck BEAT SYNC ON/OFF |
+| **Left stick ▲▼** | The hovered knob · **with a selection: the FILTERS of all your selected tracks** |
+| **Left stick ◀▶** (held ½ s) | Nudge the track like a CDJ jog wheel (on release, auto-snap keeps your alignment) · **active loop: adjust the loop** (▶ +1 segment, ◀ shrink) |
+| **Right stick ▲▼** | Track **FX level** (MASTER row = all) |
+| **Right stick ◀▶** (held ½ s) | Zoom the waveforms in / out |
+| **L3** (left stick click) | Overall FILTER ON/OFF (COLOR) |
+| **R3** (right stick click) | **Select the track** (see below) · FX column: unit ON/OFF |
+| **PS/Xbox button** | Cut / restore the hovered knob · on LOW: the **bass switches to this deck** (never two basses at once) |
 
-### Le mode SÉLECTION (le cœur du jeu à plusieurs)
+### SELECTION mode (the heart of multiplayer)
 
-Appuie sur **R3** sur un deck : la track est **sélectionnée** dans ta couleur
-— son FX et son filtre sont armés d'un coup. Re-appuie pour la retirer, et tu
-peux en sélectionner plusieurs (elles réagissent alors toutes ensemble).
+Press **R3** on a deck: the track is **selected** in your color — its FX and
+filter are armed in one go. Press again to remove it; you can select several
+tracks (they then all react together).
 
-Tant que tu as une sélection :
+While you have a selection:
 
-- **Stick gauche ▲▼ = le FILTRE** de toutes tes tracks sélectionnées en même
-  temps (le stick droit reste le FX — jamais l'inverse) ;
-- **Stick droit ▲▼ = le niveau du FX** appliqué à ta sélection, avec TON
-  unité FX personnelle (chaque joueur a la sienne) ;
-- **L2 / R2 = la durée du FX** (÷2 / ×2) au lieu des pads — sauf en mode
-  LOOP, où les pads de boucle gardent la priorité ;
-- **Rond court = tout à zéro** (FX coupé, filtre au neutre) mais la sélection
-  et l'armement RESTENT : tu peux relancer un effet aussitôt ;
-- **R1 = le grand reset** : FX à zéro, filtres au neutre ET désélection —
-  retour immédiat à un mix propre ;
-- **Triangle = CUT** : les decks sélectionnés se coupent net, re-appui et
-  tout revient — l'effet « drop » classique ;
-- Deux joueurs peuvent sélectionner **le même deck** : leurs effets se
-  combinent, l'affichage montre la couleur de chacun.
+- **Left stick ▲▼ = the FILTER** of all your selected tracks at once (the
+  right stick stays on FX — never the other way round);
+- **Right stick ▲▼ = the FX level** applied to your selection, with YOUR
+  personal FX unit (each player has their own);
+- **L2 / R2 = the FX duration** (÷2 / ×2) instead of the pads — except in
+  LOOP mode, where the loop pads keep priority;
+- **Short Circle = everything to zero** (FX cut, filter to neutral) but the
+  selection and arming STAY: you can fire an effect again right away;
+- **R1 = the big reset**: FX to zero, filters to neutral AND deselect —
+  straight back to a clean mix;
+- **Triangle = CUT**: the selected decks cut out instantly, press again and
+  everything comes back — the classic "drop" effect;
+- Two players can select **the same deck**: their effects combine, and the
+  display shows each player's color.
 
-## L'API HTTP (le « SDK » d'OpenMix)
+## The HTTP API (OpenMix's "SDK")
 
-Tout OpenMix se pilote par HTTP sur le port 8722 — de quoi construire tes
-propres télécommandes, bots ou intégrations :
+All of OpenMix can be controlled over HTTP on port 8722 — enough to build
+your own remotes, bots or integrations:
 
-| Route | Méthode | Description |
+| Route | Method | Description |
 |---|---|---|
-| `/` | GET | Console téléphone (HTML) |
-| `/guest` | GET | Page invités : votes + messages (HTML) |
-| `/state` | GET | État complet du mix (JSON, ~400 ms de fraîcheur) : decks (titre, BPM, position, tempo, volume, filtre, EQ, boucle, cues, master, sync), crossfader, BPM master, volume master |
-| `/wave?d=N` | GET | Vague compacte du deck N (24 pts/s, 3 bandes 0-255) |
-| `/lib` | GET | Bibliothèque courante (noms + BPM) |
-| `/requests` | GET | Votes et messages des invités (JSON) |
-| `/cmd` | POST | Commande JSON — voir ci-dessous |
-| `/vote` | POST | `{"name": "titre", "bpm": 128}` pour voter, `{"msg": "texte"}` pour un message |
+| `/` | GET | Phone console (HTML) |
+| `/guest` | GET | Guest page: votes + messages (HTML) |
+| `/state` | GET | Full mix state (JSON, ~400 ms freshness): decks (title, BPM, position, tempo, volume, filter, EQ, loop, cues, master, sync), crossfader, master BPM, master volume |
+| `/wave?d=N` | GET | Compact waveform of deck N (24 pts/s, 3 bands 0-255) |
+| `/lib` | GET | Current library (names + BPM) |
+| `/requests` | GET | Guest votes and messages (JSON) |
+| `/cmd` | POST | JSON command — see below |
+| `/vote` | POST | `{"name": "title", "bpm": 128}` to vote, `{"msg": "text"}` for a message |
 
-### Commandes `/cmd`
+### `/cmd` commands
 
 ```json
 {"action": "play",    "deck": 0}
@@ -235,54 +229,52 @@ propres télécommandes, bots ou intégrations :
 {"action": "xf",      "value": 0.5}
 ```
 
-## Structure du code
+## Code structure
 
 ```
 openmix/
-├── main.js            Processus principal Electron : fenêtre, serveur HTTP
-│                      (console/invités), SoundCloud, Demucs, grilles Rekordbox
-├── preload.js         Pont sécurisé renderer ↔ main
+├── main.js            Electron main process: window, HTTP server
+│                      (console/guests), SoundCloud, Demucs, Rekordbox grids
+├── preload.js         Secure renderer ↔ main bridge
 ├── src/
-│   ├── index.html     Interface principale
-│   ├── styles.css     Design system « noir total, un accent »
-│   ├── remote.html    Console téléphone (2 decks paysage)
-│   ├── guest.html     Page invités (votes/messages)
+│   ├── index.html     Main interface
+│   ├── styles.css     "All black, one accent" design system
+│   ├── remote.html    Phone console (2 landscape decks)
+│   ├── guest.html     Guest page (votes/messages)
 │   └── js/
-│       ├── app.js     UI, decks, mixer, manettes multi-joueurs, FX
-│       ├── engine.js  Moteur audio Web Audio : decks, sync/PLL, FX, stems
-│       ├── bpm.js     Analyse BPM/grille v13
-│       ├── library.js Bibliothèque, cache, SoundCloud, analyse en file
-│       ├── gamepad.js Mapping manettes (jusqu'à 4 joueurs)
-│       ├── waveform.js Rendu des vagues (zoom + minimap)
-│       └── midi.js    Mapping MIDI par apprentissage
-└── android-app/       Source de l'APK (WebView plein écran, build sans Gradle)
+│       ├── app.js     UI, decks, mixer, multiplayer gamepads, FX
+│       ├── engine.js  Web Audio engine: decks, sync/PLL, FX, stems
+│       ├── bpm.js     BPM/grid analysis v13
+│       ├── library.js Library, cache, SoundCloud, queued analysis
+│       ├── gamepad.js Gamepad mapping (up to 4 players)
+│       ├── waveform.js Waveform rendering (zoom + minimap)
+│       └── midi.js    MIDI learn mapping
+└── android-app/       APK source (fullscreen WebView, built without Gradle)
 ```
 
-## Rebuild de l'APK
+## Rebuilding the APK
 
-Nécessite le SDK Android (build-tools 34+, platform android-34) et un JDK :
+Requires the Android SDK (build-tools 34+, platform android-34) and a JDK:
 
 ```
 javac → jar → d8 (build-tools 36) → aapt package → zipalign → apksigner
 ```
 
-Le détail des commandes est dans `android-app/` — l'APK ne change que si le
-code natif change ; l'interface, elle, vit sur le PC.
+The exact commands are in `android-app/` — the APK only changes if the
+native code changes; the interface itself lives on the PC.
 
-## Licence
+## License
 
-MIT — libre d'utilisation, de modification et de partage.
-**OpenMix : libérer le mix.**
+MIT — free to use, modify and share.
+**OpenMix: free the mix.**
 
-## Marques citées
+## Trademarks
 
-Pioneer DJ, DDJ, rekordbox, SoundCloud, PlayStation et Xbox sont des marques
-de leurs propriétaires respectifs. OpenMix est un projet indépendant : il
-n'est ni affilié à ces sociétés, ni approuvé, ni soutenu par elles. Ces noms
-ne sont cités que pour indiquer avec quel matériel ou quel service OpenMix
-sait fonctionner.
+Pioneer DJ, DDJ, rekordbox, SoundCloud, PlayStation and Xbox are trademarks
+of their respective owners. OpenMix is an independent project: it is not
+affiliated with, approved by or endorsed by these companies. These names are
+mentioned only to indicate which hardware or services OpenMix works with.
 
-OpenMix ne contourne aucune protection : les morceaux protégés par DRM ne
-sont pas lisibles, et le logiciel le signale clairement. Aucun échantillon
-sonore, aucun préréglage et aucun fichier provenant d'un logiciel commercial
-n'est distribué avec OpenMix.
+OpenMix does not bypass any protection: DRM-protected tracks cannot be
+played, and the software says so clearly. No audio samples, presets or files
+from any commercial software are distributed with OpenMix.

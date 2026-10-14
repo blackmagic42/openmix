@@ -1,21 +1,21 @@
 <!doctype html>
-<html lang="fr">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="theme-color" content="#0b0d12">
 <title>OpenMix — Phone remote</title>
 <style>
-/* ==== Design system Turbo Mix : même langage que l'interface de base ==
-   panneaux sombres, liserés fins, néons discrets, typo serrée ==== */
+/* ==== Turbo Mix design system: same visual language as the main interface ==
+   dark panels, thin outlines, subtle neons, tight typography ==== */
 *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent;user-select:none;touch-action:manipulation}
 html,body{background:#0b0d12;color:#d7dce8;font-family:system-ui,-apple-system,'Segoe UI',sans-serif;overscroll-behavior:none;height:100%;overflow:hidden}
 #app{display:grid;grid-template-columns:1fr 206px 1fr;grid-template-rows:22px 37px 37px 1fr;gap:4px;height:100dvh;padding:4px}
-/* vagues EMPILÉES pleine largeur : les deux sons l'un sur l'autre,
-   playheads alignés — c'est LA vue pour caler deux morceaux */
+/* full-width STACKED waveforms: the two tracks one above the other,
+   playheads aligned — THE view for beatmatching two tracks */
 .wavefull{grid-column:1/-1;border-left:3px solid var(--c)}
 button{font-family:inherit}
-/* --- entêtes deck --- */
+/* --- deck headers --- */
 .dhead{display:flex;align-items:center;gap:6px;font-size:10px;overflow:hidden;border-bottom:1px solid #171a21;padding:0 2px 2px}
 .dhead .num{font-weight:900;color:#0b0d12;background:var(--c);border-radius:2px;padding:0 6px;font-size:10px;line-height:16px}
 .dhead .title{flex:1;color:#aab2c6;font-weight:600;letter-spacing:.2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -27,13 +27,13 @@ button{font-family:inherit}
 #btn-lib{flex:1;height:100%;font-size:10px;font-weight:800;letter-spacing:1px;background:#12151c;color:#ffd24a;border:1px solid #2b3040;border-radius:3px}
 #btn-lib:active{background:#2a2f3c}
 #btn-fs{width:30px;height:100%;font-size:12px;background:#12151c;color:#8a94ae;border:1px solid #2b3040;border-radius:3px}
-/* --- vagues --- */
+/* --- waveforms --- */
 .wave{width:100%;height:100%;display:block;background:#0e1117;border:1px solid #1c2230;border-radius:4px}
 #midbpm{display:flex;align-items:center;gap:4px;height:24px;flex-shrink:0;border-bottom:1px solid #171a21;padding-bottom:2px}
 #midbpm button{flex:1;height:100%;font-size:12px;font-weight:900;background:#21252f;border:1px solid #2b3040;color:#d7dce8;border-radius:3px}
 #midbpm button:active{background:#2a2f3c;border-color:#3a4258}
 #mbpm{flex:1.1;text-align:center;font-size:14px;font-weight:900;color:#4aa3ff;font-variant-numeric:tabular-nums}
-/* --- colonne deck --- */
+/* --- deck column --- */
 .deckcol{display:flex;flex-direction:column;gap:5px;min-height:0}
 .drow{flex:1;display:flex;gap:6px;align-items:center;min-height:0}
 .sidebtns{display:flex;flex-direction:column;gap:5px;width:56px}
@@ -48,7 +48,7 @@ button{font-family:inherit}
 .sbtn.on{background:var(--c);color:#0b0d12;border-color:var(--c);box-shadow:0 0 7px color-mix(in srgb,var(--c) 60%,transparent)}
 .wheelwrap{flex:1;display:flex;align-items:center;justify-content:center;min-width:0}
 .wheel{width:min(100%,138px);aspect-ratio:1;touch-action:none}
-/* --- tempo + faders (poignées rectangulaires façon table de mix) --- */
+/* --- tempo + faders (rectangular caps, mixing-desk style) --- */
 .tempo{display:flex;flex-direction:column;align-items:center;gap:3px;width:40px}
 .tempo span{font-size:7px;font-weight:900;letter-spacing:1px;color:#8a94ae}
 .vwrap{position:relative;width:36px;flex:1;min-height:70px}
@@ -66,7 +66,7 @@ input[type=range]::-webkit-slider-thumb{appearance:none;width:15px;height:26px;b
 .pads button:disabled{opacity:.12}
 .pads button.set{border-color:var(--c);color:var(--c);box-shadow:inset 0 0 8px color-mix(in srgb,var(--c) 22%,transparent)}
 .pads button.act{background:var(--c);color:#0b0d12;border-color:var(--c);box-shadow:0 0 9px color-mix(in srgb,var(--c) 65%,transparent)}
-/* --- mixer central --- */
+/* --- central mixer --- */
 #mixer{display:flex;flex-direction:column;gap:3px;min-height:0;background:#12151c;border:1px solid #232a3a;border-radius:5px;padding:5px 6px}
 .eqrow{display:flex;justify-content:space-between;align-items:center}
 .eqrow span{font-size:7px;font-weight:900;letter-spacing:1.5px;color:#8a94ae;width:28px;text-align:center}
@@ -109,7 +109,7 @@ body.libopen #lib{display:flex}
 <body>
 <div id="app">
   <div class="dhead" id="headL" style="--c:#39c2ff"></div>
-  <div id="topmid"><button id="btn-lib">📚 BIBLIO</button><button id="btn-fs">⛶</button></div>
+  <div id="topmid"><button id="btn-lib">📚 LIBRARY</button><button id="btn-fs">⛶</button></div>
   <div class="dhead" id="headR" style="--c:#ff9f43"></div>
   <canvas class="wave wavefull" id="waveL" width="1560" height="74" style="--c:#39c2ff"></canvas>
   <canvas class="wave wavefull" id="waveR" width="1560" height="74" style="--c:#ff9f43"></canvas>
@@ -124,13 +124,49 @@ body.libopen #lib{display:flex}
   <div id="lib-list"></div>
 </div>
 <div id="sheet">
-  <div class="st" id="sheet-title">Charger sur…</div>
+  <div class="st" id="sheet-title">Load on…</div>
   <div class="row" id="sheet-decks"></div>
-  <div class="row" style="margin-top:6px"><button id="sheet-cancel">Annuler</button></div>
+  <div class="row" style="margin-top:6px"><button id="sheet-cancel">Cancel</button></div>
 </div>
 <script>
+// --- Language: English by default, French when the phone is set to French ---
+const L = navigator.language && navigator.language.toLowerCase().startsWith('fr') ? 'fr' : 'en';
+const STR = {
+  en: {
+    title: 'OpenMix — Phone remote',
+    lib_btn: '📚 LIBRARY',
+    offline: '⚠️ Connection to the computer lost…',
+    rotate: 'Turn your phone to LANDSCAPE',
+    library: 'Library',
+    load_on: 'Load on…',
+    load_name_on: 'Load "{name}" on…',
+    cancel: 'Cancel',
+    empty: '— empty — (📚 to load)'
+  },
+  fr: {
+    title: 'OpenMix — Télécommande téléphone',
+    lib_btn: '📚 BIBLIO',
+    offline: '⚠️ Connexion à l’ordinateur perdue…',
+    rotate: 'Tourne ton téléphone en PAYSAGE',
+    library: 'Bibliothèque',
+    load_on: 'Charger sur…',
+    load_name_on: 'Charger « {name} » sur…',
+    cancel: 'Annuler',
+    empty: '— vide — (📚 pour charger)'
+  }
+};
+const T = (k, vars) => (STR[L][k] || STR.en[k] || k).replace(/\{(\w+)\}/g, (m, v) => (vars && vars[v] != null ? vars[v] : m));
+document.documentElement.lang = L;
+document.title = T('title');
+document.getElementById('btn-lib').textContent = T('lib_btn');
+document.getElementById('offline').textContent = T('offline');
+document.getElementById('rotate').lastChild.textContent = T('rotate');
+document.getElementById('lib-title').textContent = `📚 ${T('library')}`;
+document.getElementById('sheet-title').textContent = T('load_on');
+document.getElementById('sheet-cancel').textContent = T('cancel');
+
 const COLORS = ['#39c2ff', '#ff9f43'];
-const DECKS = [0, 1]; // v1 : mode 2 pistes (le 4 pistes viendra ensuite)
+const DECKS = [0, 1]; // v1: 2-track mode (4 tracks will come later)
 const held = new Map();
 const lastSend = new Map();
 let state = null;
@@ -153,8 +189,8 @@ function fmtTime(s) {
   return `${neg ? '−' : ''}${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
 }
 
-// --- Knob façon interface de base : disque sombre, liseré, arc néon fin,
-// aiguille blanche — glisser vertical, double-tap = 0 ---
+// --- Knob styled like the main interface: dark disc, outline, thin neon arc,
+// white needle — vertical drag, double-tap = 0 ---
 function makeKnob(color, sendFn) {
   const cv = document.createElement('canvas');
   cv.width = 74;
@@ -165,7 +201,7 @@ function makeKnob(color, sendFn) {
     g.clearRect(0, 0, 74, 74);
     const a0 = Math.PI * 0.75;
     const a1 = Math.PI * 2.25;
-    // disque
+    // disc
     g.beginPath();
     g.arc(37, 37, 26, 0, Math.PI * 2);
     g.fillStyle = '#1b202b';
@@ -173,14 +209,14 @@ function makeKnob(color, sendFn) {
     g.lineWidth = 2;
     g.strokeStyle = '#2b3040';
     g.stroke();
-    // piste de course
+    // travel track
     g.lineWidth = 4;
     g.lineCap = 'round';
     g.beginPath();
     g.arc(37, 37, 32, a0, a1);
     g.strokeStyle = 'rgba(255,255,255,0.07)';
     g.stroke();
-    // arc de valeur (depuis le centre = 0)
+    // value arc (from the center = 0)
     const mid = (a0 + a1) / 2;
     const at = mid + (a1 - a0) / 2 * val;
     if (Math.abs(val) > 0.01) {
@@ -193,7 +229,7 @@ function makeKnob(color, sendFn) {
       g.stroke();
       g.shadowBlur = 0;
     }
-    // aiguille
+    // needle
     g.beginPath();
     g.moveTo(37 + Math.cos(at) * 9, 37 + Math.sin(at) * 9);
     g.lineTo(37 + Math.cos(at) * 24, 37 + Math.sin(at) * 24);
@@ -226,7 +262,7 @@ function makeKnob(color, sendFn) {
   return { el: cv, set: (v) => { val = v; draw(); } };
 }
 
-// --- Jog wheel : platine sobre, anneau fin, BPM au centre ---
+// --- Jog wheel: sober platter, thin ring, BPM in the center ---
 function makeWheel(color) {
   const cv = document.createElement('canvas');
   cv.className = 'wheel';
@@ -236,7 +272,7 @@ function makeWheel(color) {
   const draw = (t, playing, bpm) => {
     g.clearRect(0, 0, 300, 300);
     const c = 150;
-    // anneau extérieur fin
+    // thin outer ring
     g.beginPath();
     g.arc(c, c, 144, 0, Math.PI * 2);
     g.lineWidth = 4;
@@ -247,7 +283,7 @@ function makeWheel(color) {
     g.stroke();
     g.shadowBlur = 0;
     g.globalAlpha = 1;
-    // disque + sillons fins
+    // disc + thin grooves
     g.beginPath();
     g.arc(c, c, 137, 0, Math.PI * 2);
     g.fillStyle = '#10131a';
@@ -259,7 +295,7 @@ function makeWheel(color) {
       g.arc(c, c, r, 0, Math.PI * 2);
       g.stroke();
     }
-    // marqueur de rotation (33 tours/min)
+    // rotation marker (33 rpm)
     const ang = (t || 0) * 3.49;
     g.beginPath();
     g.moveTo(c + Math.cos(ang) * 58, c + Math.sin(ang) * 58);
@@ -267,7 +303,7 @@ function makeWheel(color) {
     g.lineWidth = 3.5;
     g.strokeStyle = playing ? color : '#3a4258';
     g.stroke();
-    // moyeu : BPM
+    // hub: BPM
     g.beginPath();
     g.arc(c, c, 52, 0, Math.PI * 2);
     g.fillStyle = '#0b0d12';
@@ -281,15 +317,15 @@ function makeWheel(color) {
     g.fillText(bpm || '--', c, c + 5);
     g.fillStyle = color;
     g.font = '900 10px system-ui';
-    try { g.letterSpacing = '2px'; } catch (e) { /* vieux moteurs */ }
+    try { g.letterSpacing = '2px'; } catch (e) { /* old engines */ }
     g.fillText('BPM', c, c + 25);
-    try { g.letterSpacing = '0px'; } catch (e) { /* rien */ }
+    try { g.letterSpacing = '0px'; } catch (e) { /* nothing */ }
   };
   draw(0, false, '--');
   return { el: cv, draw };
 }
 
-// --- Vague défilante (bandes colorées, temps rouges, playhead) ---
+// --- Scrolling waveform (colored bands, red beats, playhead) ---
 const waves = [null, null];
 function drawWave(cv, w, st) {
   const g = cv.getContext('2d');
@@ -300,7 +336,7 @@ function drawWave(cv, w, st) {
     g.fillStyle = '#3a4258';
     g.font = '600 17px system-ui';
     g.textAlign = 'center';
-    g.fillText('— vide — (📚 pour charger)', W / 2, H / 2 + 6);
+    g.fillText(T('empty'), W / 2, H / 2 + 6);
     return;
   }
   const dt = (performance.now() - lastPollAt) / 1000;
@@ -337,7 +373,7 @@ function drawWave(cv, w, st) {
   g.fillRect(W / 2 - 1.5, 0, 3, H);
 }
 
-// --- Pads : 3 modes, mêmes valeurs que le PC ---
+// --- Pads: 3 modes, same values as on the computer ---
 const PAD_SETS = {
   hotcue: 'ABCDEFGH'.split('').map((l, k) => ({ label: l, mode: 'hotcue', idx: k })),
   loop: [
@@ -357,7 +393,7 @@ const PAD_SETS = {
 };
 const MODES = [['hotcue', 'CUE'], ['loop', 'LOOP'], ['jump', 'JUMP']];
 
-// --- Construction d'un deck ---
+// --- Building a deck ---
 const deckUI = [];
 function buildDeck(side, d) {
   const col = document.getElementById(side === 0 ? 'deckL' : 'deckR');
@@ -467,7 +503,7 @@ function buildDeck(side, d) {
 buildDeck(0, 0);
 buildDeck(1, 1);
 
-// --- Mixer central (BPM master en tête) ---
+// --- Central mixer (master BPM at the top) ---
 const mixer = document.getElementById('mixer');
 const midbpm = document.createElement('div');
 midbpm.id = 'midbpm';
@@ -553,7 +589,7 @@ mixer.appendChild(xfrow);
 xf.addEventListener('input', () => throttled('xf', { action: 'xf', value: Number(xf.value) }));
 ['input', 'touchstart', 'touchend'].forEach((ev) => xf.addEventListener(ev, () => held.set('xf', Date.now())));
 
-// dimensionnement des faders verticaux (input tourné -90°)
+// sizing of the vertical faders (input rotated -90°)
 function sizeVerticals() {
   document.querySelectorAll('.vwrap').forEach((w) => {
     const h = w.clientHeight;
@@ -564,7 +600,7 @@ function sizeVerticals() {
 }
 window.addEventListener('resize', () => setTimeout(sizeVerticals, 60));
 
-// --- BPM master + plein écran ---
+// --- Master BPM + full screen ---
 document.getElementById('bpm-minus').addEventListener('click', () => cmd({ action: 'mbpm', value: -1 }));
 document.getElementById('bpm-plus').addEventListener('click', () => cmd({ action: 'mbpm', value: 1 }));
 document.getElementById('btn-fs').addEventListener('click', () => {
@@ -573,7 +609,7 @@ document.getElementById('btn-fs').addEventListener('click', () => {
   setTimeout(sizeVerticals, 400);
 });
 
-// --- Entêtes ---
+// --- Headers ---
 function buildHead(el, num) {
   el.innerHTML = `<span class="num">${num}</span><span class="title">—</span>
     <span class="mbadge">MASTER</span><span class="time">0:00</span>`;
@@ -581,7 +617,7 @@ function buildHead(el, num) {
 buildHead(document.getElementById('headL'), 1);
 buildHead(document.getElementById('headR'), 2);
 
-// --- Bibliothèque ---
+// --- Library ---
 let libStamp = -1;
 let libTarget = null;
 let pendingIdx = null;
@@ -614,7 +650,7 @@ async function fetchLib(force) {
     const l = await (await fetch('/lib')).json();
     if (!force && l.stamp === libStamp) return;
     libStamp = l.stamp;
-    document.getElementById('lib-title').textContent = `📚 ${l.title || 'Library'} (${(l.items || []).length})${libTarget != null ? ` → Deck ${libTarget + 1}` : ''}`;
+    document.getElementById('lib-title').textContent = `📚 ${l.title || T('library')} (${(l.items || []).length})${libTarget != null ? ` → Deck ${libTarget + 1}` : ''}`;
     const list = document.getElementById('lib-list');
     list.textContent = '';
     (l.items || []).forEach((it, idx) => {
@@ -629,17 +665,17 @@ async function fetchLib(force) {
             document.body.classList.remove('libopen');
           } else {
             pendingIdx = idx;
-            document.getElementById('sheet-title').textContent = `Charger « ${it.name} » sur…`;
+            document.getElementById('sheet-title').textContent = T('load_name_on', { name: it.name });
             sheet.classList.add('open');
           }
         });
       }
       list.appendChild(r);
     });
-  } catch { /* hors ligne */ }
+  } catch { /* offline */ }
 }
 
-// --- Synchronisation d'état ---
+// --- State synchronization ---
 let misses = 0;
 async function poll() {
   try {
@@ -690,11 +726,11 @@ async function fetchWave(side, d) {
   try {
     const w = await (await fetch(`/wave?d=${d}`)).json();
     if (w && w.rate) waves[side] = w;
-  } catch { /* retentera */ }
+  } catch { /* will retry */ }
   fetching.delete(side);
 }
 
-// --- Boucle de rendu ---
+// --- Render loop ---
 const waveCvs = [document.getElementById('waveL'), document.getElementById('waveR')];
 function render() {
   if (state && state.decks) {

@@ -1,17 +1,17 @@
-// Moteur audio : 4 decks -> EQ 3 bandes -> filtre -> fader -> crossfader -> master.
+// Audio engine: 4 decks -> 3-band EQ -> filter -> fader -> crossfader -> master.
 
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 
-// On peut positionner un morceau AVANT son début (position négative) :
-// il reste silencieux jusqu'à 0 puis démarre — pratique pour le caler en retard.
+// A track can be positioned BEFORE its start (negative position):
+// it stays silent until 0 then starts — handy for cueing it in late.
 const PRE_ROLL = 3600;
 
-// Latence du moteur de transposition (échantillons) — DOIT valoir LAT de
-// pitch-worklet.js (le worklet l'annonce aussi au démarrage)
+// Latency of the transposition engine (samples) — MUST equal LAT in
+// pitch-worklet.js (the worklet also announces it on startup)
 const WS_LAT_SAMPLES = 2647;
 
-// Décalage GLOBAL de grille (réglable en ms dans les paramètres) : ajuste
-// tous les traits de tous les morceaux d'un coup, selon ton oreille/écran
+// GLOBAL grid offset (adjustable in ms in the settings): shifts
+// every line of every track at once, to suit your ear/screen
 let GLOBAL_GRID_OFFSET = 0;
 export function setGlobalGridOffset(sec) {
   GLOBAL_GRID_OFFSET = sec || 0;
@@ -20,9 +20,9 @@ export function getGlobalGridOffset() {
   return GLOBAL_GRID_OFFSET;
 }
 
-// --- Grille dynamique : helpers (position <-> index de temps) ---
-// deck.beats = positions réelles de chaque temps ; deck.gridShift = décalage
-// manuel global ; deck.barAnchor = index du temps qui démarre une mesure.
+// --- Dynamic grid: helpers (position <-> beat index) ---
+// deck.beats = actual position of each beat; deck.gridShift = global
+// manual offset; deck.barAnchor = index of the beat that starts a bar.
 
 export function gridIndexFracAt(deck, t) {
   const b = deck.beats;
@@ -60,12 +60,12 @@ export function gridPeriodAt(deck, t) {
   return b[k + 1] - b[k];
 }
 
-// Saut "mesure intacte" : au lieu de sauter pile où on a cliqué, on tombe
-// dans la MÊME mesure (celle visée par le clic) mais à la même position
-// RELATIVE qu'on occupait avant de sauter (ex: on était au 1/4 de la mesure
-// 4 -> on tombe au 1/4 de la mesure 74, pas exactement sur le pixel cliqué).
-// Sans grille de battements connue (pas de BPM détecté), on ne peut rien
-// aligner : on renvoie la cible telle quelle.
+// "Bar-intact" jump: instead of jumping exactly where you clicked, you land
+// in the SAME bar (the one targeted by the click) but at the same RELATIVE
+// position you were at before jumping (e.g. you were 1/4 into bar
+// 4 -> you land 1/4 into bar 74, not exactly on the clicked pixel).
+// Without a known beat grid (no BPM detected), nothing can be
+// aligned: the target is returned as is.
 export function barAlignedSeekTime(deck, fromTime, toTime) {
   if (!deck || !deck.bpm) return toTime;
   if (deck.beats && deck.beats.length >= 2) {
@@ -88,13 +88,13 @@ export function barAlignedSeekTime(deck, fromTime, toTime) {
   return deck.beatOffset + (targetBar + phase) * barLen;
 }
 
-// Pitch-shifter temps réel (technique des deux lignes de délai balayées en
-// dents de scie et crossfadées) : change la tonalité sans changer la vitesse.
+// Real-time pitch shifter (two delay lines swept as sawtooth waves and
+// crossfaded): changes the key without changing the speed.
 class PitchShifter {
   constructor(ctx) {
     this.ctx = ctx;
-    this.T = 0.1;      // durée d'un grain (s)
-    this.base = 0.006; // délai plancher
+    this.T = 0.1;      // grain duration (s)
+    this.base = 0.006; // minimum delay
     this.input = ctx.createGain();
     this.output = ctx.createGain();
     this.dA = ctx.createDelay(1);
@@ -139,7 +139,7 @@ class PitchShifter {
     this.dB.delayTime.value = this.base;
   }
 
-  // r = rapport de fréquence (2^(demi-tons/12))
+  // r = frequency ratio (2^(semitones/12))
   setRatio(r) {
     const now = this.ctx.currentTime;
     const D = (1 - r) * this.T;
@@ -151,8 +151,8 @@ class PitchShifter {
   }
 }
 
-// Boucle d'écho générique : délai + réinjection, avec filtre et/ou crush
-// optionnels dans la boucle (fabrique commune des variantes d'écho).
+// Generic echo loop: delay + feedback, with an optional filter and/or crush
+// inside the loop (shared factory for the echo variants).
 function buildEchoLoop(ctx, { fb = 0.45, filter = null, crush = null, maxT = 4, time = 0.25 } = {}) {
   const d = ctx.createDelay(maxT);
   d.delayTime.value = time;
@@ -178,14 +178,14 @@ function buildEchoLoop(ctx, { fb = 0.45, filter = null, crush = null, maxT = 4, 
   return { in: d, out: node, delay: d, fb: g, fbBase: fb };
 }
 
-// Part du son SEC retirée quand l'effet est à fond (la « nature » de
-// l'effet) : un effet d'INSERTION (gate, filtre, crush, roll…) REMPLACE le
-// son — à 100 % on n'entend plus que lui ; un écho/une réverb s'AJOUTE au
-// son (sec juste compensé pour ne pas saturer) ; flanger/phaser ont besoin
-// du sec (le peigne naît du mélange des deux).
+// Share of the DRY sound removed when the effect is at full (the "nature" of
+// the effect): an INSERT effect (gate, filter, crush, roll…) REPLACES the
+// sound — at 100 % you only hear the effect; an echo/reverb ADDS to the
+// sound (dry just compensated so it doesn't clip); flanger/phaser need
+// the dry (the comb comes from mixing the two).
 export const FX_DRY_CUT = {
   trans: 1, filter: 1, crush: 1, robot: 1, pan: 1,
-  roll: 0, // (le ROLL se dose dans le deck lui-même : boucle ↔ morceau)
+  roll: 0, // (the ROLL is dosed inside the deck itself: loop ↔ track)
   flanger: 0.5, phaser: 0.5, reverb: 0.3
 };
 export const fxDryCut = (type) => FX_DRY_CUT[type] ?? 0.45;
@@ -208,7 +208,7 @@ export class Deck {
     this.eqHigh.type = 'highshelf';
     this.eqHigh.frequency.value = 8000;
 
-    // Filtre DJ : neutre = peaking gain 0 (transparent), gauche = passe-bas, droite = passe-haut
+    // DJ filter: neutral = peaking gain 0 (transparent), left = low-pass, right = high-pass
     this.filter = ctx.createBiquadFilter();
     this.filter.type = 'peaking';
     this.filter.gain.value = 0;
@@ -222,41 +222,41 @@ export class Deck {
     this.eqMid.connect(this.eqHigh);
     this.eqHigh.connect(this.filter);
     this.filter.connect(this.fader);
-    // Envoi PRÉ-FADER vers le bus casque (bouton CUE casque de la tranche) :
-    // on entend le deck dans le casque même fader baissé — le vrai PFL
+    // PRE-FADER send to the headphone bus (the channel's headphone CUE button):
+    // the deck is heard in the headphones even with the fader down — true PFL
     this.cueSend = ctx.createGain();
     this.cueSend.gain.value = 0;
     this.cueOn = false;
     this.filter.connect(this.cueSend);
     this.fader.connect(this.xf);
-    // Sortie SÈCHE du deck, dosable : pendant un PAD FX tenu, l'effet
-    // MANIPULE le son (le sec se coupe) au lieu de s'additionner par-dessus.
-    // Les envois FX piquent sur xf AVANT ce gain : le wet n'est jamais coupé.
+    // DRY output of the deck, adjustable: while a PAD FX is held, the effect
+    // MANIPULATES the sound (the dry is cut) instead of adding on top of it.
+    // The FX sends tap xf BEFORE this gain: the wet is never cut.
     this.dryOut = ctx.createGain();
     this.xf.connect(this.dryOut);
     this.dryOut.connect(destination);
 
-    // TRIM : gain d'entrée de la piste (±12 dB), avant l'EQ
+    // TRIM: track input gain (±12 dB), before the EQ
     this.trim = ctx.createGain();
     this.trim.gain.value = 1;
     this.trimVal = 0;
     this.trim.connect(this.eqLow);
 
-    // Analyseur de niveau (VU-mètre + détection de saturation), post-EQ/filtre
+    // Level analyser (VU meter + clipping detection), post-EQ/filter
     this.analyser = ctx.createAnalyser();
     this.analyser.fftSize = 512;
     this.filter.connect(this.analyser);
     this.meterBuf = new Float32Array(this.analyser.fftSize);
 
-    // Point d'entrée du deck : direct vers l'EQ (via TRIM), ou via le
-    // transpositeur (KEY ± et KEYLOCK). Le moteur WSOLA (AudioWorklet) est
-    // branché dès qu'il est chargé ; l'ancien décalage à deux prises reste
-    // en secours si le navigateur refuse les worklets.
+    // Deck entry point: straight to the EQ (via TRIM), or through the
+    // transposer (KEY ± and KEYLOCK). The WSOLA engine (AudioWorklet) is
+    // plugged in as soon as it is loaded; the old two-tap shifter remains
+    // as a fallback if the browser refuses worklets.
     this.preIn = ctx.createGain();
-    // Lecture PRINCIPALE (morceau ou stems) → srcGain → preIn : un ROLL
-    // coupe srcGain et fait entendre sa boucle (rollGain) pendant que la
-    // lecture continue en silence dessous — au relâcher, le morceau reprend
-    // là où il en serait (comme le mode slip d'un CDJ)
+    // MAIN playback (track or stems) → srcGain → preIn: a ROLL
+    // cuts srcGain and plays its loop (rollGain) while playback
+    // continues silently underneath — on release, the track resumes
+    // where it would have been (like a CDJ's slip mode)
     this.srcGain = ctx.createGain();
     this.srcGain.connect(this.preIn);
     this.rollGain = ctx.createGain();
@@ -265,29 +265,29 @@ export class Deck {
     this._roll = null;
     this.shifter = new PitchShifter(ctx);
     this.shifter.output.connect(this.trim);
-    // DEUX CHEMINS PERMANENTS : direct (dirGain) et transposé (wsOut, après
-    // le moteur WSOLA). On bascule par des GAINS, en fondu — plus jamais de
-    // rebranchement brutal (trou de son à chaque appui sur KEY).
+    // TWO PERMANENT PATHS: direct (dirGain) and transposed (wsOut, after
+    // the WSOLA engine). Switching is done with GAINS, crossfaded — never again
+    // an abrupt reconnection (audio dropout on every KEY press).
     this.dirGain = ctx.createGain();
     this.preIn.connect(this.dirGain);
     this.dirGain.connect(this.trim);
     this.wsOut = ctx.createGain();
     this.wsOut.gain.value = 0;
     this.wsOut.connect(this.trim);
-    // Grains de SCRATCH et effets platine : directement à l'EQ, sans passer
-    // par la transposition (aucune latence sous la main)
+    // SCRATCH grains and turntable effects: straight to the EQ, bypassing
+    // the transposition (zero latency under the hand)
     this.scrubIn = ctx.createGain();
     this.scrubIn.connect(this.trim);
     this.keyShift = 0;
-    this.musicKey = null;   // tonalité DÉTECTÉE du morceau (0-23, voir key.js)
-    this.keylock = false;   // conserver la tonalité quand le tempo change
-    this.wsola = null;      // AudioWorkletNode, posé par AudioEngine
-    this.wsLat = 0;         // latence FIXE du moteur WSOLA (s)
-    this.procLat = 0;       // latence du chemin ACTIF : le morceau est lu d'autant en AVANCE
-    this._routeW = false;   // le son passe-t-il par le transpositeur WSOLA ?
-    this._pitchOn = false;  // (moteur de secours) transposition active ?
+    this.musicKey = null;   // DETECTED key of the track (0-23, see key.js)
+    this.keylock = false;   // keep the key when the tempo changes
+    this.wsola = null;      // AudioWorkletNode, set by AudioEngine
+    this.wsLat = 0;         // FIXED latency of the WSOLA engine (s)
+    this.procLat = 0;       // latency of the ACTIVE path: the track is read that much AHEAD
+    this._routeW = false;   // does the sound go through the WSOLA transposer?
+    this._pitchOn = false;  // (fallback engine) is transposition active?
 
-    // Stems (voix / batterie / basse / instru) : 4 sources synchronisées
+    // Stems (vocals / drums / bass / instrumental): 4 synchronized sources
     this.stems = null;
     this.stemsOn = false;
     this.stemGains = {};
@@ -301,12 +301,12 @@ export class Deck {
 
     this.buffer = null;
     this.track = null;      // { name, path }
-    this.peaks = null;      // forme d'onde précalculée
+    this.peaks = null;      // precomputed waveform
     this.bpm = null;
-    this.beatOffset = null; // position du premier temps (grille fixe, repli)
-    this.beats = null;      // grille DYNAMIQUE : position réelle de chaque temps
-    this.gridShift = 0;     // décalage manuel de la grille (flèches ◀ ▶)
-    this.barAnchor = 0;     // index du temps qui démarre une mesure (GRID)
+    this.beatOffset = null; // position of the first beat (fixed grid, fallback)
+    this.beats = null;      // DYNAMIC grid: actual position of each beat
+    this.gridShift = 0;     // manual grid offset (◀ ▶ arrows)
+    this.barAnchor = 0;     // index of the beat that starts a bar (GRID)
     this.tempo = 1;
     this.playing = false;
     this.offset = 0;
@@ -353,10 +353,10 @@ export class Deck {
     this.offset = 0;
     this.cuePoint = 0;
     this.tempo = 1;
-    // LE SYNC RESTE ALLUMÉ d'un morceau à l'autre (comme sur un CDJ) : on
-    // ne doit pas le réappuyer à chaque chargement. Le nouveau morceau
-    // repart en revanche d'un ratio VIERGE — l'ancien n'a aucun sens pour
-    // lui — et le verrou le recale sur le master dès la première image.
+    // SYNC STAYS ON from one track to the next (like on a CDJ): it
+    // shouldn't have to be pressed again on every load. The new track does,
+    // however, restart from a BLANK ratio — the old one means nothing
+    // for it — and the lock re-aligns it to the master from the first frame.
     this._syncBase = null;
     this._syncRef = null;
     this._syncWant = null;
@@ -397,7 +397,7 @@ export class Deck {
     if (this.stemsOn && this.stems) {
       let primary = null;
       for (const name of ['drums', 'bass', 'other', 'vocals']) {
-        if (!this.stems[name]) continue; // (basse + mélodies fusionnées)
+        if (!this.stems[name]) continue; // (bass + melodies merged)
         const s = tag(mk(this.stems[name], this.stemGains[name]), name);
         if (primary) this._extraSources.push(s);
         else primary = s;
@@ -407,11 +407,11 @@ export class Deck {
     return mk(this.buffer, this.srcGain);
   }
 
-  // --- ROLL (boucle de répétition calée sur la grille) ---
-  // beats = longueur de la boucle en temps (¼, ½, 1…) ; mix = intensité
-  // (0 = morceau seul, 1 = boucle seule). La boucle part du DERNIER
-  // multiple de « beats » sur la grille : le son continue normalement
-  // jusqu'à la fin de la tranche, puis se répète — pile dans le temps.
+  // --- ROLL (repeat loop locked to the grid) ---
+  // beats = loop length in beats (¼, ½, 1…); mix = intensity
+  // (0 = track only, 1 = loop only). The loop starts at the LAST
+  // multiple of "beats" on the grid: the sound continues normally
+  // until the end of the slice, then repeats — right on time.
   startRoll(beats, mix = 1) {
     if (!this.buffer || !this.playing || !(beats > 0)) return false;
     const pos = this.currentTime();
@@ -437,7 +437,7 @@ export class Deck {
     start = Math.max(0, start);
     end = Math.min(this.duration, end);
     if (end - start < 0.01) return false;
-    // déjà en roll sur la même tranche : seul le dosage change
+    // already rolling on the same slice: only the amount changes
     if (this._roll && Math.abs(this._roll.start - start) < 1e-4 && Math.abs(this._roll.end - end) < 1e-4) {
       this.setRollMix(mix);
       return true;
@@ -470,8 +470,8 @@ export class Deck {
     this._rampGain(this.rollGain.gain, m, t);
   }
 
-  // Rampe propre : on efface d'abord tout ce qui était programmé (un
-  // relâcher qui arrive avant le départ du roll laissait sinon le deck MUET)
+  // Clean ramp: first clear everything that was scheduled (a
+  // release arriving before the roll started otherwise left the deck MUTED)
   _rampGain(param, v, at) {
     const now = this.ctx.currentTime;
     param.cancelScheduledValues(now);
@@ -486,24 +486,24 @@ export class Deck {
     const t = this.ctx.currentTime;
     this._rampGain(this.srcGain.gain, 1, t);
     this._rampGain(this.rollGain.gain, 0, t);
-    try { r.src.stop(t + (immediate ? 0.02 : 0.04)); } catch { /* déjà arrêtée */ }
-    r.src.onended = () => { try { r.src.disconnect(); } catch { /* rien */ } };
+    try { r.src.stop(t + (immediate ? 0.02 : 0.04)); } catch { /* already stopped */ }
+    r.src.onended = () => { try { r.src.disconnect(); } catch { /* nothing */ } };
   }
 
-  // Démarrage PROGRAMMÉ à un instant exact : start(0) démarre « dès que
-  // possible » avec quelques ms d'imprécision, ce qui créait un micro-décalage
-  // à chaque play/seek/sync. Ici la comptabilité correspond à l'échantillon près.
-  // heard = position ENTENDUE voulue à l'instant de départ. Quand le son
-  // traverse le transpositeur (latence procLat), le morceau est LU d'autant
-  // en avance : ce qu'on entend tombe pile sur la grille. readAhead=false
-  // (PLAY depuis l'arrêt) : on lit depuis heard sans rien sauter — le son
-  // sort procLat plus tard, attaque intacte, et l'horloge en tient compte.
+  // SCHEDULED start at an exact instant: start(0) starts "as soon as
+  // possible" with a few ms of imprecision, which created a micro-offset
+  // on every play/seek/sync. Here the bookkeeping is sample-accurate.
+  // heard = desired HEARD position at the start instant. When the sound
+  // goes through the transposer (latency procLat), the track is READ that
+  // much ahead: what you hear lands exactly on the grid. readAhead=false
+  // (PLAY from stop): read from heard without skipping anything — the sound
+  // comes out procLat later, attack intact, and the clock accounts for it.
   _startAll(when, heard, readAhead = true) {
     const at = this.ctx.currentTime + 0.03;
-    this._schedTempo = this.tempo; // tempo qui a servi à programmer le départ
+    this._schedTempo = this.tempo; // tempo used to schedule the start
     const lead = this.procLat * this.tempo;
     const offset = readAhead ? heard + lead : heard;
-    this.offset = offset - lead; // ancrage de currentTime() : position entendue à « at »
+    this.offset = offset - lead; // anchor for currentTime(): heard position at "at"
     if (offset < 0) {
       const at2 = at + (-offset) / this.tempo;
       this.source.start(at2, 0);
@@ -515,7 +515,7 @@ export class Deck {
     return at;
   }
 
-  // Active les stems séparés (voix/batterie/basse/instru) sur ce deck
+  // Enables the separated stems (vocals/drums/bass/instrumental) on this deck
   loadStems(stems) {
     this.stems = stems;
     this.stemsOn = true;
@@ -532,52 +532,52 @@ export class Deck {
     return on;
   }
 
-  // Tonalité en demi-tons (-7..+7), sans changer la vitesse
+  // Key in semitones (-7..+7), without changing the speed
   setKey(semi) {
     this.keyShift = clamp(Math.round(semi), -7, 7);
     this._applyPitch();
   }
 
-  // KEYLOCK : garder la tonalité d'origine quand le tempo change
+  // KEYLOCK: keep the original key when the tempo changes
   setKeylock(on) {
     this.keylock = !!on;
     this._applyPitch();
   }
 
-  // Rapport de transposition TOTAL = tonalité choisie × compensation du
-  // tempo (keylock). Un tempo à 1,06 monte le son de ~1 demi-ton : le
-  // keylock applique l'inverse pour annuler exactement cette montée.
+  // TOTAL transposition ratio = chosen key × tempo
+  // compensation (keylock). A tempo of 1.06 raises the sound by ~1 semitone: the
+  // keylock applies the inverse to cancel exactly that rise.
   _applyPitch() {
     const key = Math.pow(2, this.keyShift / 12);
     const lock = this.keylock && this.tempo > 0 ? 1 / this.tempo : 1;
     const ratio = clamp(key * lock, 0.5, 1.8);
     const node = this.wsola;
     if (node) {
-      // Chemin transposé tant que KEYLOCK ou KEY ≠ 0 — décision STABLE :
-      // l'ancien seuil sur le rapport faisait entrer/sortir le son du
-      // transpositeur chaque fois que le sync faisait osciller le tempo
-      // autour de 1 (trous, sauts de latence)
+      // Transposed path as long as KEYLOCK or KEY ≠ 0 — STABLE decision:
+      // the old threshold on the ratio made the sound enter/leave the
+      // transposer every time the sync made the tempo oscillate
+      // around 1 (dropouts, latency jumps)
       const want = this.keylock || this.keyShift !== 0;
       if (want !== this._routeW) this._switchRoute(want);
       node.parameters.get('ratio').setTargetAtTime(want ? ratio : 1, this.ctx.currentTime, 0.02);
       return;
     }
-    // Moteur de SECOURS (navigateur sans worklet) : l'ancien comportement
+    // FALLBACK engine (browser without worklets): the old behavior
     const need = Math.abs(ratio - 1) > 0.0015;
     if (need !== this._pitchOn) {
       this._pitchOn = need;
-      try { this.preIn.disconnect(this.shifter.input); } catch { /* pas branché */ }
+      try { this.preIn.disconnect(this.shifter.input); } catch { /* not connected */ }
       if (need) this.preIn.connect(this.shifter.input);
       this.dirGain.gain.setValueAtTime(need ? 0 : 1, this.ctx.currentTime);
     }
     if (need) this.shifter.setRatio(ratio);
   }
 
-  // Entrée / sortie du transpositeur SANS TROU NI DÉCALAGE. Le moteur a une
-  // latence fixe L : le morceau doit être lu L en avance pour sonner à
-  // l'heure. À l'ENTRÉE, l'ancien son continue en direct pendant L (le
-  // temps que le transpositeur se remplisse) puis on passe la main en fondu ;
-  // à la SORTIE, le direct reprend pile où on en est.
+  // Entering / leaving the transposer WITHOUT A GAP OR OFFSET. The engine has a
+  // fixed latency L: the track must be read L ahead to sound on
+  // time. On ENTRY, the old sound continues direct for L (the
+  // time for the transposer to fill up) then hands over with a crossfade;
+  // on EXIT, the direct path resumes exactly where we are.
   _switchRoute(on) {
     const ctx = this.ctx;
     const now = ctx.currentTime;
@@ -603,22 +603,22 @@ export class Deck {
     this.procLat = L;
     const at = now + 0.03;
     if (on) {
-      // l'ancien son file en DIRECT jusqu'à ce que le transpositeur sorte
-      // le nouveau, puis s'efface
+      // the old sound keeps flowing DIRECT until the transposer outputs
+      // the new one, then fades out
       const tail = ctx.createGain();
       tail.connect(this.trim);
       tail.gain.setValueAtTime(1, now);
       tail.gain.setValueAtTime(1, at + L);
       tail.gain.linearRampToValueAtTime(0, at + L + 0.006);
       for (const src of old) {
-        try { src.disconnect(); } catch { /* rien */ }
+        try { src.disconnect(); } catch { /* nothing */ }
         const g = ctx.createGain();
-        // le stem coupé (VOX…) le reste aussi pendant la traîne
+        // a muted stem (VOX…) stays muted during the tail too
         g.gain.value = src._stem ? this.stemGains[src._stem].gain.value : this.srcGain.gain.value;
         src.connect(g);
         g.connect(tail);
-        src.onended = () => { try { src.disconnect(); g.disconnect(); tail.disconnect(); } catch { /* rien */ } };
-        try { src.stop(at + L + 0.012); } catch { /* déjà arrêtée */ }
+        src.onended = () => { try { src.disconnect(); g.disconnect(); tail.disconnect(); } catch { /* nothing */ } };
+        try { src.stop(at + L + 0.012); } catch { /* already stopped */ }
       }
       ramp(this.dirGain.gain, 0, now);
       this.wsOut.gain.cancelScheduledValues(now);
@@ -628,24 +628,24 @@ export class Deck {
     } else {
       for (const src of old) {
         src.onended = null;
-        try { src.stop(at); } catch { /* déjà arrêtée */ }
+        try { src.stop(at); } catch { /* already stopped */ }
       }
       ramp(this.dirGain.gain, 1, at);
       ramp(this.wsOut.gain, 0, at);
     }
-    // nouvelle lecture, calée pour que le son entendu continue sans saut
+    // new playback, aligned so that the heard sound continues without a jump
     this.source = this._makeSource();
     this._attachEnded(this.source);
     this.startCtx = this._startAll(0, heard + 0.03 * this.tempo, true);
   }
 
-  // TRIM : -1 -> -12 dB, 0 -> neutre, +1 -> +12 dB
+  // TRIM: -1 -> -12 dB, 0 -> neutral, +1 -> +12 dB
   setTrim(v) {
     this.trimVal = clamp(v, -1, 1);
     this.trim.gain.setTargetAtTime(Math.pow(4, this.trimVal), this.ctx.currentTime, 0.01);
   }
 
-  // Niveau crête instantané (0..~2) pour le VU-mètre
+  // Instantaneous peak level (0..~2) for the VU meter
   meterPeak() {
     this.analyser.getFloatTimeDomainData(this.meterBuf);
     let m = 0;
@@ -656,7 +656,7 @@ export class Deck {
     return m;
   }
 
-  // --- Boucles (sample-accurate via le loop natif de la source) ---
+  // --- Loops (sample-accurate via the source's native loop) ---
   setLoop(start, end) {
     start = Math.max(0, start);
     end = Math.min(this.duration, end);
@@ -696,7 +696,7 @@ export class Deck {
         this.playing = false;
         this.offset = this.duration;
         this.source = null;
-        // Fin naturelle du morceau : la file d'attente peut enchaîner
+        // Natural end of the track: the queue can chain the next one
         this._endedAt = performance.now() / 1000;
         if (this.onEnded) this.onEnded();
       }
@@ -716,10 +716,10 @@ export class Deck {
   pause() {
     if (!this.playing) return;
     this.stopRoll(true);
-    // pause avant même que le son ait démarré : la position ne bouge pas
+    // pause before the sound has even started: the position doesn't move
     if (this.ctx.currentTime >= this.startCtx) this.offset = this.currentTime();
-    // Le transpositeur garde ~55 ms de son en réserve : on le coupe net à la
-    // pause (sinon ce bout rejouait une 2e fois à la reprise)
+    // The transposer keeps ~55 ms of sound in reserve: cut it sharply on
+    // pause (otherwise that bit replayed a 2nd time on resume)
     if (this._routeW) {
       const g = this.wsOut.gain;
       const now = this.ctx.currentTime;
@@ -739,13 +739,13 @@ export class Deck {
   _stopSource() {
     if (this.source) {
       this._stopping = true;
-      try { this.source.stop(); } catch { /* déjà arrêté */ }
-      try { this.source.disconnect(); } catch { /* rien */ }
+      try { this.source.stop(); } catch { /* already stopped */ }
+      try { this.source.disconnect(); } catch { /* nothing */ }
       this.source = null;
     }
     for (const s of this._extraSources) {
-      try { s.stop(); } catch { /* déjà arrêté */ }
-      try { s.disconnect(); } catch { /* rien */ }
+      try { s.stop(); } catch { /* already stopped */ }
+      try { s.disconnect(); } catch { /* nothing */ }
     }
     this._extraSources = [];
   }
@@ -753,13 +753,13 @@ export class Deck {
   currentTime() {
     if (!this.buffer) return 0;
     if (!this.playing) return this.offset;
-    // PAS de plancher à 0 sur le temps écoulé : pendant les 30 ms qui
-    // précèdent un démarrage programmé, la position est l'extrapolation
-    // EXACTE (offset − ce qui reste à attendre). L'ancien Math.max(0, …)
-    // la figeait sur la position FUTURE : tout calcul fait dans cette
-    // fenêtre (SYNC juste après PLAY, 1re mesure de calibration juste après
-    // le recalage…) partait avec jusqu'à 30 ms d'avance — d'où le SYNC
-    // qu'il fallait appuyer 3 ou 4 fois.
+    // NO floor at 0 on the elapsed time: during the 30 ms that
+    // precede a scheduled start, the position is the EXACT
+    // extrapolation (offset − what remains to wait). The old Math.max(0, …)
+    // froze it at the FUTURE position: any computation made in that
+    // window (SYNC right after PLAY, 1st calibration measurement right after
+    // the re-alignment…) started up to 30 ms early — hence the SYNC
+    // that had to be pressed 3 or 4 times.
     let t = this.offset + (this.ctx.currentTime - this.startCtx) * this.tempo;
     if (this.looping && t > this.loopEnd) {
       const len = this.loopEnd - this.loopStart;
@@ -771,7 +771,7 @@ export class Deck {
   seek(t) {
     if (!this.buffer) return;
     t = clamp(t, -PRE_ROLL, this.duration);
-    // Sauter hors de la boucle la désactive
+    // Jumping out of the loop disables it
     if (this.looping && (t < this.loopStart || t >= this.loopEnd)) {
       this.looping = false;
       this._loopBeats = null;
@@ -781,10 +781,10 @@ export class Deck {
     }
     if (this.playing) {
       this._stopSource();
-      // COMPENSATION du démarrage programmé (30 ms) : on vise la position
-      // où le son AURAIT été si le saut était instantané. Sans ça, chaque
-      // jump/sync/hot cue atterrissait 30 ms en retard et le verrou sync
-      // « recalait » audiblement juste après l'effet.
+      // COMPENSATION for the scheduled start (30 ms): aim for the position
+      // where the sound WOULD have been if the jump were instantaneous. Without it, every
+      // jump/sync/hot cue landed 30 ms late and the sync lock
+      // audibly "re-aligned" right after the effect.
       let target = t + 0.03 * this.tempo;
       if (target > this.duration) target = this.duration;
       this.offset = target;
@@ -796,8 +796,8 @@ export class Deck {
     }
   }
 
-  // --- Scratch sonore à vélocité : le son ne joue QUE pendant le mouvement,
-  // à la vitesse du geste (immobile = silence, comme un vrai vinyle tenu).
+  // --- Velocity-based audible scratch: the sound plays ONLY during the movement,
+  // at the speed of the gesture (still = silence, like a real vinyl held down).
   scrubStart() {
     if (!this.buffer) return;
     this._scrubbing = true;
@@ -813,25 +813,25 @@ export class Deck {
     }
     const now = this.ctx.currentTime;
     const from = this._scrubLastPos;
-    // Le grain sonore ne couvre que la partie réelle du morceau (≥ 0)
+    // The sound grain only covers the real part of the track (≥ 0)
     const gFrom = Math.max(0, Math.min(from, t));
     const gTo = Math.max(0, Math.max(from, t));
     const dist = gTo - gFrom;
     const dt = Math.max(0.005, now - this._scrubLastTime);
 
     if (dist > 0.0008) {
-      // Grain joué à la vitesse du geste, BORNÉ à ~50 ms réels : balayer une
-      // grande distance ne crée plus une pile de son « en file d'attente »
+      // Grain played at the speed of the gesture, CAPPED at ~50 ms real time: sweeping a
+      // large distance no longer creates a pile of "queued" sound
       const rate = clamp(dist / dt, 0.05, 6);
       const bufDur = Math.min(dist, rate * 0.05);
       const startPos = t >= from ? Math.max(0, gTo - bufDur) : gFrom;
       const realDur = bufDur / rate;
 
-      // GRAINS EN FILE, BOUT À BOUT : chaque grain démarre quand le
-      // précédent finit — ZÉRO chevauchement, donc zéro addition de
-      // volumes, donc plus de saturation ; le scrub sonne au niveau du
-      // morceau. Si la file prend trop de retard (> 90 ms), on saute le
-      // grain : le suivant rattrape la position.
+      // QUEUED GRAINS, END TO END: each grain starts when the
+      // previous one ends — ZERO overlap, hence no summing of
+      // volumes, hence no more clipping; the scrub sounds at the
+      // track's level. If the queue falls too far behind (> 90 ms), the
+      // grain is skipped: the next one catches up with the position.
       const at = Math.max(now, this._scrubNextAt || 0);
       if (at - now > 0.09) {
         this._scrubLastPos = t;
@@ -855,7 +855,7 @@ export class Deck {
       g.connect(this.scrubIn);
       src.start(at, startPos, bufDur + 0.002);
       src.onended = () => {
-        try { src.disconnect(); g.disconnect(); } catch { /* rien */ }
+        try { src.disconnect(); g.disconnect(); } catch { /* nothing */ }
       };
     }
 
@@ -868,19 +868,19 @@ export class Deck {
     this._scrubbing = false;
   }
 
-  // Comportement CDJ : en pause -> pose le point cue ; en lecture -> retour au cue + pause.
-  // V.BRAKE / BACKSPIN « qualité rekordbox » : une LECTURE CONTINUE d'une
-  // tranche du morceau (inversée pour le backspin) dont la VITESSE descend
-  // en rampe native WebAudio — zéro grain, zéro hachage, le vrai son de
-  // bande qui freine / rembobine. (l'ancien moteur à grains de scrub
-  // « crachotait » à haute vitesse : des grains, ça hache par nature)
+  // CDJ behavior: paused -> sets the cue point; playing -> back to the cue + pause.
+  // "rekordbox-quality" V.BRAKE / BACKSPIN: a CONTINUOUS PLAYBACK of a
+  // slice of the track (reversed for the backspin) whose SPEED goes down
+  // in a native WebAudio ramp — zero grains, zero choppiness, the real sound of
+  // tape braking / rewinding. (the old scrub-grain engine
+  // "sputtered" at high speed: grains are choppy by nature)
   spinSound(kind) {
     this.stopSpinSound();
     if (!this.buffer) return;
     const pos = this.currentTime();
     const back = kind === 'backspin';
-    // BACKSPIN : départ à 7× (le « vvviiip » aigu façon rekordbox — à 3×
-    // ce n'était « pas assez backspineux ») qui retombe en ~1,5 s
+    // BACKSPIN: starts at 7× (the high-pitched rekordbox-style "vvviiip" — at 3×
+    // it was "not backspinny enough") and falls back down in ~1.5 s
     const v0 = back ? 7 : Math.max(0.2, this.tempo || 1);
     const decel = back ? 4.5 : 1.6;
     const spinDur = v0 / decel;
@@ -896,7 +896,7 @@ export class Deck {
       const src = this.buffer.getChannelData(c);
       const dst = slice.getChannelData(c);
       if (back) {
-        // inversé : le 1er échantillon de la tranche = la position actuelle
+        // reversed: the slice's 1st sample = the current position
         for (let j = 0; j < n; j++) dst[j] = src[i0 + n - 1 - j] || 0;
       } else {
         for (let j = 0; j < n; j++) dst[j] = src[i0 + j] || 0;
@@ -928,7 +928,7 @@ export class Deck {
       g.gain.setValueAtTime(g.gain.value, now);
       g.gain.linearRampToValueAtTime(0, now + 0.02);
       s.stop(now + 0.03);
-    } catch { /* déjà terminé */ }
+    } catch { /* already finished */ }
   }
 
   cue() {
@@ -948,39 +948,39 @@ export class Deck {
   setTempo(r) {
     r = clamp(r, 0.5, 1.6);
     if (this.playing && this.ctx.currentTime >= this.startCtx) {
-      // lecture = entendu + latence × tempo : changer le tempo déplace
-      // d'autant l'ancrage entendu (quelques dixièmes de ms au plus)
+      // playback = heard + latency × tempo: changing the tempo shifts
+      // the heard anchor by as much (a few tenths of a ms at most)
       this.offset = this.currentTime() + this.procLat * (this.tempo - r);
       this.startCtx = this.ctx.currentTime;
     }
-    // (avant un démarrage programmé, l'ancrage offset/startCtx reste
-    // EXACT tel quel : le son partira de offset à startCtx quel que soit le
-    // tempo — le réécrire décalait l'horloge de ce qui restait à attendre)
+    // (before a scheduled start, the offset/startCtx anchor stays
+    // EXACT as is: the sound will start from offset at startCtx whatever the
+    // tempo — rewriting it shifted the clock by what remained to wait)
     this.tempo = r;
     if (this.source) this.source.playbackRate.value = r;
     for (const s of this._extraSources) s.playbackRate.value = r;
     if (this._roll) this._roll.src.playbackRate.value = r;
-    // le moteur fait suivre les decks syncés DANS LE MÊME INSTANT
+    // the engine makes the synced decks follow IN THE SAME INSTANT
     if (this._onTempo) this._onTempo(this);
-    // PRÉ-ROLL (position négative) : l'instant où le son démarrera a été
-    // programmé avec l'ANCIEN tempo. Un deck syncé recevant ses corrections
-    // pendant 10 s de pré-roll démarrait donc à côté de la grille. On
-    // reprogramme le départ (le son n'a pas encore commencé : inaudible).
+    // PRE-ROLL (negative position): the instant the sound will start was
+    // scheduled with the OLD tempo. A synced deck receiving its corrections
+    // during 10 s of pre-roll therefore started off the grid. We
+    // reschedule the start (the sound hasn't started yet: inaudible).
     if (this.playing && Math.abs(r - (this._schedTempo ?? r)) > 1e-5 && this.currentTime() < -0.05) {
       this.seek(this.currentTime());
     }
-    // KEYLOCK : la compensation suit le tempo en direct (y compris les
-    // micro-corrections du servo de synchro, inaudibles mais exactes)
+    // KEYLOCK: the compensation follows the tempo live (including the
+    // sync servo's micro-corrections, inaudible but exact)
     if (this.keylock) this._applyPitch();
   }
 
   setVolume(v) {
     this.volume = clamp(v, 0, 1);
-    // Courbe quadratique : plus naturel à l'oreille
+    // Quadratic curve: more natural to the ear
     this.fader.gain.setTargetAtTime(this.volume * this.volume, this.ctx.currentTime, 0.01);
   }
 
-  // band: 'low' | 'mid' | 'high', v dans [-1, 1] ; -1 = kill (-40 dB), +1 = +6 dB
+  // band: 'low' | 'mid' | 'high', v in [-1, 1]; -1 = kill (-40 dB), +1 = +6 dB
   setEq(band, v) {
     v = clamp(v, -1, 1);
     this.eq[band] = v;
@@ -1000,7 +1000,7 @@ export class Deck {
     return this._lowBeforeKill !== null;
   }
 
-  // v dans [-1, 1] : négatif = passe-bas (coupe les aigus), positif = passe-haut (coupe les basses)
+  // v in [-1, 1]: negative = low-pass (cuts the highs), positive = high-pass (cuts the lows)
   setFilter(v) {
     v = clamp(v, -1, 1);
     this.filterVal = v;
@@ -1025,11 +1025,11 @@ export class Deck {
   }
 }
 
-// Réponse impulsionnelle synthétique pour la réverb (bruit à décroissance
-// exponentielle). MÉMOÏSÉE : un AudioBuffer est en lecture seule côté Web
-// Audio, toutes les unités FX peuvent partager le MÊME — on en fabriquait
-// jusqu'à 9 identiques (4 unités + master + pad FX), soit ~6,8 Mo et 25 ms
-// de calcul pour rien.
+// Synthetic impulse response for the reverb (exponentially decaying
+// noise). MEMOIZED: an AudioBuffer is read-only on the Web
+// Audio side, so all FX units can share the SAME one — we used to build
+// up to 9 identical ones (4 units + master + pad FX), i.e. ~6.8 MB and 25 ms
+// of computation for nothing.
 const _impCache = new Map();
 function makeImpulse(ctx, seconds, decay) {
   const key = `${seconds}|${decay}|${ctx.sampleRate}`;
@@ -1058,24 +1058,24 @@ function crushCurve(steps) {
   return curve;
 }
 
-// Unité d'effets style Beat FX : un effet à la fois, assignable à 1..4 decks,
-// branchée en envoi (le son sec continue de passer, l'effet s'ajoute par-dessus).
+// Beat FX-style effects unit: one effect at a time, assignable to 1..4 decks,
+// wired as a send (the dry sound keeps passing, the effect adds on top).
 export class FxUnit {
   constructor(ctx, output) {
     this.ctx = ctx;
     this.input = ctx.createGain();
     this.wet = ctx.createGain();
-    // Le FX démarre TOUJOURS au point le plus bas (demande David) : on
-    // monte le niveau au stick, jamais de surprise à l'activation
+    // The FX ALWAYS starts at the lowest point (David's request): the
+    // level is raised with the stick, never a surprise on activation
     this.level = 0;
     this.wet.gain.value = this.level;
     this.wet.connect(output);
     this.enabled = false;
     this.type = 'echo';
-    this.beatDur = 0.5;   // durée d'un temps (s), suit le BPM du master
-    this.beatsMult = 0.5; // fraction de temps choisie (¼, ½, 1, 2)
+    this.beatDur = 0.5;   // duration of one beat (s), follows the master's BPM
+    this.beatsMult = 0.5; // chosen beat fraction (¼, ½, 1, 2)
 
-    // Echo (délai avec réinjection, coupe-bas dans la boucle)
+    // Echo (delay with feedback, low-cut inside the loop)
     this.echoDelay = ctx.createDelay(4);
     this.echoDelay.delayTime.value = 0.25;
     this.echoHp = ctx.createBiquadFilter();
@@ -1091,7 +1091,7 @@ export class FxUnit {
     this.convolver = ctx.createConvolver();
     this.convolver.buffer = makeImpulse(ctx, 2.2, 2.5);
 
-    // Flanger (délai court modulé par un LFO + réinjection)
+    // Flanger (short delay modulated by an LFO + feedback)
     this.flDelay = ctx.createDelay(0.05);
     this.flDelay.delayTime.value = 0.004;
     this.flFb = ctx.createGain();
@@ -1106,16 +1106,16 @@ export class FxUnit {
     this.flLfoGain.connect(this.flDelay.delayTime);
     this.flLfo.start();
 
-    // Crush (réduction de résolution)
+    // Crush (resolution reduction)
     this.shaper = ctx.createWaveShaper();
     this.shaper.curve = crushCurve(8);
 
-    // (Delay simple, Ping Pong, Low Cut, variantes d'écho et MT Delay sont
-    // bâtis AU PREMIER USAGE — voir _chain/_mk plus bas : chaque
-    // createDelay(4) réserve ~1 Mo dès sa création, et une seule chaîne
-    // tourne à la fois. C'était ~50 Mo de tampon mort au démarrage.)
+    // (Simple Delay, Ping Pong, Low Cut, the echo variants and MT Delay are
+    // built ON FIRST USE — see _chain/_mk below: each
+    // createDelay(4) reserves ~1 MB as soon as it is created, and only one chain
+    // runs at a time. That was ~50 MB of dead buffer at startup.)
 
-    // Phaser (4 filtres passe-tout modulés)
+    // Phaser (4 modulated all-pass filters)
     this.phStages = [350, 700, 1100, 1600].map((f) => {
       const ap = ctx.createBiquadFilter();
       ap.type = 'allpass';
@@ -1134,7 +1134,7 @@ export class FxUnit {
     this.phStages.forEach((ap) => this.phLfoGain.connect(ap.frequency));
     this.phLfo.start();
 
-    // Trans (gate rythmique carrée calée sur le tempo)
+    // Trans (square rhythmic gate locked to the tempo)
     this.trGain = ctx.createGain();
     this.trGain.gain.value = 0;
     this.trConst = ctx.createConstantSource();
@@ -1150,7 +1150,7 @@ export class FxUnit {
     this.trOscGain.connect(this.trGain.gain);
     this.trOsc.start();
 
-    // Pan automatique (gauche/droite en rythme)
+    // Auto pan (left/right in rhythm)
     this.panNode = ctx.createStereoPanner();
     this.panLfo = ctx.createOscillator();
     this.panLfo.frequency.value = 1;
@@ -1160,7 +1160,7 @@ export class FxUnit {
     this.panLfoGain.connect(this.panNode.pan);
     this.panLfo.start();
 
-    // Filter (balayage de bande synchronisé sur le tempo)
+    // Filter (band sweep synced to the tempo)
     this.fxbp = ctx.createBiquadFilter();
     this.fxbp.type = 'bandpass';
     this.fxbp.frequency.value = 800;
@@ -1173,7 +1173,7 @@ export class FxUnit {
     this.fxbpLfoGain.connect(this.fxbp.frequency);
     this.fxbpLfo.start();
 
-    // Robot (modulation en anneau)
+    // Robot (ring modulation)
     this.rmGain = ctx.createGain();
     this.rmGain.gain.value = 0;
     this.rmOsc = ctx.createOscillator();
@@ -1181,14 +1181,14 @@ export class FxUnit {
     this.rmOsc.connect(this.rmGain.gain);
     this.rmOsc.start();
 
-    // Lignes de délai à mettre à l'heure du tempo : celles qui EXISTENT
-    // (les autres naissent déjà à l'heure, voir _timeNow)
+    // Delay lines to keep in time with the tempo: the ones that EXIST
+    // (the others are born already in time, see _timeNow)
     this._delays = [this.echoDelay];
     this._lazy = {};
-    // Réinjections dosées par le NIVEAU (l'écho s'allonge quand on monte)
+    // Feedbacks scaled by the LEVEL (the echo gets longer as it goes up)
     this._fbs = [{ g: this.echoFb, base: 0.45 }];
-    // ROLL : joué par le DECK (boucle du morceau calée sur la grille), pas
-    // par une ligne de délai — l'unité ne sort donc rien pour lui
+    // ROLL: played by the DECK (track loop locked to the grid), not
+    // by a delay line — so the unit outputs nothing for it
     this._mute = ctx.createGain();
     this._mute.gain.value = 0;
 
@@ -1196,12 +1196,12 @@ export class FxUnit {
     this._route();
   }
 
-  // Temps de délai COURANT, sans rampe : une chaîne neuve doit naître à
-  // l'heure, sinon sa 1re répétition part de 0,25 s et « glisse » vers le
-  // tempo (effet doppler audible).
+  // CURRENT delay time, without a ramp: a new chain must be born
+  // in time, otherwise its 1st repeat starts at 0.25 s and "slides" toward the
+  // tempo (audible doppler effect).
   _timeNow() { return clamp(this.beatDur * this.beatsMult, 0.02, 3.9); }
 
-  // Fabrique paresseuse : construit la chaîne au premier usage, la garde
+  // Lazy factory: builds the chain on first use, keeps it
   _mk(key, build) {
     let v = this._lazy[key];
     if (!v) v = this._lazy[key] = build();
@@ -1216,8 +1216,8 @@ export class FxUnit {
     return c;
   }
 
-  // Réinjection selon le niveau : à bas niveau l'écho est court et
-  // discret, à fond il prend toute sa traîne (bornée sous 1 : jamais d'emballement)
+  // Feedback according to the level: at low level the echo is short and
+  // discreet, at full it takes its whole tail (capped below 1: never runs away)
   _fbFor(base) {
     return Math.min(0.97, base * (0.55 + 0.45 * this.level));
   }
@@ -1268,8 +1268,8 @@ export class FxUnit {
       case 'trans': return [this.trGain, this.trGain];
       case 'crush': return [this.shaper, this.shaper];
       case 'lowcut': {
-        // sortie = LE DÉLAI (le passe-haut est dans la boucle de
-        // réinjection, pas en sortie) — routage d'origine conservé
+        // output = THE DELAY (the high-pass is in the feedback
+        // loop, not at the output) — original routing kept
         const c = this._mk('lowcut', () => this._echo({ fb: 0.5, filter: { type: 'highpass', freq: 700 } }));
         return [c.delay, c.delay];
       }
@@ -1319,9 +1319,9 @@ export class FxUnit {
   }
 
   _route() {
-    try { this.input.disconnect(); } catch { /* rien */ }
+    try { this.input.disconnect(); } catch { /* nothing */ }
     if (this._out) {
-      try { this._out.disconnect(this.wet); } catch { /* rien */ }
+      try { this._out.disconnect(this.wet); } catch { /* nothing */ }
       this._out = null;
     }
     if (!this.enabled) return;
@@ -1345,29 +1345,29 @@ export class FxUnit {
     this.level = clamp(v, 0, 1);
     const now = this.ctx.currentTime;
     this.wet.gain.setTargetAtTime(this.level, now, 0.02);
-    // L'INTENSITÉ agit aussi DANS l'effet (pas seulement sur son volume) :
-    // traîne des échos, profondeur du balayage, réinjection du flanger
+    // The INTENSITY also acts INSIDE the effect (not just on its volume):
+    // echo tail, sweep depth, flanger feedback
     for (const f of this._fbs) f.g.gain.setTargetAtTime(this._fbFor(f.base), now, 0.05);
     this.fxbpLfoGain.gain.setTargetAtTime(650 * (0.35 + 0.65 * this.level), now, 0.05);
     this.flFb.gain.setTargetAtTime(0.15 + 0.5 * this.level, now, 0.05);
   }
 
-  // CALAGE SUR LES TEMPS : les modulations (gate TRANS, balayages du
-  // flanger, du phaser, du filtre, du pan) redémarrent PILE sur un temps
-  // du morceau — avant, leurs oscillateurs tournaient avec une phase
-  // quelconque : la gate hachait à côté du beat, « reliée à rien ».
-  // at = instant audio (ctx) d'un début de temps / de mesure.
+  // BEAT ALIGNMENT: the modulations (TRANS gate, sweeps of the
+  // flanger, phaser, filter, pan) restart EXACTLY on a beat
+  // of the track — before, their oscillators ran with an arbitrary
+  // phase: the gate chopped off the beat, "tied to nothing".
+  // at = audio (ctx) time of the start of a beat / bar.
   alignTo(at) {
     const t = this._timeNow();
     if (!this._oscList) this._oscList = {};
     const swap = (key, type, freq, dest) => {
-      // TOUS les oscillateurs encore vivants de cette modulation s'arrêtent
-      // à « at » — celui qui tourne ET un éventuel remplaçant pas encore
-      // parti (sinon deux LFO s'additionnaient : gate à 150 %)
+      // ALL still-running oscillators of this modulation stop
+      // at "at" — the running one AND any replacement that hasn't
+      // started yet (otherwise two LFOs added up: gate at 150 %)
       const list = this._oscList[key] || (this._oscList[key] = [this[key]]);
       for (const old of list) {
-        try { old.stop(at); } catch { /* déjà arrêté */ }
-        old.onended = () => { try { old.disconnect(); } catch { /* rien */ } };
+        try { old.stop(at); } catch { /* already stopped */ }
+        old.onended = () => { try { old.disconnect(); } catch { /* nothing */ } };
       }
       const o = this.ctx.createOscillator();
       o.type = type;
@@ -1389,7 +1389,7 @@ export class FxUnit {
     return true;
   }
 
-  // Période de modulation en TEMPS (pour choisir où redémarrer)
+  // Modulation period in BEATS (to choose where to restart)
   modPeriodBeats() {
     const m = this.beatsMult;
     switch (this.type) {
@@ -1407,8 +1407,8 @@ export class FxUnit {
   }
 
   setBeatDur(sec) {
-    // seuil 0,05 % (et non 2 ms ≈ 0,5 %) : un écho calé sur un tempo faux
-    // d'un demi-pourcent se décale à chaque répétition
+    // 0.05 % threshold (not 2 ms ≈ 0.5 %): an echo locked to a tempo that is
+    // off by half a percent drifts with every repeat
     if (Math.abs(sec - this.beatDur) < this.beatDur * 0.0005) return;
     this.beatDur = sec;
     this._applyTime();
@@ -1417,12 +1417,12 @@ export class FxUnit {
   _applyTime() {
     const now = this.ctx.currentTime;
     const t = clamp(this.beatDur * this.beatsMult, 0.02, 3.9);
-    // Seules les lignes RÉELLEMENT construites (les autres naîtront à
-    // l'heure) — au passage : 1 à 3 événements AudioParam au lieu de 13
+    // Only the lines ACTUALLY built (the others will be born in
+    // time) — and incidentally: 1 to 3 AudioParam events instead of 13
     for (const d of this._delays) d.delayTime.setTargetAtTime(t, now, 0.08);
-    // La gate coupe/ouvre à chaque intervalle choisi
+    // The gate closes/opens at each chosen interval
     this.trOsc.frequency.setTargetAtTime(clamp(1 / t, 0.25, 24), now, 0.05);
-    // Les modulations suivent le tempo
+    // The modulations follow the tempo
     this.flLfo.frequency.setTargetAtTime(clamp(0.125 / t, 0.05, 4), now, 0.1);
     this.phLfo.frequency.setTargetAtTime(clamp(0.25 / t, 0.05, 6), now, 0.1);
     this.panLfo.frequency.setTargetAtTime(clamp(0.5 / t, 0.05, 8), now, 0.1);
@@ -1437,7 +1437,7 @@ export class AudioEngine {
     this.masterGain = this.ctx.createGain();
     this.masterGain.gain.value = 0.9;
 
-    // Limiteur de sécurité sur le master
+    // Safety limiter on the master
     this.limiter = this.ctx.createDynamicsCompressor();
     this.limiter.threshold.value = -3;
     this.limiter.knee.value = 0;
@@ -1445,7 +1445,7 @@ export class AudioEngine {
     this.limiter.attack.value = 0.002;
     this.limiter.release.value = 0.15;
 
-    // Bus post-mix : master -> (retours FX/color) -> FILTRE MASTER -> limiteur
+    // Post-mix bus: master -> (FX/color returns) -> MASTER FILTER -> limiter
     this.postBus = this.ctx.createGain();
     this.mFilter = this.ctx.createBiquadFilter();
     this.mFilter.type = 'peaking';
@@ -1453,51 +1453,51 @@ export class AudioEngine {
     this.mFilter.frequency.value = 1000;
     this.mFilter.Q.value = 0.9;
     this.masterFilterVal = 0;
-    // Chemin SEC compensé : quand un FX est actif, ce gain baisse d'autant
-    // (calibration façon rekordbox — le wet se fond DANS le mix au lieu de
-    // s'empiler par-dessus et de dépasser le niveau du master)
+    // Compensated DRY path: when an FX is active, this gain goes down by as much
+    // (rekordbox-style calibration — the wet blends INTO the mix instead of
+    // stacking on top and exceeding the master level)
     this.dryComp = this.ctx.createGain();
     this.masterGain.connect(this.dryComp);
     this.dryComp.connect(this.postBus);
-    // RETOURS FX (unités du panneau, pads FX, Color FX) : ils suivent le
-    // VOLUME MASTER comme le son sec — un effet d'insertion à fond coupe le
-    // sec, et sans ce gain le knob master n'avait plus prise sur ce deck
+    // FX RETURNS (panel units, FX pads, Color FX): they follow the
+    // MASTER VOLUME like the dry sound — an insert effect at full cuts the
+    // dry, and without this gain the master knob had no control over that deck anymore
     this.fxReturn = this.ctx.createGain();
     this.fxReturn.gain.value = 0.9;
     this.fxReturn.connect(this.postBus);
     this.postBus.connect(this.mFilter);
     this.mFilter.connect(this.limiter);
-    // --- PRÉ-ÉCOUTE CASQUE : la platine est une CARTE SON 4 CANAUX
-    // (master sur 1/2, casque sur 3/4). Si la sortie l'offre, le bus CUE
-    // part vers les canaux 3/4 — la sortie casque physique de la FLX6.
+    // --- HEADPHONE CUE: the controller is a 4-CHANNEL SOUND CARD
+    // (master on 1/2, headphones on 3/4). If the output offers it, the CUE bus
+    // goes to channels 3/4 — the FLX6's physical headphone output.
     this.cueBus = this.ctx.createGain();
     this._wireOutput();
 
-    // VU-mètre du MASTER (pris avant le limiteur : la LED rouge dit
-    // « ça sature, le limiteur travaille »)
+    // MASTER VU meter (taken before the limiter: the red LED says
+    // "it's clipping, the limiter is working")
     this.masterVolume = 0.9;
     this.masterAnalyser = this.ctx.createAnalyser();
     this.masterAnalyser.fftSize = 512;
     this.mFilter.connect(this.masterAnalyser);
     this.masterMeterBuf = new Float32Array(this.masterAnalyser.fftSize);
 
-    // Sortie parallèle pour l'enregistrement du mix (MediaRecorder)
+    // Parallel output for recording the mix (MediaRecorder)
     this.recDest = this.ctx.createMediaStreamDestination();
     this.limiter.connect(this.recDest);
 
     this.decks = [0, 1, 2, 3].map(i => new Deck(this.ctx, this.masterGain, i));
-    // Le master change de tempo (fader, + / −, platine…) : les decks syncés
-    // suivent dans la MÊME image, pas à la suivante — sinon chaque cran
-    // laissait un petit décalage (« tout ne se fait pas en même temps »)
+    // The master changes tempo (fader, + / −, controller…): the synced decks
+    // follow in the SAME frame, not the next one — otherwise each step
+    // left a small offset ("not everything happens at the same time")
     this.decks.forEach((d, i) => { d._onTempo = () => this._followMaster(i); });
-    // Envois casque de chaque deck vers le bus CUE
+    // Headphone sends from each deck to the CUE bus
     this.decks.forEach((d) => d.cueSend.connect(this.cueBus));
     this._loadPitchWorklet();
 
-    // 4 unités FX (une par joueur), chacune assignable à n'importe quel(s)
-    // deck(s) : matrice d'envois 4 unités × 4 decks
+    // 4 FX units (one per player), each assignable to any
+    // deck(s): send matrix of 4 units × 4 decks
     this.fx = [0, 1, 2, 3].map(() => new FxUnit(this.ctx, this.fxReturn));
-    // fxAssign[u][i] : l'unité u traite le deck i (par défaut : son propre deck)
+    // fxAssign[u][i]: unit u processes deck i (default: its own deck)
     this.fxAssign = [0, 1, 2, 3].map((u) => [0, 1, 2, 3].map((i) => i === u));
     this.decks.forEach((d) => {
       d.fxSends = this.fx.map((unit) => {
@@ -1509,22 +1509,22 @@ export class AudioEngine {
       });
     });
 
-    // Unités PAD FX : une par deck, INDÉPENDANTES des 4 unités du panneau —
-    // un pad maintenu n'écrit JAMAIS dans la config FX du joueur. Créées À
-    // LA DEMANDE (premier appui) : zéro nœud audio tant qu'on ne s'en sert
-    // pas — le logiciel doit rester léger même sur une vieille machine
+    // PAD FX units: one per deck, INDEPENDENT of the 4 panel units —
+    // a held pad NEVER writes into the player's FX config. Created ON
+    // DEMAND (first press): zero audio nodes as long as they are not
+    // used — the software must stay light even on an old machine
     this.padFx = [null, null, null, null];
 
-    // Color FX : ce que fait le knob FILTER de chaque tranche
-    // ('filter' = biquad classique, sinon envoi vers un effet partagé)
+    // Color FX: what each channel's FILTER knob does
+    // ('filter' = classic biquad, otherwise a send to a shared effect)
     this.colorType = 'filter';
     this.colorEnabled = true;
     this.colorWet = this.ctx.createGain();
-    this.colorWet.gain.value = 0.85; // plafonné pour ne pas dépasser le niveau du morceau
+    this.colorWet.gain.value = 0.85; // capped so as not to exceed the track's level
     this.colorWet.connect(this.fxReturn);
     this.colorBus = this.ctx.createGain();
-    // Chaînes Color FX bâties AU PREMIER ROUTAGE (5 × ~1 Mo de tampon de
-    // délai réservés pour rien au démarrage — voir _colorChain)
+    // Color FX chains built ON FIRST ROUTING (5 × ~1 MB of delay buffer
+    // reserved for nothing at startup — see _colorChain)
     this._colorDefs = {
       dubecho: { fb: 0.55, filter: { type: 'highpass', freq: 250 }, time: 0.35 },
       hpfecho: { fb: 0.5, filter: { type: 'highpass', freq: 900 }, time: 0.3 },
@@ -1538,7 +1538,7 @@ export class AudioEngine {
     this.cCrush = this.ctx.createWaveShaper();
     this.cCrush.curve = crushCurve(5);
 
-    // Source de bruit blanc partagée (Color FX « Noise »)
+    // Shared white noise source (Color FX "Noise")
     const nb = this.ctx.createBuffer(1, this.ctx.sampleRate * 2, this.ctx.sampleRate);
     const nd = nb.getChannelData(0);
     for (let i = 0; i < nd.length; i++) nd[i] = Math.random() * 2 - 1;
@@ -1553,7 +1553,7 @@ export class AudioEngine {
       d.colorSend.gain.value = 0;
       d.filter.connect(d.colorSend);
       d.colorSend.connect(this.colorBus);
-      // Bruit blanc dosé par le knob, qui suit le fader du deck
+      // White noise dosed by the knob, which follows the deck's fader
       d.noiseGain = this.ctx.createGain();
       d.noiseGain.gain.value = 0;
       this.noiseSrc.connect(d.noiseGain);
@@ -1561,20 +1561,20 @@ export class AudioEngine {
     });
     this._routeColor();
 
-    // Decks 1 & 3 -> côté A, decks 2 & 4 -> côté B (comme Rekordbox en 4 decks)
+    // Decks 1 & 3 -> side A, decks 2 & 4 -> side B (like Rekordbox in 4-deck mode)
     this.xfSides = ['A', 'B', 'A', 'B'];
     this.crossfader = 0.5;
-    this.masterIdx = null;     // master choisi à la main (bouton MASTER)
-    this.autoMasterIdx = null; // master automatique (règle du premier lancé)
+    this.masterIdx = null;     // master chosen by hand (MASTER button)
+    this.autoMasterIdx = null; // automatic master (first-started rule)
     this.applyCrossfader();
   }
 
-  // FX MASTER : une unité sur le MIX ENTIER (position MASTER du channel
-  // select des platines). Créée à la demande, branchée en parallèle comme
-  // les FX de deck : masterGain → send → unité → postBus (wet par-dessus)
-  // Moteur de transposition WSOLA (KEY ± et KEYLOCK) : un nœud par deck,
-  // chargé en tâche de fond. S'il échoue, chaque deck garde son ancien
-  // décalage à deux prises — le logiciel reste utilisable dans tous les cas.
+  // MASTER FX: a unit on the WHOLE MIX (MASTER position of the controllers'
+  // channel select). Created on demand, wired in parallel like
+  // the deck FX: masterGain → send → unit → postBus (wet on top)
+  // WSOLA transposition engine (KEY ± and KEYLOCK): one node per deck,
+  // loaded in the background. If it fails, each deck keeps its old
+  // two-tap shifter — the software stays usable in every case.
   async _loadPitchWorklet() {
     try {
       await this.ctx.audioWorklet.addModule(new URL('./pitch-worklet.js', import.meta.url));
@@ -1586,12 +1586,12 @@ export class AudioEngine {
           channelCount: 2,
           channelCountMode: 'explicit'
         });
-        // Branché EN PERMANENCE en parallèle du chemin direct : seul le gain
-        // de sortie (wsOut) décide de ce qu'on entend
+        // Connected PERMANENTLY in parallel with the direct path: only the output
+        // gain (wsOut) decides what is heard
         d.preIn.connect(node);
         node.connect(d.wsOut);
-        // Latence FIXE du moteur (annoncée par lui ; valeur connue d'avance
-        // pour ne pas dépendre de l'arrivée du message)
+        // FIXED latency of the engine (announced by it; value known in advance
+        // so as not to depend on the message arriving)
         d.wsLat = WS_LAT_SAMPLES / this.ctx.sampleRate;
         node.port.onmessage = (e) => {
           if (e.data && e.data.lat) {
@@ -1600,26 +1600,26 @@ export class AudioEngine {
           }
         };
         d.wsola = node;
-        d._applyPitch(); // re-route si une tonalité était déjà posée
+        d._applyPitch(); // re-route if a key was already set
       });
-      console.log('[midi] transposition : moteur WSOLA actif (keylock disponible)');
+      console.log('[midi] transposition: WSOLA engine active (keylock available)');
     } catch (e) {
-      console.log(`[midi] transposition : moteur de secours (${String(e.message || e)})`);
+      console.log(`[midi] transposition: fallback engine (${String(e.message || e)})`);
     }
   }
 
-  // Câblage de la sortie : 4 canaux si le périphérique le permet
-  // (master → 1/2, casque → 3/4), sinon stéréo simple. À RAPPELER après
-  // tout setSinkId (le nombre de canaux dépend du périphérique).
+  // Output wiring: 4 channels if the device allows it
+  // (master → 1/2, headphones → 3/4), otherwise plain stereo. MUST BE CALLED AGAIN after
+  // every setSinkId (the channel count depends on the device).
   _wireOutput() {
     const dest = this.ctx.destination;
-    try { this.limiter.disconnect(); } catch { /* pas encore branché */ }
-    try { this.cueBus.disconnect(); } catch { /* idem */ }
-    // (le limiteur alimente aussi l'enregistreur : on le rebranche)
+    try { this.limiter.disconnect(); } catch { /* not connected yet */ }
+    try { this.cueBus.disconnect(); } catch { /* same */ }
+    // (the limiter also feeds the recorder: reconnect it)
     if (this.recDest) this.limiter.connect(this.recDest);
     if (this.phonesCtx && this._phonesStream) {
-      // CASQUE SUR UNE AUTRE CARTE (la platine) : le master sort seul ici,
-      // en stéréo — plus rien sur les canaux 3/4 de la sortie master
+      // HEADPHONES ON ANOTHER CARD (the controller): only the master goes out here,
+      // in stereo — nothing on channels 3/4 of the master output anymore
       this.cueBus.connect(this._phonesStream);
       dest.channelCount = Math.min(2, dest.maxChannelCount || 2);
       dest.channelCountMode = 'explicit';
@@ -1643,20 +1643,20 @@ export class AudioEngine {
       cs.connect(merger, 1, 3);
       merger.connect(dest);
       this.phonesOk = true;
-      console.log('[midi] audio : sortie 4 canaux — casque actif (canaux 3/4)');
+      console.log('[midi] audio: 4-channel output — headphones active (channels 3/4)');
     } else {
       this.limiter.connect(dest);
       this.phonesOk = false;
-      console.log(`[midi] audio : sortie ${dest.maxChannelCount} canaux — pas de casque séparé`);
+      console.log(`[midi] audio: ${dest.maxChannelCount}-channel output — no separate headphones`);
     }
   }
 
-  // SORTIE CASQUE SÉPARÉE. Le master peut sortir sur une carte (Scarlett,
-  // haut-parleurs du PC…) et le casque sur la PLATINE : la FLX6 est une
-  // carte son 4 canaux dont la prise casque lit les canaux 3/4. Avant, le
-  // bus CUE partait sur les canaux 3/4 de la sortie MASTER — donc sur la
-  // Scarlett, jamais dans le casque branché à la platine.
-  // deviceId vide = pas de carte casque séparée (canaux 3/4 du master).
+  // SEPARATE HEADPHONE OUTPUT. The master can go out on one card (Scarlett,
+  // PC speakers…) and the headphones on the CONTROLLER: the FLX6 is a
+  // 4-channel sound card whose headphone jack reads channels 3/4. Before, the
+  // CUE bus went to channels 3/4 of the MASTER output — so to the
+  // Scarlett, never to the headphones plugged into the controller.
+  // empty deviceId = no separate headphone card (channels 3/4 of the master).
   async setPhonesDevice(deviceId) {
     const id = deviceId || '';
     if (id === (this.phonesDevice || '') && (!id || this.phonesCtx)) return true;
@@ -1677,7 +1677,7 @@ export class AudioEngine {
       const src = pc.createMediaStreamSource(this._phonesStream.stream);
       const dest = pc.destination;
       if (dest.maxChannelCount >= 4) {
-        // carte 4 canaux (contrôleur DJ) : le casque = canaux 3/4
+        // 4-channel card (DJ controller): headphones = channels 3/4
         dest.channelCount = 4;
         dest.channelCountMode = 'explicit';
         dest.channelInterpretation = 'discrete';
@@ -1688,16 +1688,16 @@ export class AudioEngine {
         sp.connect(mg, 1, 3);
         mg.connect(dest);
       } else {
-        // simple carte stéréo dédiée au casque
+        // plain stereo card dedicated to the headphones
         src.connect(dest);
       }
       pc.resume().catch(() => {});
       this.phonesCtx = pc;
       this._wireOutput();
-      console.log(`[midi] audio : casque sur une carte séparée (${dest.maxChannelCount} canaux)`);
+      console.log(`[midi] audio: headphones on a separate card (${dest.maxChannelCount} channels)`);
       return true;
     } catch (e) {
-      console.log(`[midi] audio : carte casque indisponible (${String(e.message || e)})`);
+      console.log(`[midi] audio: headphone card unavailable (${String(e.message || e)})`);
       this.phonesDevice = '';
       this.phonesCtx = null;
       this._wireOutput();
@@ -1705,7 +1705,7 @@ export class AudioEngine {
     }
   }
 
-  // Bouton CUE casque d'une tranche : envoie/coupe le deck dans le casque
+  // A channel's headphone CUE button: sends/cuts the deck in the headphones
   setCuePfl(i, on) {
     const d = this.decks[i];
     d.cueOn = !!on;
@@ -1723,7 +1723,7 @@ export class AudioEngine {
     return this.masterFx;
   }
 
-  // PAD FX : preset {type, beats, level} = effet actif sur le deck, null = coupé
+  // PAD FX: preset {type, beats, level} = effect active on the deck, null = off
   setPadFx(i, preset) {
     const d = this.decks[i];
     if (!this.padFx[i]) {
@@ -1758,14 +1758,14 @@ export class AudioEngine {
     });
   }
 
-  // Volume MASTER : le niveau de tout le mix assemblé
+  // MASTER volume: the level of the whole assembled mix
   setMasterVolume(v) {
     this.masterVolume = clamp(v, 0, 1);
     this.masterGain.gain.setTargetAtTime(this.masterVolume, this.ctx.currentTime, 0.01);
     this.fxReturn.gain.setTargetAtTime(this.masterVolume, this.ctx.currentTime, 0.01);
   }
 
-  // Niveau crête du mix assemblé (avant limiteur)
+  // Peak level of the assembled mix (before the limiter)
   masterPeak() {
     this.masterAnalyser.getFloatTimeDomainData(this.masterMeterBuf);
     let m = 0;
@@ -1776,7 +1776,7 @@ export class AudioEngine {
     return m;
   }
 
-  // Filtre MASTER : agit sur tout le mix (les 4 pistes en même temps)
+  // MASTER filter: acts on the whole mix (all 4 tracks at once)
   setMasterFilter(v) {
     v = clamp(v, -1, 1);
     this.masterFilterVal = v;
@@ -1796,11 +1796,11 @@ export class AudioEngine {
     }
   }
 
-  // --- Color FX : mode du knob FILTER de chaque tranche ---
+  // --- Color FX: mode of each channel's FILTER knob ---
   _routeColor() {
-    try { this.colorBus.disconnect(); } catch { /* rien */ }
+    try { this.colorBus.disconnect(); } catch { /* nothing */ }
     if (this._colorOut) {
-      try { this._colorOut.disconnect(this.colorWet); } catch { /* rien */ }
+      try { this._colorOut.disconnect(this.colorWet); } catch { /* nothing */ }
       this._colorOut = null;
     }
     let io = null;
@@ -1816,7 +1816,7 @@ export class AudioEngine {
     } else if (this.colorType === 'crush') {
       io = [this.cCrush, this.cCrush];
     }
-    // 'filter' et 'noise' : pas de bus (biquad du deck / gain de bruit par deck)
+    // 'filter' and 'noise': no bus (deck biquad / per-deck noise gain)
     if (io) {
       this.colorBus.connect(io[0]);
       io[1].connect(this.colorWet);
@@ -1827,11 +1827,11 @@ export class AudioEngine {
   setColorType(t) {
     this.colorType = t;
     this._routeColor();
-    // Réapplique la valeur de chaque knob dans le nouveau mode
+    // Re-apply each knob's value in the new mode
     this.decks.forEach((_, i) => this.setDeckColor(i, this.decks[i].filterVal));
   }
 
-  // ON/OFF global : quand c'est OFF, tourner un knob FILTER n'a aucun effet
+  // Global ON/OFF: when OFF, turning a FILTER knob has no effect
   setColorEnabled(b) {
     this.colorEnabled = b;
     this.decks.forEach((_, i) => this.setDeckColor(i, this.decks[i].filterVal));
@@ -1874,7 +1874,7 @@ export class AudioEngine {
 
   applyCrossfader() {
     const x = this.crossfader;
-    // Courbe "mix" : les deux côtés à fond au centre
+    // "Mix" curve: both sides at full in the center
     const gA = x <= 0.5 ? 1 : (1 - x) * 2;
     const gB = x >= 0.5 ? 1 : x * 2;
     this.decks.forEach((d, i) => {
@@ -1887,13 +1887,13 @@ export class AudioEngine {
     this.masterIdx = this.masterIdx === i ? null : i;
   }
 
-  // Règle du MASTER automatique (spec David) : le PREMIER son lancé devient
-  // le master ; il LE RESTE tant qu'il joue ; quand il s'arrête, le master
-  // passe au son qui a les BASSES ACTIVES (non coupées), sinon au premier
-  // qui joue. Appelée à chaque frame.
-  // LE SON QUI A LES BASSES : parmi les decks qui jouent, celui dont les
-  // basses sont ouvertes ET qu'on entend (volume, crossfader). C'est lui qui
-  // porte le mix : c'est lui qui doit diriger le tempo.
+  // AUTOMATIC MASTER rule (David's spec): the FIRST sound started becomes
+  // the master; it STAYS master as long as it plays; when it stops, the master
+  // goes to the sound with ACTIVE BASS (not cut), otherwise to the first one
+  // playing. Called every frame.
+  // THE SOUND WITH THE BASS: among the playing decks, the one whose
+  // bass is open AND that is heard (volume, crossfader). It is the one
+  // carrying the mix: it is the one that must drive the tempo.
   _pickBassDeck(excl) {
     let best = null;
     let bestScore = -1;
@@ -1904,7 +1904,7 @@ export class AudioEngine {
         : (this.crossfader >= 0.5 ? 1 : this.crossfader * 2);
       const heard = (d.volume || 0) * side;
       const bass = d.eq.low > -0.9 ? 1 + d.eq.low : 0;
-      // basses ouvertes d'abord (×10), puis le plus audible
+      // open bass first (×10), then the most audible
       const score = (bass > 0 ? 10 + bass : 0) + heard;
       if (score > bestScore) { bestScore = score; best = j; }
     });
@@ -1912,10 +1912,10 @@ export class AudioEngine {
   }
 
   _updateAutoMaster() {
-    // MASTER CHOISI À LA MAIN dont le son est FINI (ou arrêté) : il passe
-    // au son qui a les basses — avant, il restait collé à un deck muet et
-    // plus personne ne tenait le tempo. Fin naturelle = tout de suite ;
-    // arrêt à la main = après 1,2 s (un cut rapide ne fait rien).
+    // MASTER CHOSEN BY HAND whose sound has ENDED (or stopped): it goes
+    // to the sound with the bass — before, it stayed stuck on a silent deck and
+    // nobody held the tempo anymore. Natural end = immediately;
+    // manual stop = after 1.2 s (a quick cut does nothing).
     if (this.masterIdx !== null) {
       const mm = this.decks[this.masterIdx];
       const nowS = performance.now() / 1000;
@@ -1928,7 +1928,7 @@ export class AudioEngine {
         if (ended || nowS - this._mmStopAt >= 1.2) {
           const j = this._pickBassDeck(this.masterIdx);
           if (j != null) {
-            this.masterIdx = j;      // le bouton MASTER s'allume sur le nouveau
+            this.masterIdx = j;      // the MASTER button lights up on the new one
             this.autoMasterIdx = j;
           }
           this._mmStopAt = 0;
@@ -1938,16 +1938,16 @@ export class AudioEngine {
     const am = this.autoMasterIdx != null ? this.decks[this.autoMasterIdx] : null;
     if (am && am.playing) {
       this._amStopAt = 0;
-      return; // le master reste le master tant qu'il joue
+      return; // the master stays master as long as it plays
     }
-    // TOLÉRANCE DE CUT : un master arrêté un court instant (cut rapide au
-    // play/pause) GARDE sa couronne 1,2 s — le master ne doit JAMAIS
-    // basculer sur un simple cut (la bascule re-syncait les autres decks
-    // et « foutait en l'air » leur BPM). Une vraie fin de son dépasse la
-    // grâce et la passation se fait — désormais sans aucun saut (syncLock).
+    // CUT TOLERANCE: a master stopped for a brief moment (quick cut with
+    // play/pause) KEEPS its crown for 1.2 s — the master must NEVER
+    // switch on a mere cut (the switch re-synced the other decks
+    // and "messed up" their BPM). A real end of the sound outlasts the
+    // grace period and the handover happens — now without any jump (syncLock).
     if (am) {
       const nowS = performance.now() / 1000;
-      // son FINI (pas un cut) : passation immédiate, sans attendre la grâce
+      // sound ENDED (not a cut): immediate handover, without waiting for the grace period
       const ended = am._endedAt && nowS - am._endedAt < 2;
       if (!ended) {
         if (!this._amStopAt) {
@@ -1978,16 +1978,16 @@ export class AudioEngine {
       const m = this.decks[this.autoMasterIdx];
       if (m.bpm && m.playing) return m;
     }
-    // Repli : on prend en PRIORITÉ un deck NON SYNCÉ. Sinon, avec 3 sons,
-    // deux esclaves pouvaient se choisir mutuellement comme référence et se
-    // poursuivre l'un l'autre — le BPM ne se posait jamais.
+    // Fallback: a NON-SYNCED deck takes PRIORITY. Otherwise, with 3 sounds,
+    // two slaves could pick each other as reference and
+    // chase each other — the BPM never settled.
     return this.decks.find((d, j) => j !== excludeIdx && d.playing && d.bpm && !d.synced)
       || this.decks.find((d, j) => j !== excludeIdx && d.playing && d.bpm)
       || null;
   }
 
-  // Phase d'un deck sur sa grille (0..1 dans le temps courant).
-  // Grille dynamique si disponible : la phase suit les VRAIS temps du morceau.
+  // Phase of a deck on its grid (0..1 within the current beat).
+  // Dynamic grid if available: the phase follows the track's REAL beats.
   _beatPhase(d) {
     if (d.beats) {
       const f = gridIndexFracAt(d, d.currentTime());
@@ -1998,7 +1998,7 @@ export class AudioEngine {
     return b - Math.floor(b);
   }
 
-  // Phase dans la MESURE (0..1 sur 4 temps) — pour aligner les traits rouges
+  // Phase within the BAR (0..1 over 4 beats) — to align the red lines
   _barPhase(d) {
     if (d.beats) {
       const f = (gridIndexFracAt(d, d.currentTime()) - (d.barAnchor || 0)) / 4;
@@ -2009,17 +2009,17 @@ export class AudioEngine {
     return b - Math.floor(b);
   }
 
-  // Période locale (durée du temps courant) en secondes de fichier
+  // Local period (duration of the current beat) in file seconds
   _period(d) {
     return gridPeriodAt(d, d.currentTime()) || (d.bpm ? 60 / d.bpm : null);
   }
 
-  // Vrai beat sync : cale le tempo EXACTEMENT sur le master, puis aligne la
-  // phase (les temps tombent ensemble — les mesures ont la même taille ET
-  // défilent en même temps). Retourne true si réussi.
-  // Période MOYENNE du temps autour de la position courante (16 temps de
-  // la grille dynamique) : bien plus juste que le BPM global arrondi, et
-  // insensible au bruit d'un temps isolé (± 2 ms d'attaque).
+  // True beat sync: sets the tempo EXACTLY to the master's, then aligns the
+  // phase (the beats fall together — the bars have the same size AND
+  // scroll at the same time). Returns true on success.
+  // AVERAGE beat period around the current position (16 beats of
+  // the dynamic grid): far more accurate than the rounded global BPM, and
+  // insensitive to the noise of a single beat (± 2 ms of attack).
   _localPeriod(d) {
     if (d.beats && d.beats.length > 4) {
       const f = gridIndexFracAt(d, d.currentTime());
@@ -2032,17 +2032,17 @@ export class AudioEngine {
     return d.bpm ? 60 / d.bpm : null;
   }
 
-  // Ratio de tempo qui donne au deck d EXACTEMENT la vitesse de battement
-  // du master m (correction de servo du master retirée).
+  // Tempo ratio that gives deck d EXACTLY the beat speed
+  // of master m (with the master's servo correction removed).
   _syncRatio(d, m) {
     const mBase = m.tempo / (1 + (m._pllCorr || 0));
     const pd = this._localPeriod(d);
     const pm = this._localPeriod(m);
     let ratio = pd && pm ? (mBase * pd) / pm : (m.bpm * mBase) / d.bpm;
-    // Un son syncé vise TOUJOURS le BPM effectif du master — jamais son
-    // double (David : « un 3e son que je sync se met à 2× le BPM ! »).
-    // L'octave ne saute que si le tempo sortirait des limites physiques
-    // du moteur [0.5 ; 1.6].
+    // A synced sound ALWAYS targets the master's effective BPM — never its
+    // double (David: "a 3rd sound I sync goes to 2× the BPM!").
+    // The octave only jumps if the tempo would go outside the engine's physical
+    // limits [0.5; 1.6].
     while (ratio > 1.6) ratio /= 2;
     while (ratio < 0.5) ratio *= 2;
     return ratio;
@@ -2055,15 +2055,15 @@ export class AudioEngine {
     if (!m || !m.bpm) return false;
     const ratio = this._syncRatio(d, m);
     d.setTempo(ratio);
-    d._syncBase = d.tempo; // référence pour le verrouillage continu
-    d._syncRef = d.tempo;  // ancre de sécurité de l'APPRENTISSAGE de ratio
-    d._phaseFree = false;  // SYNC demandé = le recollage de phase reprend
+    d._syncBase = d.tempo; // reference for the continuous lock
+    d._syncRef = d.tempo;  // safety anchor for ratio LEARNING
+    d._phaseFree = false;  // SYNC requested = phase re-locking resumes
 
-    // Alignement sur la MESURE : décale le deck pour que ses traits rouges
-    // (débuts de mesure) coïncident avec ceux du master. Sur grille
-    // dynamique, la cible est calculée en INDEX DE TEMPS puis reconvertie
-    // en position : exact même si la mesure à franchir n'a pas des temps
-    // parfaitement réguliers.
+    // BAR alignment: shifts the deck so that its red lines
+    // (bar starts) coincide with the master's. On a dynamic
+    // grid, the target is computed as a BEAT INDEX then converted back
+    // to a position: exact even if the bar to cross doesn't have perfectly
+    // regular beats.
     const pm = this._barPhase(m);
     const pd = this._barPhase(d);
     if (pm != null && pd != null) {
@@ -2080,26 +2080,26 @@ export class AudioEngine {
       d.seek(target);
     }
     d.synced = true;
-    d._syncPhaseOff = 0; // SYNC = retour à l'alignement grille sur grille
-    d._ratioCal = false; // calibration au prochain frame…
+    d._syncPhaseOff = 0; // SYNC = back to grid-on-grid alignment
+    d._ratioCal = false; // calibration on the next frame…
     d._ratioMeas = null;
     d._ratioTries = 0;
     d._errFilt = 0;
     d._pllCorr = 0;
     d._lastWant = null;
-    // …directement à l'étage FIN (8 s) quand le ratio vient de la grille
-    // dynamique : il est déjà juste à ~0,05 %, une mesure d'1 s (±0,2 %)
-    // ne ferait que le dégrader
+    // …straight to the FINE stage (8 s) when the ratio comes from the dynamic
+    // grid: it is already accurate to ~0.05 %, a 1 s measurement (±0.2 %)
+    // would only degrade it
     d._ratioPasses = d.beats && m.beats ? 1 : 0;
     return true;
   }
 
-  // Ré-ancre le verrouillage continu sur l'alignement ACTUEL : après un
-  // décalage manuel au jog, le calage automatique garde l'alignement choisi
-  // à l'oreille au lieu de le défaire.
+  // Re-anchors the continuous lock on the CURRENT alignment: after a
+  // manual jog offset, the automatic alignment keeps the alignment chosen
+  // by ear instead of undoing it.
   reanchorSync(i) {
     const d = this.decks[i];
-    // le MASTER est la référence : on ne l'ancre jamais contre un esclave
+    // the MASTER is the reference: it is never anchored against a slave
     const mi = this.masterIdx !== null ? this.masterIdx : this.autoMasterIdx;
     if (i === mi) return;
     if (!d.synced || !d.playing) return;
@@ -2111,35 +2111,35 @@ export class AudioEngine {
     let err = pm - pd;
     if (err > 0.5) err -= 1;
     if (err < -0.5) err += 1;
-    // AIMANT VISUEL : un calage à l'oreille laisse toujours un micro-résidu
-    // (± quelques ms) — inaudible, mais VISIBLE au zoom (« censés être
-    // alignés mais ça ne l'est pas »). En-dessous de 0,03 temps (~12 ms),
-    // l'intention est CLAIREMENT « aligné » : on vise l'alignement EXACT.
-    // Un décalage volontaire plus grand reste respecté tel quel.
+    // VISUAL MAGNET: aligning by ear always leaves a micro-residue
+    // (± a few ms) — inaudible, but VISIBLE when zoomed in ("supposed to be
+    // aligned but it isn't"). Below 0.03 beat (~12 ms),
+    // the intent is CLEARLY "aligned": aim for EXACT alignment.
+    // A larger deliberate offset is respected as is.
     if (Math.abs(err) < 0.03) err = 0;
     d._syncPhaseOff = err;
     d._errFilt = 0;
-    // Une mesure de calibration en cours est FAUSSÉE par le geste manuel
-    // (le déplacement serait pris pour une dérive de ratio) : on la jette —
-    // la calibration DÉJÀ acquise (_ratioCal), elle, est conservée
+    // A calibration measurement in progress is CORRUPTED by the manual gesture
+    // (the movement would be taken for a ratio drift): discard it —
+    // the calibration ALREADY acquired (_ratioCal) is kept
     d._ratioMeas = null;
-    // PLACEMENT MANUEL = PAROLE D'ÉVANGILE : plus AUCUNE poursuite de phase
-    // ensuite (« les tracks ne doivent plus bouger une fois que je déplace »).
-    // Le deck garde le bon TEMPO, c'est tout. SYNC ou un nouveau morceau
-    // réactivent le recollage.
+    // MANUAL PLACEMENT = GOSPEL: NO phase chasing at ALL
+    // afterwards ("the tracks must not move anymore once I move them").
+    // The deck keeps the right TEMPO, that's all. SYNC or a new track
+    // re-enable the re-locking.
     d._phaseFree = true;
   }
 
-  // Recale le deck i après un scratch à la main :
-  // - si un AUTRE deck est en train de JOUER, on aligne la phase sur lui
-  //   (beatmatching) ;
-  // - sinon, on cale sur la PROPRE grille du morceau (segment ou micro-segment
-  //   le plus proche) : posé sur un trait rouge, il y reste exactement.
-  // AIMANT DISCRET (0,06 temps ≈ 25 ms) : il ne « termine » que les
-  // lâchers déjà presque alignés — un placement volontairement décalé ou
-  // un déplacement GROSSIER dans le son reste EXACTEMENT où le DJ l'a mis
-  // (« on aimerait pouvoir déplacer grossièrement et faire des mouvements
-  // rapides » — l'ancien 0,2 temps ravalait les placements sur les traits)
+  // Re-aligns deck i after a manual scratch:
+  // - if ANOTHER deck is PLAYING, align the phase to it
+  //   (beatmatching);
+  // - otherwise, lock to the track's OWN grid (nearest segment or
+  //   micro-segment): placed on a red line, it stays there exactly.
+  // DISCREET MAGNET (0.06 beat ≈ 25 ms): it only "finishes"
+  // releases that are already almost aligned — a deliberately offset placement or
+  // a ROUGH move within the track stays EXACTLY where the DJ put it
+  // ("we'd like to be able to move things roughly and make quick
+  // moves" — the old 0.2 beat swallowed placements back onto the lines)
   snapToRef(i, maxErr = 0.06) {
     const d = this.decks[i];
     if (!d.buffer || !d.bpm || (d.beatOffset == null && !d.beats)) return false;
@@ -2151,10 +2151,10 @@ export class AudioEngine {
     }
     if (!m) m = this.decks.find((x, j) => j !== i && x.playing && hasGrid(x)) || null;
 
-    // Recalage UNIQUEMENT si un autre deck joue (beatmatching), et seulement
-    // en AIMANT : si on lâche presque aligné (< maxErr temps), on termine
-    // l'alignement traits sur traits ; si on lâche clairement ailleurs,
-    // c'est un déplacement volontaire — on ne touche à rien.
+    // Re-alignment ONLY if another deck is playing (beatmatching), and only
+    // as a MAGNET: if released almost aligned (< maxErr beats), finish
+    // the line-on-line alignment; if released clearly elsewhere,
+    // it is a deliberate move — touch nothing.
     if (!m) return false;
     const pm = this._beatPhase(m);
     const pd = this._beatPhase(d);
@@ -2168,7 +2168,7 @@ export class AudioEngine {
   }
 
   _followMaster(i) {
-    if (this._following) return; // (les suiveurs eux-mêmes ne relancent rien)
+    if (this._following) return; // (the followers themselves don't trigger anything)
     const mi = this.masterIdx !== null ? this.masterIdx : this.autoMasterIdx;
     if (i !== mi) return;
     const m = this.decks[i];
@@ -2196,8 +2196,8 @@ export class AudioEngine {
     }
   }
 
-  // Deck dont une unité FX suit le tempo : le premier deck assigné qui
-  // joue (sinon le master)
+  // Deck whose tempo an FX unit follows: the first assigned deck that
+  // is playing (otherwise the master)
   fxRefDeck(uIdx) {
     const a = this.fxAssign[uIdx];
     if (a) {
@@ -2208,8 +2208,8 @@ export class AudioEngine {
     return this.getMasterDeck(-1);
   }
 
-  // Instant AUDIO du prochain multiple de « periodBeats » sur la grille du
-  // deck (calé sur la mesure quand la période fait au moins un temps)
+  // AUDIO time of the next multiple of "periodBeats" on the deck's
+  // grid (locked to the bar when the period is at least one beat)
   nextBoundaryAt(d, periodBeats) {
     if (!d || !d.playing || !(periodBeats > 0)) return null;
     const pos = d.currentTime();
@@ -2224,8 +2224,8 @@ export class AudioEngine {
       return null;
     }
     if (f == null) return null;
-    // grille d'alignement : la période si elle est sous le temps, sinon la
-    // mesure (une modulation de 16 temps repart quand même sur une mesure)
+    // alignment grid: the period if it is shorter than a beat, otherwise the
+    // bar (a 16-beat modulation still restarts on a bar)
     const G = periodBeats < 1 ? periodBeats : Math.min(periodBeats, 4);
     const k = Math.ceil((f - anchor) / G + 1e-6) * G + anchor;
     const tFile = d.beats ? gridTimeAtIndex(d, k) : d.beatOffset + (k * 60) / d.bpm;
@@ -2234,8 +2234,8 @@ export class AudioEngine {
     return at > this.ctx.currentTime ? at : null;
   }
 
-  // À chaque image : modulations des FX recalées sur les temps, et ROLL
-  // (panneau FX ou pad) piloté sur les decks
+  // Every frame: FX modulations re-aligned to the beats, and ROLL
+  // (FX panel or pad) driven on the decks
   fxTick() {
     const units = [];
     this.fx.forEach((u, uIdx) => units.push([u, () => this.fxRefDeck(uIdx)]));
@@ -2257,8 +2257,8 @@ export class AudioEngine {
         u._alignRef = ref;
       }
     }
-    // ROLL : le pad tenu a priorité, sinon une unité ROLL du panneau
-    // assignée au deck (ou le FX master en ROLL)
+    // ROLL: the held pad has priority, otherwise a panel ROLL unit
+    // assigned to the deck (or the master FX in ROLL)
     this.decks.forEach((d, i) => {
       let want = d._padRoll || null;
       if (!want) {
@@ -2281,25 +2281,25 @@ export class AudioEngine {
     });
   }
 
-  // Verrouillage continu (à appeler à chaque frame) : tant qu'un deck est
-  // synchronisé, on corrige les micro-dérives pour que les temps restent
-  // collés à ceux du master, comme sur un vrai logiciel DJ.
-  // jogHold : pendant un décalage manuel au jog, le verrou est suspendu
-  // GLOBALEMENT — sinon les autres decks POURSUIVENT le deck qu'on décale
-  // (le fameux « ça se fight avec le calage ») et le geste devient imprécis.
+  // Continuous lock (to be called every frame): as long as a deck is
+  // synchronized, micro-drifts are corrected so that its beats stay
+  // glued to the master's, like in real DJ software.
+  // jogHold: during a manual jog offset, the lock is suspended
+  // GLOBALLY — otherwise the other decks CHASE the deck being shifted
+  // (the infamous "it fights with the alignment") and the gesture becomes imprecise.
   syncLock() {
-    // CALIBRATION FX PAR DECK (à chaque frame, ~zéro coût) : le sec de
-    // CHAQUE deck baisse selon le FX le plus fort qui LE traite — unités
-    // du panneau assignées à ce deck, et PAD FX tenu (qui peut demander
-    // une coupure totale : « c'est le son qu'on manipule », pas un ajout).
-    // Un FX sur le deck 2 ne touche jamais au deck 1.
+    // PER-DECK FX CALIBRATION (every frame, ~zero cost): the dry of
+    // EACH deck goes down according to the strongest FX processing IT — panel
+    // units assigned to this deck, and a held PAD FX (which can request
+    // a total cut: "it's the sound being manipulated", not an addition).
+    // An FX on deck 2 never touches deck 1.
     this.fxTick();
     this.decks.forEach((d, i) => {
       if (!d.dryOut) return;
-      // Part du sec retirée selon la NATURE de chaque effet qui traite ce
-      // deck : une gate/un filtre/un crush à fond REMPLACENT le son (sinon
-      // le sec intact masquait l'effet — « l'intensité ne fait rien ») ;
-      // un écho/une réverb s'ajoutent au son
+      // Share of the dry removed according to the NATURE of each effect processing this
+      // deck: a gate/filter/crush at full REPLACES the sound (otherwise
+      // the intact dry masked the effect — "the intensity does nothing");
+      // an echo/reverb adds to the sound
       let cut = 0;
       this.fx.forEach((u, uIdx) => {
         if (u.enabled && this.fxAssign[uIdx] && this.fxAssign[uIdx][i]) {
@@ -2316,7 +2316,7 @@ export class AudioEngine {
         d.dryOut.gain.setTargetAtTime(dry, this.ctx.currentTime, 0.02);
       }
     });
-    // FX MASTER : lui seul dose le sec du MIX ENTIER
+    // MASTER FX: it alone doses the dry of the WHOLE MIX
     const mWet = this.masterFx && this.masterFx.enabled
       ? Math.min(1, this.masterFx.wet.gain.value || 0) : 0;
     const dryT = 1 - (this.masterFx ? fxDryCut(this.masterFx.type) : 0.45) * mWet;
@@ -2327,32 +2327,32 @@ export class AudioEngine {
     this._updateAutoMaster();
     if (this.jogHold) return;
     const mi = this.masterIdx !== null ? this.masterIdx : this.autoMasterIdx;
-    // CHANGEMENT DE MASTER = TRANSITION SANS AUCUN SAUT. L'ancienne base
-    // (_syncBase) d'un deck peut dater d'un ANCIEN master : la réappliquer
-    // au moment de la bascule changeait le BPM d'un coup (« un cut a changé
-    // le master et foutu en l'air le BPM d'un des sons »). Ici chaque deck
-    // syncé repart de sa vitesse ACTUELLE — rien ne bouge à l'oreille — et
-    // se recalibre en éclair contre le NOUVEAU master.
+    // MASTER CHANGE = TRANSITION WITHOUT ANY JUMP. A deck's old base
+    // (_syncBase) may date from an OLD master: re-applying it
+    // at the moment of the switch changed the BPM abruptly ("a cut changed
+    // the master and messed up the BPM of one of the sounds"). Here each
+    // synced deck restarts from its CURRENT speed — nothing moves to the ear — and
+    // recalibrates in a flash against the NEW master.
     if (mi !== this._lastMi) {
       this._lastMi = mi;
       const mNew = mi != null ? this.decks[mi] : null;
-      // BPM effectif du nouveau master, correction de servo retirée
+      // Effective BPM of the new master, servo correction removed
       const mEff = mNew && mNew.bpm
         ? mNew.bpm * (mNew.tempo / (1 + (mNew._pllCorr || 0))) : null;
       this.decks.forEach((d, j) => {
         if (!d._syncBase) return;
         if (j !== mi && d.synced && d.bpm && mEff) {
-          // Un deck SYNCÉ vise le BPM du NOUVEAU master : c'est le CONTRAT
-          // du bouton SYNC. MAIS s'il bat déjà à la même vitesse (cas normal :
-          // tous calés sur l'ancien master), on garde EXACTEMENT sa vitesse
-          // — la passation ne doit rien changer au BPM qu'on entend. Ratio
-          // mesuré sur les grilles LOCALES (plus juste que les BPM globaux).
+          // A SYNCED deck targets the BPM of the NEW master: that is the CONTRACT
+          // of the SYNC button. BUT if it already beats at the same speed (normal case:
+          // all locked to the old master), we keep EXACTLY its speed
+          // — the handover must not change the BPM you hear. Ratio
+          // measured on the LOCAL grids (more accurate than the global BPMs).
           const want = this._syncRatio(d, mNew);
           const cur = d.tempo / (1 + (d._pllCorr || 0));
           d._syncBase = Math.abs(cur / want - 1) < 0.004 ? cur : want;
         } else {
-          // le deck qui DEVIENT master (ou non-syncé) ne saute JAMAIS :
-          // sa vitesse ACTUELLE devient sa base, la correction est retirée
+          // the deck that BECOMES master (or a non-synced one) NEVER jumps:
+          // its CURRENT speed becomes its base, the correction is removed
           d._syncBase = d.tempo / (1 + (d._pllCorr || 0));
         }
         d._syncRef = d._syncBase;
@@ -2360,37 +2360,37 @@ export class AudioEngine {
         d.setTempo(d._syncBase);
         d._ratioCal = false;
         d._ratioMeas = null;
-        d._syncPhaseOff = null; // ré-ancré sur l'alignement PRÉSENT ci-dessous
+        d._syncPhaseOff = null; // re-anchored on the PRESENT alignment below
         d._errFilt = 0;
-        d._lastWant = null; // la cible vient d'être re-visée : pas de double mise à l'échelle
+        d._lastWant = null; // the target has just been re-aimed: no double scaling
       });
     }
-    // Master AUTO en arrêt bref (cut, dans la grâce de _updateAutoMaster) :
-    // on FIGE tout — personne ne poursuit personne pendant le geste ; à la
-    // reprise, l'alignement constaté est adopté tel quel. (jamais pour un
-    // master MANUEL : mis en pause longtemps, il gèlerait tout à l'infini)
+    // AUTO master briefly stopped (cut, within _updateAutoMaster's grace period):
+    // FREEZE everything — nobody chases anybody during the gesture; on
+    // resume, the observed alignment is adopted as is. (never for a
+    // MANUAL master: paused for a long time, it would freeze everything forever)
     if (this.masterIdx === null && mi != null && this.decks[mi]
         && !this.decks[mi].playing) return;
     this.decks.forEach((d, i) => {
       if (i === mi) {
-        // Le MASTER est la RÉFÉRENCE : il n'est JAMAIS recalé — même s'il
-        // est marqué sync. Sinon il se fait poursuivre par ses propres
-        // esclaves (getMasterDeck l'exclut → il visait un esclave) et le
-        // décalage posé au jog se « redéplaçait » tout seul après le geste.
-        // On ne retire que la micro-correction du verrou, et SEULEMENT si le
-        // deck est encore en SYNC : un deck qui DEVIENT master ne doit JAMAIS
-        // sauter de tempo — son _syncBase peut être périmé (slider tempo,
-        // grille ÷2/×2, changement de morceau) et le réappliquer cassait le
-        // mix (« le BPM du son restant change de fou / fait ×2 »)
+        // The MASTER is the REFERENCE: it is NEVER re-aligned — even if it
+        // is marked sync. Otherwise it gets chased by its own
+        // slaves (getMasterDeck excludes it → it targeted a slave) and the
+        // offset set with the jog "moved again" on its own after the gesture.
+        // Only the lock's micro-correction is removed, and ONLY if the
+        // deck is still in SYNC: a deck that BECOMES master must NEVER
+        // jump in tempo — its _syncBase may be stale (tempo slider,
+        // ÷2/×2 grid, track change) and re-applying it broke the
+        // mix ("the remaining sound's BPM changes like crazy / goes ×2")
         if (d._pllCorr) {
           d._pllCorr = 0;
           if (d.synced && d._syncBase) d.setTempo(d._syncBase);
         }
         return;
       }
-      // Deck SYNC À L'ARRÊT (son tout juste chargé, en attente) : il prend
-      // DÉJÀ le BPM du master — affichage juste, et plus de tempo à 0 %
-      // que le fader physique « reconnaissait » ; la phase se cale au PLAY
+      // SYNC deck STOPPED (sound just loaded, waiting): it ALREADY
+      // takes the master's BPM — correct display, and no more tempo at 0 %
+      // that the physical fader "recognized"; the phase locks on PLAY
       if (d.synced && !d.playing && d.bpm && d.buffer) {
         const m0 = this.getMasterDeck(i);
         if (m0 && m0.playing && m0.bpm) {
@@ -2403,50 +2403,50 @@ export class AudioEngine {
         return;
       }
       if (!d.synced || !d.playing) return;
-      // (l'ancien gel « _phaseFree » créait un MICRO-DÉCALAGE cumulatif :
-      // les BPM détectés ne sont jamais parfaits, sans maintien l'écart
-      // grandit avec les minutes — « pas négligeable avec le temps ». Le
-      // servo ci-dessous maintient LE DÉCALAGE CHOISI PAR LE DJ, avec des
-      // corrections homéopathiques invisibles.)
+      // (the old "_phaseFree" freeze created a cumulative MICRO-OFFSET:
+      // detected BPMs are never perfect, so without holding, the gap
+      // grows over the minutes — "not negligible over time". The
+      // servo below holds THE OFFSET CHOSEN BY THE DJ, with
+      // homeopathic, invisible corrections.)
       const m = this.getMasterDeck(i);
       if (!m || !m.playing) return;
-      // GARANTIE ABSOLUE « MÊME BPM » : SYNC allumé = le deck vise TOUJOURS
-      // le BPM du master. Base ABSENTE (BPM corrigé à la main, grille
-      // ÷2/×2 — la purge laissait un SYNC allumé… qui ne faisait plus
-      // RIEN : « le BPM se calle mais pas au même BPM ») ou base ABERRANTE
-      // (> 3 % de la cible) : le sync se RÉPARE tout seul, re-visée
-      // immédiate puis recalibration éclair.
+      // ABSOLUTE "SAME BPM" GUARANTEE: SYNC on = the deck ALWAYS targets
+      // the master's BPM. MISSING base (BPM corrected by hand, grid
+      // ÷2/×2 — the purge left SYNC on… doing NOTHING anymore:
+      // "the BPM locks but not to the same BPM") or ABERRANT base
+      // (> 3 % from the target): the sync REPAIRS itself, immediate
+      // re-aim then flash recalibration.
       if (d.bpm && m.bpm) {
-        // Le BPM du master SANS sa micro-correction de servo : sinon la
-        // cible elle-même tremblait, et le calcul ci-dessous n'arrivait
-        // jamais à se poser (BPM qui bouge en continu à 3 sons).
+        // The master's BPM WITHOUT its servo micro-correction: otherwise the
+        // target itself trembled, and the computation below never
+        // managed to settle (BPM constantly moving with 3 sounds).
         const mBase = m.tempo / (1 + (m._pllCorr || 0));
         let want = (m.bpm * mBase) / d.bpm;
         while (want > 1.6) want /= 2;
         while (want < 0.5) want *= 2;
-        // LE MASTER A CHANGÉ DE TEMPO (fader, ♩ BPM master, platine…) : les
-        // esclaves suivent À L'INSTANT, dans la même proportion — leur
-        // calibration (le petit écart propre au couple de morceaux) est
-        // conservée. Avant, la base restait figée tant que l'écart ne
-        // dépassait pas 6 % : on bougeait le tempo du master et les autres
-        // sons décrochaient, il fallait re-SYNC.
-        // (seulement face au VRAI master : deux esclaves qui se servent
-        // mutuellement de référence s'emballeraient l'un l'autre)
+        // THE MASTER CHANGED TEMPO (fader, ♩ master BPM, controller…): the
+        // slaves follow INSTANTLY, in the same proportion — their
+        // calibration (the small gap specific to the pair of tracks) is
+        // kept. Before, the base stayed frozen as long as the gap didn't
+        // exceed 6 %: you moved the master's tempo and the other
+        // sounds drifted off, you had to re-SYNC.
+        // (only against the REAL master: two slaves using each other
+        // as reference would send each other into a runaway)
         if (d._syncBase && d._lastWant && this.decks.indexOf(m) === mi
             && Math.abs(want / d._lastWant - 1) > 1e-6) {
           const f = want / d._lastWant;
           d._syncBase *= f;
           d._syncRef = (d._syncRef || d._syncBase / f) * f;
           d.setTempo(d._syncBase * (1 + (d._pllCorr || 0)));
-          // la mesure de calibration en cours a vu deux tempos : on la jette
+          // the calibration measurement in progress saw two tempos: discard it
           d._ratioMeas = null;
         }
         d._lastWant = want;
         d._syncWant = want;
-        // Seuil de RÉPARATION à 6 %, très au-dessus des ±2 % que la
-        // calibration s'autorise : les deux mécanismes se marchaient dessus
-        // (la calibration poussait jusqu'à 3 %, la réparation punissait à
-        // 3 % → remise à zéro → recalibration → boucle sans fin).
+        // REPAIR threshold at 6 %, well above the ±2 % that the
+        // calibration allows itself: the two mechanisms stepped on each other
+        // (the calibration pushed up to 3 %, the repair punished at
+        // 3 % → reset → recalibration → endless loop).
         if (!d._syncBase || Math.abs(d._syncBase / want - 1) > 0.06) {
           d._syncBase = want;
           d._syncRef = want;
@@ -2461,33 +2461,33 @@ export class AudioEngine {
           return;
         }
       }
-      if (!d._syncBase) return; // aucun BPM détecté : rien à verrouiller
+      if (!d._syncBase) return; // no BPM detected: nothing to lock
       const pm = this._beatPhase(m);
       const pd = this._beatPhase(d);
       if (pm == null || pd == null) return;
-      // Après un changement de master, l'alignement PRÉSENT devient la
-      // cible : on ne « rattrape » jamais un décalage né d'une passation
-      // (même aimant visuel qu'au ré-ancrage : quasi-aligné = aligné EXACT)
+      // After a master change, the PRESENT alignment becomes the
+      // target: an offset born from a handover is never "caught up"
+      // (same visual magnet as for re-anchoring: almost aligned = EXACTLY aligned)
       if (d._syncPhaseOff == null) {
         let off = pm - pd;
         off -= Math.round(off);
         if (Math.abs(off) < 0.03) off = 0;
         d._syncPhaseOff = off;
       }
-      // La cible n'est pas forcément phase 0 : après un décalage manuel au
-      // jog, _syncPhaseOff mémorise l'alignement voulu par le DJ
+      // The target is not necessarily phase 0: after a manual jog
+      // offset, _syncPhaseOff stores the alignment wanted by the DJ
       let err = pm - pd - (d._syncPhaseOff || 0);
       err -= Math.round(err);
-      // Traits rouges clairement AILLEURS (décalage volontaire, jump non
-      // quantisé, dérive de grille…) : on ADOPTE cet alignement au lieu de
-      // le poursuivre pendant des secondes — le « recalibrage en continu »
-      // audible est insupportable. Le verrou ne corrige QUE les
-      // micro-dérives ; le placement du DJ est respecté tel quel.
+      // Red lines clearly ELSEWHERE (deliberate offset, non-quantized
+      // jump, grid drift…): ADOPT that alignment instead of
+      // chasing it for seconds — the audible "continuous recalibration"
+      // is unbearable. The lock ONLY corrects
+      // micro-drifts; the DJ's placement is respected as is.
       if (Math.abs(err) > 0.08) {
         d._syncPhaseOff = pm - pd;
-        d._ratioMeas = null; // la cible a changé : mesure de calibration à refaire
-        // une dérive pareille PENDANT la calibration = ratio de départ trop
-        // loin pour l'étage fin : on repasse par la mesure grossière (±1 %)
+        d._ratioMeas = null; // the target changed: calibration measurement to redo
+        // such a drift DURING calibration = starting ratio too
+        // far off for the fine stage: go back through the coarse measurement (±1 %)
         if (!d._ratioCal) d._ratioPasses = 0;
         d._errFilt = 0;
         if (d._pllCorr) {
@@ -2496,53 +2496,53 @@ export class AudioEngine {
         }
         return;
       }
-      // CALIBRATION ÉCLAIR (une mesure de 0,35 s, UNE SEULE correction) :
-      // les BPM détectés ne sont jamais parfaits, donc le ratio calculé au
-      // SYNC est légèrement faux. L'ancien servo « apprenait » l'erreur en
-      // continu → le BPM affiché mettait des secondes à se calmer et
-      // « respirait » (142.0↔142.1 au lieu de 141.6 : les deux se
-      // battaient). Ici : tempo FIGÉ, on mesure la PENTE de dérive de
-      // phase, et on corrige le ratio EN UNE FOIS — verrouillé net, le
-      // tempo est ensuite CONSTANT, égal au BPM du master.
-      // Ce que le servo a ajouté depuis l'image précédente (secondes de
-      // fichier) : la calibration en tient compte — le servo n'a donc plus
-      // besoin de se taire pendant qu'elle mesure. (Avant, il était COUPÉ
-      // pendant les 8 à 24 s de calibration, et chaque changement de BPM
-      // relançait la mesure : en montant le BPM juste après un SYNC, plus
-      // rien ne tenait la phase — « certains sons se décalent ».)
+      // FLASH CALIBRATION (one 0.35 s measurement, ONE SINGLE correction):
+      // detected BPMs are never perfect, so the ratio computed at
+      // SYNC is slightly off. The old servo "learned" the error
+      // continuously → the displayed BPM took seconds to calm down and
+      // "breathed" (142.0↔142.1 instead of 141.6: the two were
+      // fighting). Here: tempo FROZEN, we measure the SLOPE of the phase
+      // drift, and correct the ratio IN ONE GO — locked cleanly, the
+      // tempo is then CONSTANT, equal to the master's BPM.
+      // What the servo has added since the previous frame (file
+      // seconds): the calibration accounts for it — so the servo no longer
+      // needs to stay quiet while it measures. (Before, it was CUT OFF
+      // during the 8 to 24 s of calibration, and every BPM change
+      // restarted the measurement: when raising the BPM right after a SYNC,
+      // nothing held the phase anymore — "some sounds drift out".)
       const nowC = this.ctx.currentTime;
       if (d._ratioMeas && d._servoAt != null) {
         d._ratioMeas.servoFile += (d._pllCorr || 0) * d._syncBase * Math.min(0.1, Math.max(0, nowC - d._servoAt));
       }
       d._servoAt = nowC;
       if (!d._ratioCal) {
-        // Horloge AUDIO (celle qui fait avancer les positions) : mesurer la
-        // pente avec l'horloge système mêlait deux horloges qui dérivent.
-        // Un des deux sons attend encore son démarrage programmé : sa
-        // position n'est qu'une extrapolation, on ne mesure rien là-dessus.
+        // AUDIO clock (the one that advances the positions): measuring the
+        // slope with the system clock mixed two clocks that drift apart.
+        // One of the two sounds is still waiting for its scheduled start: its
+        // position is only an extrapolation, nothing is measured on that.
         if (nowC >= d.startCtx && nowC >= m.startCtx) {
-          const passe = d._ratioPasses || 0;
-          // DEUX ÉTAGES. La précision d'une mesure de pente vaut
-          // (bruit de phase) / (durée × battements par seconde) :
-          //   1 s  -> ±0,13 BPM   (ce qu'on entendait « presque calé »)
-          //   8 s  -> ±0,015 BPM  (exact, à l'échelle d'un morceau entier)
-          const duree = passe === 0 ? 1 : 8;
+          const pass = d._ratioPasses || 0;
+          // TWO STAGES. The precision of a slope measurement is
+          // (phase noise) / (duration × beats per second):
+          //   1 s  -> ±0.13 BPM   (what sounded "almost locked")
+          //   8 s  -> ±0.015 BPM  (exact, on the scale of a whole track)
+          const duration = pass === 0 ? 1 : 8;
           const ms = d._ratioMeas;
-          if (!ms || nowC - ms.t > duree + 2) {
-            // Garde-fou : sur une grille vraiment fausse, la mesure serait
-            // sans cesse invalidée — on n'insiste pas indéfiniment
+          if (!ms || nowC - ms.t > duration + 2) {
+            // Safeguard: on a really wrong grid, the measurement would be
+            // constantly invalidated — don't insist forever
             d._ratioTries = (d._ratioTries || 0) + 1;
             if (d._ratioTries > 12) {
               d._ratioCal = true;
             } else {
               d._ratioMeas = { t: nowC, e: err, dp: d.currentTime(), mp: m.currentTime(), servoFile: 0 };
             }
-          } else if (nowC - ms.t >= duree) {
+          } else if (nowC - ms.t >= duration) {
             const dtW = nowC - ms.t;
-            // VALIDITÉ : un beat jump / seek / boucle PENDANT la mesure
-            // fausse la pente — mesure JETÉE et refaite (se déplacer ne
-            // touche JAMAIS le BPM). L'avance attendue inclut ce que le
-            // servo a ajouté.
+            // VALIDITY: a beat jump / seek / loop DURING the measurement
+            // corrupts the slope — measurement DISCARDED and redone (moving around
+            // NEVER touches the BPM). The expected advance includes what the
+            // servo added.
             const dOk = Math.abs((d.currentTime() - ms.dp) - (dtW * d._syncBase + ms.servoFile)) < 0.05 * (d.tempo || 1);
             const mOk = Math.abs((m.currentTime() - ms.mp) / (m.tempo || 1) - dtW) < 0.05;
             if (!dOk || !mOk) {
@@ -2551,58 +2551,58 @@ export class AudioEngine {
               let de = err - ms.e;
               de -= Math.round(de);
               const per = this._period(d) || 60 / d.bpm;
-              // dérive due au RATIO seul = dérive observée + ce que le
-              // servo a rattrapé pendant la mesure
+              // drift due to the RATIO alone = observed drift + what the
+              // servo caught up during the measurement
               const drift = de + ms.servoFile / per;
-              const fd = (d.bpm * d.tempo) / 60; // temps (beats) par seconde
+              const fd = (d.bpm * d.tempo) / 60; // beats per second
               const kRaw = 1 + drift / (dtW * fd);
-              // Étage 1 : grande correction autorisée ; étage 2 : le dernier millième
-              const lim0 = passe === 0 ? 0.01 : 0.001;
+              // Stage 1: large correction allowed; stage 2: the last thousandth
+              const lim0 = pass === 0 ? 0.01 : 0.001;
               const k = Math.max(1 - lim0, Math.min(1 + lim0, kRaw));
-              // PLAFOND ABSOLU : ±2 % du ratio visé (au-delà, la grille est fausse)
-              const cible = d._syncWant || d._syncBase;
-              d._syncBase = Math.max(cible * 0.98, Math.min(cible * 1.02, d._syncBase * k));
+              // ABSOLUTE CAP: ±2 % of the target ratio (beyond that, the grid is wrong)
+              const target = d._syncWant || d._syncBase;
+              d._syncBase = Math.max(target * 0.98, Math.min(target * 1.02, d._syncBase * k));
               d._syncRef = d._syncBase;
-              // Terminé quand la correction devient NÉGLIGEABLE (0,02 %),
-              // ou après 4 passes — jamais d'acharnement
-              d._ratioPasses = passe + 1;
+              // Done when the correction becomes NEGLIGIBLE (0.02 %),
+              // or after 4 passes — never overdo it
+              d._ratioPasses = pass + 1;
               d._ratioCal = Math.abs(k - 1) < 0.0002 || d._ratioPasses >= 4;
               d._ratioMeas = null;
             }
           }
         }
       }
-      // ERREUR LISSÉE : l'horloge audio avance par blocs (~3 ms) — ce bruit
-      // faisait « respirer » la correction dans les deux sens, VISIBLE sur
-      // les vagues zoomées (inaudible). Passe-bas + zone morte élargie :
-      // le servo ne réagit qu'aux vraies dérives, l'image reste immobile.
+      // SMOOTHED ERROR: the audio clock advances in blocks (~3 ms) — this noise
+      // made the correction "breathe" both ways, VISIBLE on
+      // the zoomed waveforms (inaudible). Low-pass + widened dead zone:
+      // the servo only reacts to real drifts, the picture stays still.
       d._errFilt = (d._errFilt || 0) * 0.85 + err * 0.15;
       const eF = d._errFilt;
       if (Math.abs(eF) < 0.0015) {
-        // Collé au décalage voulu (< 0,6 ms) : repos total
+        // Glued to the wanted offset (< 0.6 ms): total rest
         if (d._pllCorr) d._pllCorr = 0;
         if (Math.abs(d.tempo - d._syncBase) > 1e-9) d.setTempo(d._syncBase);
         return;
       }
-      // SERVO DE MAINTIEN : corrections bornées ±0,2 %, inaudibles.
-      // (l'épisode « ±0,15 % » : borne PLUS PETITE que le résidu possible
-      // de la calibration → servo saturé à vie, glissement CONTINU à
-      // l'écran — « il se décale à chaque instant, tu as empiré ». La
-      // borne doit toujours dépasser le pire résidu de ratio.)
-      // Deck en KEYLOCK / KEY (son via le transpositeur) : il applique
-      // chaque changement de tempo 55 ms APRÈS les autres (latence du
-      // moteur) — quand on monte le BPM, il prend un petit retard. Son
-      // tempo ne touche PAS sa hauteur (keylock) : on peut le corriger
-      // ~10× plus fort, c'est inaudible.
+      // HOLDING SERVO: corrections capped at ±0.2 %, inaudible.
+      // (the "±0.15 %" episode: a cap SMALLER than the possible residue
+      // of the calibration → servo saturated forever, CONTINUOUS sliding on
+      // screen — "it drifts every moment, you made it worse". The
+      // cap must always exceed the worst ratio residue.)
+      // Deck in KEYLOCK / KEY (sound through the transposer): it applies
+      // each tempo change 55 ms AFTER the others (engine
+      // latency) — when the BPM goes up, it falls slightly behind. Its
+      // tempo does NOT affect its pitch (keylock): it can be corrected
+      // ~10× harder, it's inaudible.
       const strong = d.procLat > 0;
       const lim = strong ? 0.015 : 0.002;
       const corr = Math.max(-lim, Math.min(lim, eF * (strong ? 1.0 : 0.08)));
-      // LA BASE EST FIGÉE — PLUS AUCUNE ABSORPTION. C'était LA cause du
-      // « BPM qui change en continu » : le servo réécrivait _syncBase à
-      // chaque image pour absorber sa propre correction. Après calibration,
-      // _syncBase EST le ratio exact ; le résidu est tenu par une correction
-      // minuscule que l'affichage retire déjà (voir _pllCorr dans
-      // drawDeckWheel). NE PAS RÉINTRODUIRE d'absorption ici.
+      // THE BASE IS FROZEN — NO MORE ABSORPTION AT ALL. That was THE cause of the
+      // "BPM that changes continuously": the servo rewrote _syncBase on
+      // every frame to absorb its own correction. After calibration,
+      // _syncBase IS the exact ratio; the residue is held by a tiny
+      // correction that the display already removes (see _pllCorr in
+      // drawDeckWheel). DO NOT REINTRODUCE absorption here.
       d._pllCorr = corr;
       d.setTempo(d._syncBase * (1 + corr));
     });

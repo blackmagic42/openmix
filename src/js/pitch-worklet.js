@@ -1,38 +1,38 @@
-// Transposition temps réel (WSOLA) — le moteur du KEYLOCK et du KEY ±.
+// Real-time pitch shifting (WSOLA) — the engine behind KEYLOCK and KEY ±.
 //
-// Principe : on découpe le son en grains fenêtrés (Hann) qu'on relit PLUS
-// VITE ou PLUS LENTEMENT (ce qui monte ou descend la tonalité), puis qu'on
-// recolle à la CADENCE D'ORIGINE (ce qui préserve la durée). Avant de poser
-// un grain, on cherche l'endroit où son onde PROLONGE exactement celle du
-// grain précédent (corrélation) : c'est WSOLA, et c'est ce qui évite le
-// son doublé / flangé d'un simple délai à deux prises.
+// Principle: the audio is cut into windowed (Hann) grains that are read back
+// FASTER or SLOWER (which raises or lowers the pitch), then stitched back
+// together at the ORIGINAL RATE (which preserves the duration). Before placing
+// a grain, we look for the spot where its waveform EXACTLY CONTINUES that of
+// the previous grain (correlation): that is WSOLA, and it is what avoids the
+// doubled / flanged sound of a simple two-tap delay.
 //
-// DEUX RÈGLES qui font la différence (v2) :
-//  1. Recouvrement de 50 % : chaque échantillon de sortie mêle EXACTEMENT
-//     deux grains, et ces deux-là ont été alignés l'un sur l'autre. À 4×
-//     (l'ancienne version) chaque grain chevauchait aussi les deux d'avant,
-//     jamais comparés : leurs ondes s'annulaient en partie — le son « mal
-//     superposé », un peu flangé, de KEY +n.
-//  2. LATENCE FIXE et CONNUE (LAT échantillons, annoncée au fil principal) :
-//     un événement entré à l'instant i ressort à i + LAT, quel que soit le
-//     rapport, y compris à 1 (simple retard exact). Le deck lit son morceau
-//     avec cette avance : ce qu'on ENTEND tombe pile sur la grille. Avant, la
-//     latence (~110 ms) n'était pas compensée : un deck en KEY ou en keylock
-//     sonnait en retard sur les autres.
+// TWO RULES that make the difference (v2):
+//  1. 50% overlap: each output sample mixes EXACTLY
+//     two grains, and those two have been aligned with each other. At 4×
+//     (the old version) each grain also overlapped the two before it,
+//     never compared: their waveforms partly cancelled out — the "badly
+//     layered", slightly flanged sound of KEY +n.
+//  2. FIXED and KNOWN LATENCY (LAT samples, announced to the main thread):
+//     an event entering at instant i comes out at i + LAT, whatever the
+//     ratio, including 1 (plain exact delay). The deck reads its track
+//     that far ahead: what we HEAR lands right on the grid. Before, the
+//     latency (~110 ms) was not compensated: a deck in KEY or keylock
+//     sounded late compared to the others.
 //
-// Tourne dans le thread audio temps réel : aucune allocation ici.
+// Runs in the real-time audio thread: no allocation here.
 
-const N = 1536;          // grain de 32 ms : assez long pour les basses
-const HS = N >> 1;       // saut = moitié du grain (Hann somme à 1)
-const OVL = N - HS;      // zone de recouvrement comparée
-const SEARCH = 480;      // ± échantillons : une période entière de 50 Hz
+const N = 1536;          // 32 ms grain: long enough for the bass
+const HS = N >> 1;       // hop = half a grain (Hann sums to 1)
+const OVL = N - HS;      // overlap zone being compared
+const SEARCH = 480;      // ± samples: one full period of 50 Hz
 const R_MIN = 0.5;
-const R_MAX = 1.8;       // KEY +7 avec keylock à −6 % ≈ 1,6
-// Latence minimale pour lire un grain entier au rapport maximal, fenêtre
-// de recherche comprise, sans jamais dépasser ce qui est déjà arrivé
+const R_MAX = 1.8;       // KEY +7 with keylock at −6% ≈ 1.6
+// Minimum latency to read a whole grain at the maximum ratio, search
+// window included, without ever going past what has already arrived
 const LAT = Math.ceil((N * (R_MAX + 1)) / 2 + SEARCH + 16);
-const RING = 16384;      // mémoire d'entrée (puissance de 2)
-const ACC = 4096;        // accumulateur de sortie (puissance de 2)
+const RING = 16384;      // input memory (power of 2)
+const ACC = 4096;        // output accumulator (power of 2)
 const RM = RING - 1;
 const AM = ACC - 1;
 
@@ -43,24 +43,24 @@ class PitchProcessor extends AudioWorkletProcessor {
 
   constructor(options) {
     super();
-    // force de la pénalité d'alignement (réglable pour les bancs d'essai)
+    // strength of the alignment penalty (tunable for test benches)
     const po = options && options.processorOptions;
     this.pen = po && po.pen != null ? po.pen : 0.1;
     this.win = new Float32Array(N);
-    // Hann PÉRIODIQUE : deux fenêtres décalées de N/2 somment exactement à 1
+    // PERIODIC Hann: two windows offset by N/2 sum exactly to 1
     for (let i = 0; i < N; i++) this.win[i] = 0.5 - 0.5 * Math.cos((2 * Math.PI * i) / N);
     this.L = { ring: new Float32Array(RING), acc: new Float32Array(ACC) };
     this.R = { ring: new Float32Array(RING), acc: new Float32Array(ACC) };
-    this.inW = 0;      // échantillons d'entrée reçus (absolu)
-    this.outP = 0;     // échantillons de sortie émis (absolu)
-    this.nextG = 0;    // position de sortie du prochain grain
-    this.prevS = null; // début de lecture du grain précédent
+    this.inW = 0;      // input samples received (absolute)
+    this.outP = 0;     // output samples emitted (absolute)
+    this.nextG = 0;    // output position of the next grain
+    this.prevS = null; // read start of the previous grain
     this.prevR = 1;
     this.port.postMessage({ lat: LAT });
   }
 
-  // Corrélation normalisée entre la suite naturelle du grain précédent
-  // (cont) et un candidat (s), sur la zone de recouvrement, en mono (L+R)
+  // Normalized correlation between the natural continuation of the previous
+  // grain (cont) and a candidate (s), over the overlap zone, in mono (L+R)
   _score(cont, s, r, step) {
     const rl = this.L.ring;
     const rr = this.R.ring;
@@ -76,27 +76,27 @@ class PitchProcessor extends AudioWorkletProcessor {
       en += v * v;
       er += ref * ref;
     }
-    // corrélation VRAIMENT normalisée (−1…1) : la pénalité de décalage
-    // garde le même poids quel que soit le volume du morceau
+    // TRULY normalized correlation (−1…1): the offset penalty
+    // keeps the same weight whatever the track's volume
     return dot / Math.sqrt(en * er);
   }
 
   _grain(G, r) {
-    // Position « juste » : le centre du grain ressort LAT plus tard
+    // "Ideal" position: the grain's center comes out LAT later
     const S0 = G - LAT - (N * (r - 1)) / 2;
     let S = S0;
     if (this.prevS !== null) {
       const cont = this.prevS + HS * this.prevR;
       if (Math.abs(r - 1) < 1e-4 && Math.abs(this.prevR - 1) < 1e-4 && Math.abs(cont - S0) < 0.5) {
-        S = S0; // rien à transposer : simple retard exact, sans recherche
+        S = S0; // nothing to shift: plain exact delay, no search
       } else {
-        // grossier (pas de 4) sur toute la fenêtre, puis fin au 1/1
+        // coarse (step of 4) over the whole window, then fine at 1/1
         let best = 0;
         let bestS = -Infinity;
-        // Légère PÉNALITÉ des grands décalages : sans elle, sur une attaque
-        // de kick, l'alignement préférait prolonger la queue du grain
-        // précédent et RETARDAIT le kick de ~10 ms (mesuré au banc d'essai :
-        // retard ramené à ±1-4 ms, attaque aussi nette)
+        // Slight PENALTY on large offsets: without it, on a kick
+        // attack, the alignment preferred extending the tail of the previous
+        // grain and DELAYED the kick by ~10 ms (measured on the test bench:
+        // delay brought down to ±1-4 ms, attack just as sharp)
         for (let d = -SEARCH; d <= SEARCH; d += 4) {
           const sc = this._score(cont, S0 + d, r, 4) - (this.pen * Math.abs(d)) / SEARCH;
           if (sc > bestS) { bestS = sc; best = d; }
@@ -140,7 +140,7 @@ class PitchProcessor extends AudioWorkletProcessor {
     if (!(r > 0)) r = 1;
     r = Math.min(R_MAX, Math.max(R_MIN, r));
 
-    // 1) Entrée → anneaux
+    // 1) Input → rings
     const rl = this.L.ring;
     const rr = this.R.ring;
     for (let i = 0; i < n; i++) {
@@ -150,13 +150,13 @@ class PitchProcessor extends AudioWorkletProcessor {
     }
     this.inW += n;
 
-    // 2) Grains nécessaires pour couvrir ce bloc de sortie
+    // 2) Grains needed to cover this output block
     while (this.nextG < this.outP + n) {
       this._grain(this.nextG, r);
       this.nextG += HS;
     }
 
-    // 3) Sortie, et remise à zéro des cases consommées
+    // 3) Output, and reset of the consumed slots
     const oL = output[0];
     const oR = output[1] || null;
     const aL = this.L.acc;

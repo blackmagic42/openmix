@@ -1,24 +1,24 @@
 // ---------------------------------------------------------------------------
-// i18n — dictionnaire de traduction (FR / EN)
+// i18n — translation dictionary (FR / EN)
 // ---------------------------------------------------------------------------
-// Comment ça marche :
-//  - Chaque phrase affichée à l'écran a une CLÉ (à gauche) qui ne change
-//    jamais, et une traduction par langue (à droite).
-//  - Pour ajouter une langue : copie un des blocs ci-dessous (ex: EN) et
-//    traduis chaque valeur. N'invente pas de nouvelles clés — utilise
-//    exactement les mêmes que dans les autres langues.
-//  - Dans le HTML : mets data-i18n="ma_cle" sur un élément pour son texte,
-//    data-i18n-title="ma_cle" pour son attribut title, ou
-//    data-i18n-placeholder="ma_cle" pour son placeholder.
-//  - Dans le JS : utilise t('ma_cle') pour récupérer la traduction, ou
-//    t('ma_cle', { n: 3 }) si la phrase contient une variable {n}.
+// How it works:
+//  - Every sentence shown on screen has a KEY (left) that never changes,
+//    and one translation per language (right).
+//  - To add a language: copy one of the blocks below (e.g. EN) and translate
+//    every value. Don't invent new keys — use exactly the same ones as the
+//    other languages.
+//  - In HTML: put data-i18n="my_key" on an element for its text,
+//    data-i18n-title="my_key" for its title attribute, or
+//    data-i18n-placeholder="my_key" for its placeholder.
+//  - In JS: use t('my_key') to get the translation, or t('my_key', { n: 3 })
+//    when the sentence contains a variable {n}.
 // ---------------------------------------------------------------------------
 
 export const LANGS = { fr: 'Français', en: 'English' };
 
 const DICTIONARIES = {
   fr: {
-    // Barre du haut
+    // Top bar
     toggle_deckcount: 'Basculer entre 2 et 4 decks',
     label_4decks: '4 DECKS',
     save_mix: 'Enregistrer le mix dans un fichier',
@@ -27,12 +27,12 @@ const DICTIONARIES = {
     settings: 'Paramètres',
     help: 'Aide manette et raccourcis',
 
-    // Forme d'onde
+    // Waveform
     scratch_sound: 'Scratch sonore : 🔊 on entend le son en déplaçant la piste, 🔇 silencieux jusqu’au lâcher',
     zoom_out: 'Dézoomer (molette)',
     zoom_in: 'Zoomer (molette)',
 
-    // Bibliothèque
+    // Library
     tab_files: 'Fichiers',
     tab_soundcloud: 'SoundCloud',
     tab_history: 'Historique',
@@ -56,12 +56,12 @@ const DICTIONARIES = {
     col_artist: 'Artiste',
     col_duration: 'Durée',
 
-    // Fenêtre de saisie (renommer / nouvelle playlist…)
+    // Prompt dialog (rename / new playlist…)
     prompt_default_title: 'Nom',
     ok: 'OK',
     cancel: 'Annuler',
 
-    // Paramètres
+    // Settings
     settings_language: 'Langue',
     settings_bpm_analysis: 'Analyse — plage BPM (comme Rekordbox)',
     bpmrange_68_135: '68 – 135 (house, hip-hop)',
@@ -102,11 +102,11 @@ const DICTIONARIES = {
     activate: 'Activer',
     close: 'Fermer',
 
-    // Aide
+    // Help
     help_title: 'Commandes manette',
     help_note: 'Croix / Rond / Carré / Triangle sur PlayStation — A / B / X / Y sur Xbox (détection automatique).',
 
-    // Panneau de deck (gabarit répété ×4)
+    // Deck panel (template repeated ×4)
     deck_cover_title: 'Pochette du morceau',
     deck_empty: '— vide —',
     beat_dots_title: 'Position dans la mesure (1·2·3·4)',
@@ -141,7 +141,7 @@ const DICTIONARIES = {
     grid_double_title: 'Grille ×2 : mesures deux fois plus serrées (corrige une détection à la moitié du vrai BPM)',
     tempo_gauge_title: 'Jauge de tempo — le pourcentage et le BPM sont sur la platine',
 
-    // Messages de statut dynamiques (flashStatus, titles calculés…)
+    // Dynamic status messages (flashStatus, computed titles…)
     queue_added: '« {name} » ajouté à la file du deck {n}',
     queue_loaded: 'Deck {n} : « {name} » chargé depuis la file — prêt (en pause)',
     grid_need_bpm: 'GRID : charge un morceau avec un BPM détecté d’abord',
@@ -259,6 +259,7 @@ const DICTIONARIES = {
     added_to_new_playlist: '« {track} » ajouté à « {playlist} »',
     sc_account_added: 'Compte {name} ajouté',
     language_changed: 'Langue : {lang}',
+    language_changed_next_launch: 'Langue : {lang} — le reste de l’interface change au prochain lancement (un son est en lecture)',
     master_auto: 'Master automatique',
     loop_none_active: 'Deck {n} — aucune boucle active',
     loop_at_minimum: 'Deck {n} — boucle minimale atteinte',
@@ -377,7 +378,7 @@ const DICTIONARIES = {
     scratch_enabled_status: 'Scratch sonore activé : tu entends le son en déplaçant la piste',
     scratch_disabled_status: 'Scratch silencieux : le son reprend seulement quand tu lâches',
     skip_streaming_tracks: ' ({n} pistes streaming ignorées)',
-    // Ajouts : tonalité, tri, chargement annulable, séance, stems
+    // Additions: key, sorting, cancellable loading, session, stems
     key_lbl_title: 'Tonalité entendue (roue Camelot) — clic : KEY SYNC sur le master',
     key_pad_result_title: '{sign} demi-ton(s) → {name} ({lab}){master} — re-cliquer pour revenir à 0',
     key_pad_master_suffix: ' — master en {key}',
@@ -412,7 +413,7 @@ const DICTIONARIES = {
     played_cleared: 'Marques « déjà joué » effacées',
     restore_session_label: 'Au démarrage, recharger les sons et réglages de la dernière séance',
     reading_file: 'Lecture du fichier…',
-    // Téléchargement par lien (yt-dlp)
+    // Download by link (yt-dlp)
     ytdlp_button: '⬇ Lien',
     ytdlp_button_title: 'Télécharger un son depuis un lien YouTube, SoundCloud… (yt-dlp) — ou glisse le lien sur un deck',
     ytdlp_button_busy: '⬇ {pct} % — annuler',
@@ -436,7 +437,7 @@ const DICTIONARIES = {
     ytdlp_status_none: 'yt-dlp n’est pas installé',
     ytdlp_src_openmix: 'copie OpenMix',
     ytdlp_src_system: 'trouvé sur le PC',
-    // Recherche YouTube + SoundCloud
+    // YouTube + SoundCloud search
     web_search_button: '🔎 YouTube / SoundCloud',
     web_search_button_title: 'Chercher un son sur YouTube et SoundCloud et le télécharger',
     web_search_placeholder: 'Rechercher un son sur YouTube et SoundCloud…',
@@ -448,7 +449,7 @@ const DICTIONARIES = {
     web_search_deck_title: 'Télécharger puis charger sur le deck {n}',
     web_search_drm: '🔒 protégé',
     ytdlp_queued: 'Ajouté à la file de téléchargement ({n} en attente)',
-    // Dossier de musique natif + rangement
+    // Native music folder + organising
     dl_native_root: '📁 Ma musique OpenMix',
     dl_root_option: '📁 Ma musique OpenMix (racine)',
     dl_dest_label: 'Ranger dans',
@@ -489,6 +490,104 @@ const DICTIONARIES = {
     dl_menu_out: '⬆ Sortir de « {name} »',
     dl_menu_trash: 'Mettre à la corbeille',
     dl_dest_set: 'Les téléchargements arrivent dans {dir}',
+
+    // Strings moved out of the code (English migration)
+    deck_queue_next_info: '{count} en file — prochain : {name}',
+    deck_queue_chip_label: 'FILE',
+    loop_length_beats: '{n} temps',
+    loop_length_fraction: '1/{d} temps',
+    loop_length_one_beat: '1 temps',
+    stems_separation_error: 'STEMS : {error}',
+    stems_separation_exception: 'STEMS : erreur — {error}',
+    master_meter_level_title: 'Niveau du mix — rouge = saturation',
+    fx_unit_assign_title: 'Sur quels decks cet effet s\'applique',
+    fx_master_type_title: 'Effet du mix',
+    fx_master_level_title: 'Niveau — clic : +25 %',
+    fx_master_onoff_title: 'FX du MIX ENTIER on/off',
+    lib_tracks_count: '{n} morceaux',
+    lib_bpm_cell_folder: 'dossier',
+    lib_bpm_cell_tracks: '{n} titres',
+    playlist_export_error: 'Export : {error}',
+    playlist_rename_prompt: 'Nouveau nom de la playlist',
+    playlist_delete_label: 'Supprimer la playlist',
+    sc_no_account_status: 'Aucun compte SoundCloud — clique « Se connecter » dans la barre SoundCloud',
+    track_load_failed: 'Impossible de lire « {name} » : {error}',
+    gp_cell_fx_level_label: 'FX NIVEAU',
+    gp_sel_btn_players: 'SEL·J{players}',
+    gp_player_tag: 'J{n}',
+    gp_pad_player_mode_title: 'J{n} : {mode}',
+    gamepad_count_one: '{n} manette',
+    gamepad_count_many: '{n} manettes',
+    gp_mode_changed: 'J{n} — L2/R2 en mode {mode}',
+    gp_fx_level_player_decks: 'J{n} — FX niveau {pct} (deck {decks})',
+    gp_fx_unit_level: 'FX {n} — niveau {pct}',
+    gp_fx_level_player: 'J{n} — FX niveau {pct}',
+    gp_color_back_to_filter: 'COLOR → Filter (stick gauche = FILTRE · le FX = stick droit)',
+    fx_master_effect_status: 'FX MASTER — effet : {name}',
+    fx_unit_effect_status: 'FX {n} — effet : {name}',
+    channel_select_master_fx_follows: 'CHANNEL SELECT — MASTER (le FX suit sur tout le mix)',
+    deck_sync_off_flash: 'Deck {n} — SYNC OFF',
+    headphone_cue_status: '🎧 Deck {n} — casque {state}',
+    deck_mode_2_status: 'Mode 2 decks — plus grand, plus simple',
+    deck_mode_4_status: 'Mode 4 decks — la totale',
+    rec_mix_recording_status: '● REC — enregistrement du mix en cours…',
+    rekordbox_grids_reading: 'Lecture des analyses Rekordbox…',
+    rekordbox_grids_import_failed: 'Import Rekordbox impossible : {error}',
+    midi_clear_binding_title: 'Effacer',
+    sc_tree_account_fallback: 'Compte {n}',
+    web_search_source_error: '{src} : {error}',
+    new_playlist_name_prompt: 'Nom de la nouvelle playlist',
+    rekordbox_xml_reading: 'Import Rekordbox : lecture du XML…',
+    rekordbox_xml_read_failed: 'Impossible de lire ce fichier XML',
+    rekordbox_xml_not_export: 'Ce fichier n\'est pas un export XML Rekordbox',
+    rekordbox_untitled_node: 'Sans nom',
+    sc_paste_link_hint: 'Colle un lien de playlist ou de profil SoundCloud (ex. https://soundcloud.com/tonpseudo)',
+    sc_reconnect_account: '⚠ Reconnecter {name}',
+    sc_reconnect_account_fallback: 'le compte',
+    sc_add_account: '+ Ajouter un compte',
+    sc_user_playlists_title: 'Playlists de {user}',
+    sc_search_title: 'Recherche : {query}',
+    sc_account_default_name: 'Compte {n}',
+    sc_account_reconnect_suffix: ' (reconnecter)',
+    sc_accounts_title: 'Comptes SoundCloud',
+    sc_user_likes_title: '❤ Likes de {user}',
+    analyzing_bpm_progress: 'Analyse BPM…',
+    track_analysis_failed: 'Analyse impossible sur ce morceau',
+    midi_action_cue: 'CUE (maintenir = pré-écoute)',
+    midi_action_grid: 'GRID (recaler)',
+    midi_action_load: 'Charger le morceau sélectionné',
+    midi_action_volume: 'Fader volume',
+    midi_action_eq_high: 'EQ aigus',
+    midi_action_eq_mid: 'EQ médiums',
+    midi_action_eq_low: 'EQ graves',
+    midi_action_tempo: 'Fader tempo',
+    midi_action_jog: 'Jog DESSUS (scratch / déplacer)',
+    midi_action_jog_bend: 'Jog CÔTÉ (nudge doux, caler à l\'oreille)',
+    midi_action_jog_touch: 'TOUCHER du disque (pose = coupe, relâche = reprend)',
+    midi_action_pad_mode: 'Mode pads : {mode}',
+    midi_action_loop_in: 'Loop IN (départ de boucle)',
+    midi_action_loop_out: 'Loop OUT (ferme et lance)',
+    midi_action_fx_on: 'FX ON/OFF (unité du deck)',
+    midi_action_key_up: 'KEY + (demi-ton)',
+    midi_action_key_dn: 'KEY − (demi-ton)',
+    midi_action_select: 'CHANNEL SELECT — position de ce deck',
+    midi_action_browse: 'Parcourir la bibliothèque (encodeur)',
+    midi_action_browse_push: 'Encodeur APPUI : entrer dans la playlist / charger',
+    midi_action_browse_back: 'RETOUR : sortir de la playlist',
+    midi_action_view_toggle: 'VIEW : masquer / réafficher la bibliothèque',
+    midi_action_master_vol: 'Volume MASTER',
+    midi_action_master_filter: 'FILTER MASTER',
+    midi_action_fx_level: 'Niveau FX (knob)',
+    midi_action_fx_beats_dn: 'FX : durée du beat ÷2 (BEAT ◄)',
+    midi_action_fx_beats_up: 'FX : durée du beat ×2 (BEAT ►)',
+    midi_action_select_master: 'CHANNEL SELECT — position MASTER',
+    midi_action_bpm_up: 'BPM master +0,5',
+    midi_action_bpm_dn: 'BPM master −0,5',
+    gamepad_btn_cross: 'Croix',
+    gamepad_btn_circle: 'Rond',
+    gamepad_btn_square: 'Carré',
+    gamepad_btn_ps: 'Bouton PS',
+    gamepad_btn_xbox: 'Bouton Xbox',
   },
 
   en: {
@@ -733,6 +832,7 @@ const DICTIONARIES = {
     added_to_new_playlist: '“{track}” added to “{playlist}”',
     sc_account_added: '{name} account added',
     language_changed: 'Language: {lang}',
+    language_changed_next_launch: 'Language: {lang} — the rest of the interface switches at the next launch (a track is playing)',
     master_auto: 'Automatic master',
     loop_none_active: 'Deck {n} — no active loop',
     loop_at_minimum: 'Deck {n} — loop at minimum size',
@@ -963,6 +1063,104 @@ const DICTIONARIES = {
     dl_menu_out: '⬆ Move out of “{name}”',
     dl_menu_trash: 'Move to recycle bin',
     dl_dest_set: 'Downloads now go to {dir}',
+
+    // Strings moved out of the code (English migration)
+    deck_queue_next_info: '{count} queued — next: {name}',
+    deck_queue_chip_label: 'QUEUE',
+    loop_length_beats: '{n} beats',
+    loop_length_fraction: '1/{d} beat',
+    loop_length_one_beat: '1 beat',
+    stems_separation_error: 'STEMS: {error}',
+    stems_separation_exception: 'STEMS: error — {error}',
+    master_meter_level_title: 'Mix level — red = clipping',
+    fx_unit_assign_title: 'Which decks this effect applies to',
+    fx_master_type_title: 'Mix effect',
+    fx_master_level_title: 'Level — click: +25%',
+    fx_master_onoff_title: 'WHOLE MIX FX on/off',
+    lib_tracks_count: '{n} tracks',
+    lib_bpm_cell_folder: 'folder',
+    lib_bpm_cell_tracks: '{n} tracks',
+    playlist_export_error: 'Export: {error}',
+    playlist_rename_prompt: 'New playlist name',
+    playlist_delete_label: 'Delete playlist',
+    sc_no_account_status: 'No SoundCloud account — click “Log in” in the SoundCloud bar',
+    track_load_failed: 'Could not read “{name}”: {error}',
+    gp_cell_fx_level_label: 'FX LEVEL',
+    gp_sel_btn_players: 'SEL·P{players}',
+    gp_player_tag: 'P{n}',
+    gp_pad_player_mode_title: 'P{n}: {mode}',
+    gamepad_count_one: '{n} gamepad',
+    gamepad_count_many: '{n} gamepads',
+    gp_mode_changed: 'P{n} — L2/R2 in {mode} mode',
+    gp_fx_level_player_decks: 'P{n} — FX level {pct} (deck {decks})',
+    gp_fx_unit_level: 'FX {n} — level {pct}',
+    gp_fx_level_player: 'P{n} — FX level {pct}',
+    gp_color_back_to_filter: 'COLOR → Filter (left stick = FILTER · FX = right stick)',
+    fx_master_effect_status: 'FX MASTER — effect: {name}',
+    fx_unit_effect_status: 'FX {n} — effect: {name}',
+    channel_select_master_fx_follows: 'CHANNEL SELECT — MASTER (FX follows across the whole mix)',
+    deck_sync_off_flash: 'Deck {n} — SYNC OFF',
+    headphone_cue_status: '🎧 Deck {n} — headphones {state}',
+    deck_mode_2_status: '2-deck mode — bigger, simpler',
+    deck_mode_4_status: '4-deck mode — the full setup',
+    rec_mix_recording_status: '● REC — recording the mix…',
+    rekordbox_grids_reading: 'Reading Rekordbox analyses…',
+    rekordbox_grids_import_failed: 'Rekordbox import failed: {error}',
+    midi_clear_binding_title: 'Clear',
+    sc_tree_account_fallback: 'Account {n}',
+    web_search_source_error: '{src}: {error}',
+    new_playlist_name_prompt: 'New playlist name',
+    rekordbox_xml_reading: 'Rekordbox import: reading the XML…',
+    rekordbox_xml_read_failed: 'Could not read this XML file',
+    rekordbox_xml_not_export: 'This file is not a Rekordbox XML export',
+    rekordbox_untitled_node: 'Untitled',
+    sc_paste_link_hint: 'Paste a SoundCloud playlist or profile link (e.g. https://soundcloud.com/yourname)',
+    sc_reconnect_account: '⚠ Reconnect {name}',
+    sc_reconnect_account_fallback: 'the account',
+    sc_add_account: '+ Add an account',
+    sc_user_playlists_title: '{user}’s playlists',
+    sc_search_title: 'Search: {query}',
+    sc_account_default_name: 'Account {n}',
+    sc_account_reconnect_suffix: ' (reconnect)',
+    sc_accounts_title: 'SoundCloud accounts',
+    sc_user_likes_title: '❤ {user}’s likes',
+    analyzing_bpm_progress: 'Analyzing BPM…',
+    track_analysis_failed: 'Could not analyze this track',
+    midi_action_cue: 'CUE (hold = preview)',
+    midi_action_grid: 'GRID (re-align)',
+    midi_action_load: 'Load the selected track',
+    midi_action_volume: 'Volume fader',
+    midi_action_eq_high: 'EQ high',
+    midi_action_eq_mid: 'EQ mid',
+    midi_action_eq_low: 'EQ low',
+    midi_action_tempo: 'Tempo fader',
+    midi_action_jog: 'Jog TOP (scratch / move)',
+    midi_action_jog_bend: 'Jog SIDE (gentle nudge, beatmatch by ear)',
+    midi_action_jog_touch: 'Platter TOUCH (hand on = stop, release = resume)',
+    midi_action_pad_mode: 'Pad mode: {mode}',
+    midi_action_loop_in: 'Loop IN (loop start)',
+    midi_action_loop_out: 'Loop OUT (closes and starts the loop)',
+    midi_action_fx_on: 'FX ON/OFF (deck unit)',
+    midi_action_key_up: 'KEY + (semitone)',
+    midi_action_key_dn: 'KEY − (semitone)',
+    midi_action_select: 'CHANNEL SELECT — this deck\'s position',
+    midi_action_browse: 'Browse the library (encoder)',
+    midi_action_browse_push: 'Encoder PUSH: enter the playlist / load',
+    midi_action_browse_back: 'BACK: leave the playlist',
+    midi_action_view_toggle: 'VIEW: hide / show the library',
+    midi_action_master_vol: 'MASTER volume',
+    midi_action_master_filter: 'MASTER FILTER',
+    midi_action_fx_level: 'FX level (knob)',
+    midi_action_fx_beats_dn: 'FX: beat length ÷2 (BEAT ◄)',
+    midi_action_fx_beats_up: 'FX: beat length ×2 (BEAT ►)',
+    midi_action_select_master: 'CHANNEL SELECT — MASTER position',
+    midi_action_bpm_up: 'Master BPM +0.5',
+    midi_action_bpm_dn: 'Master BPM −0.5',
+    gamepad_btn_cross: 'Cross',
+    gamepad_btn_circle: 'Circle',
+    gamepad_btn_square: 'Square',
+    gamepad_btn_ps: 'PS button',
+    gamepad_btn_xbox: 'Xbox button',
   },
 };
 
@@ -986,7 +1184,7 @@ export function setLang(lang) {
   applyStaticTranslations();
 }
 
-// t('some_key') -> traduction, ou t('some_key', {n: 3}) si la phrase contient {n}
+// t('some_key') -> translation, or t('some_key', {n: 3}) when the sentence contains {n}
 export function t(key, vars) {
   const dict = DICTIONARIES[currentLang] || DICTIONARIES[DEFAULT_LANG];
   let str = dict[key] ?? DICTIONARIES[DEFAULT_LANG][key] ?? key;
@@ -998,8 +1196,8 @@ export function t(key, vars) {
   return str;
 }
 
-// Traduit tout ce qui porte data-i18n / data-i18n-title / data-i18n-placeholder.
-// À appeler une fois au démarrage, et à nouveau après un changement de langue.
+// Translates everything carrying data-i18n / data-i18n-title / data-i18n-placeholder.
+// Call once at startup, and again after a language change.
 export function applyStaticTranslations(root = document) {
   root.querySelectorAll('[data-i18n]').forEach((el) => {
     el.textContent = t(el.getAttribute('data-i18n'));

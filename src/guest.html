@@ -83,6 +83,67 @@ h1 b{color:#39c2ff;font-weight:900}
 <div id="toast">Sent! 🔥</div>
 
 <script>
+// --- Language: English by default, French when the phone is set to French ---
+const L = navigator.language && navigator.language.toLowerCase().startsWith('fr') ? 'fr' : 'en';
+const STR = {
+  en: {
+    title: 'OpenMix — Request a track',
+    sub: 'Request a track — the DJ sees it live on their deck 🎧',
+    tab_lib: '🎵 THEIR TRACKS',
+    search: 'Search for a track…',
+    msg: 'A message for the DJ…',
+    sent: 'Sent! 🔥',
+    msg_sent: 'Message sent! 📨',
+    voted: 'VOTED ✓',
+    vote: 'VOTE',
+    req_sent: 'Request sent! 🔥',
+    sc_results: 'SOUNDCLOUD · {n} RESULTS',
+    most_requested: '🔥 MOST REQUESTED',
+    result_one: '{n} RESULT',
+    result_many: '{n} RESULTS',
+    their_tracks: 'THEIR TRACKS',
+    nothing_found: 'Nothing by that name in their tracks — try the ☁ SOUNDCLOUD tab to search the whole catalog.',
+    sc_type: 'Type a track or artist name, then 🔎',
+    sc_searching: 'Searching SoundCloud…',
+    sc_none: 'No results',
+    sc_unavailable: 'Search unavailable (connection?)',
+    search_sc: 'Search all of SoundCloud…',
+    search_lib: 'Search their tracks…'
+  },
+  fr: {
+    title: 'OpenMix — Demande un son',
+    sub: 'Demande un son — le DJ le voit en direct sur sa platine 🎧',
+    tab_lib: '🎵 SES SONS',
+    search: 'Chercher un son…',
+    msg: 'Un message pour le DJ…',
+    sent: 'Envoyé ! 🔥',
+    msg_sent: 'Message envoyé ! 📨',
+    voted: 'VOTÉ ✓',
+    vote: 'VOTER',
+    req_sent: 'Demande envoyée ! 🔥',
+    sc_results: 'SOUNDCLOUD · {n} RÉSULTATS',
+    most_requested: '🔥 LES PLUS DEMANDÉS',
+    result_one: '{n} RÉSULTAT',
+    result_many: '{n} RÉSULTATS',
+    their_tracks: 'SES SONS',
+    nothing_found: 'Rien à ce nom dans ses sons — essaie l’onglet ☁ SOUNDCLOUD pour chercher dans tout le catalogue.',
+    sc_type: 'Tape un titre ou un artiste, puis 🔎',
+    sc_searching: 'Recherche sur SoundCloud…',
+    sc_none: 'Aucun résultat',
+    sc_unavailable: 'Recherche indisponible (connexion ?)',
+    search_sc: 'Chercher dans tout SoundCloud…',
+    search_lib: 'Chercher dans ses sons…'
+  }
+};
+const T = (k, vars) => (STR[L][k] || STR.en[k] || k).replace(/\{(\w+)\}/g, (m, v) => (vars && vars[v] != null ? vars[v] : m));
+document.documentElement.lang = L;
+document.title = T('title');
+document.querySelector('header .sub').textContent = T('sub');
+document.getElementById('tab-lib').textContent = T('tab_lib');
+document.getElementById('search').placeholder = T('search');
+document.getElementById('msg').placeholder = T('msg');
+document.getElementById('toast').textContent = T('sent');
+
 const listEl = document.getElementById('list');
 const searchEl = document.getElementById('search');
 const goEl = document.getElementById('go');
@@ -115,7 +176,7 @@ document.getElementById('send').addEventListener('click', () => {
   if (!m) return;
   post({ msg: m });
   document.getElementById('msg').value = '';
-  toast('Message sent! 📨');
+  toast(T('msg_sent'));
 });
 document.getElementById('msg').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') document.getElementById('send').click();
@@ -154,15 +215,15 @@ function makeRow(it) {
     r.appendChild(vv);
   }
   const btn = document.createElement('button');
-  btn.textContent = voted.has(n) ? 'VOTED ✓' : 'VOTE';
+  btn.textContent = voted.has(n) ? T('voted') : T('vote');
   btn.disabled = voted.has(n);
   btn.addEventListener('click', () => {
     post({ name: n, bpm: it.bpm || null, url: it.url || null, art: it.art || null });
     voted.add(n);
     localStorage.setItem('tmVoted', JSON.stringify([...voted]));
     btn.disabled = true;
-    btn.textContent = 'VOTED ✓';
-    toast('Request sent! 🔥');
+    btn.textContent = T('voted');
+    toast(T('req_sent'));
   });
   r.appendChild(btn);
   return r;
@@ -181,7 +242,7 @@ function render() {
   if (mode === 'sc') {
     if (scMsg) listEl.appendChild(Object.assign(document.createElement('div'), { className: 'hint', textContent: scMsg }));
     if (scItems.length) {
-      listEl.appendChild(section(`SOUNDCLOUD · ${scItems.length} RESULTS`));
+      listEl.appendChild(section(T('sc_results', { n: scItems.length })));
       scItems.forEach((it) => listEl.appendChild(makeRow(it)));
     }
     return;
@@ -190,7 +251,7 @@ function render() {
   // The DJ's library — already-voted requests come first
   const top = Object.entries(votes).sort((a, b) => b[1] - a[1]).slice(0, 5);
   if (!q && top.length) {
-    listEl.appendChild(section('🔥 MOST REQUESTED'));
+    listEl.appendChild(section(T('most_requested')));
     top.forEach(([name, n]) => {
       const known = items.find((x) => x.name === name);
       listEl.appendChild(makeRow(known || { name, bpm: null }));
@@ -198,11 +259,11 @@ function render() {
     });
   }
   const found = items.filter((it) => !it.pl && (!q || it.name.toLowerCase().includes(q))).slice(0, 300);
-  listEl.appendChild(section(q ? `${found.length} RESULT${found.length > 1 ? 'S' : ''}` : 'THEIR TRACKS'));
+  listEl.appendChild(section(q ? T(found.length > 1 ? 'result_many' : 'result_one', { n: found.length }) : T('their_tracks')));
   if (!found.length) {
     const h = document.createElement('div');
     h.className = 'hint';
-    h.textContent = 'Nothing by that name in their tracks — try the ☁ SOUNDCLOUD tab to search the whole catalog.';
+    h.textContent = T('nothing_found');
     listEl.appendChild(h);
   }
   found.forEach((it) => listEl.appendChild(makeRow(it)));
@@ -214,19 +275,19 @@ async function scSearch() {
   const q = searchEl.value.trim();
   if (q.length < 2) {
     scItems = [];
-    scMsg = 'Type a track or artist name, then 🔎';
+    scMsg = T('sc_type');
     render();
     return;
   }
-  scMsg = 'Searching SoundCloud…';
+  scMsg = T('sc_searching');
   scItems = [];
   render();
   try {
     const r = await (await fetch(`/scsearch?q=${encodeURIComponent(q)}`)).json();
     scItems = r.tracks || [];
-    scMsg = scItems.length ? '' : (r.error || 'No results');
+    scMsg = scItems.length ? '' : (r.error || T('sc_none'));
   } catch {
-    scMsg = 'Search unavailable (connection?)';
+    scMsg = T('sc_unavailable');
   }
   render();
 }
@@ -234,7 +295,7 @@ function setMode(m) {
   mode = m;
   tabLib.classList.toggle('on', m === 'lib');
   tabSc.classList.toggle('on', m === 'sc');
-  searchEl.placeholder = m === 'sc' ? 'Search all of SoundCloud…' : 'Search their tracks…';
+  searchEl.placeholder = m === 'sc' ? T('search_sc') : T('search_lib');
   goEl.style.display = m === 'sc' ? '' : 'none';
   if (m === 'sc') scSearch(); else render();
 }

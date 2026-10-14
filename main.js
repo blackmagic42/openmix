@@ -6,13 +6,13 @@ const AUDIO_EXT = new Set(['.mp3', '.wav', '.flac', '.ogg', '.m4a', '.aac', '.op
 
 let win = null;
 
-// Les DONNÉES restent dans le dossier historique « Turbo Mix » quel que
-// soit le nom d'affichage (le renommage OpenMix ne doit JAMAIS faire
-// perdre la bibliothèque, les analyses, les cues ni la session SoundCloud)
+// DATA stays in the historical "Turbo Mix" folder whatever the display
+// name (the OpenMix rename must NEVER lose the library, the analyses,
+// the cues or the SoundCloud session)
 app.setPath('userData', path.join(app.getPath('appData'), 'Turbo Mix'));
 
-// Autorise le Web MIDI **avec SysEx** (indispensable au keep-alive Pioneer
-// qui débloque les LED des platines) — app locale, aucune page distante
+// Allows Web MIDI **with SysEx** (required for the Pioneer keep-alive
+// that unlocks the controllers' LEDs) — local app, no remote page
 app.whenReady().then(() => {
   const { session: sess } = require('electron');
   sess.defaultSession.setPermissionRequestHandler((_wc, _permission, cb) => cb(true));
@@ -27,9 +27,9 @@ function createWindow() {
     minHeight: 720,
     backgroundColor: '#0b0d12',
     title: 'OpenMix',
-    // Barre de titre INTÉGRÉE au design (finie la barre Windows blanche) :
-    // la fenêtre est frameless, les boutons ⊟ ⊡ ✕ flottent en overlay
-    // sombre et le topbar de l'app sert de zone de drag
+    // Title bar BUILT INTO the design (no more white Windows bar):
+    // the window is frameless, the ⊟ ⊡ ✕ buttons float in a dark
+    // overlay and the app's topbar serves as the drag area
     titleBarStyle: 'hidden',
     titleBarOverlay: { color: '#0b0d12', symbolColor: '#8a94ae', height: 40 },
     webPreferences: {
@@ -41,9 +41,9 @@ function createWindow() {
   });
   win.setMenuBarVisibility(false);
 
-  // Console du renderer piped vers stdout : indispensable pour diagnostiquer
-  // les erreurs JS de l'interface depuis le terminal (2 signatures selon
-  // la version d'Electron)
+  // Renderer console piped to stdout: essential for diagnosing UI JS
+  // errors from the terminal (2 signatures depending on the Electron
+  // version)
   win.webContents.on('console-message', (e, ...args) => {
     const msg = typeof args[1] === 'string' ? args[1]
       : (e && typeof e.message === 'string' ? e.message : String(args[0] ?? ''));
@@ -53,8 +53,8 @@ function createWindow() {
     }
   });
 
-  // Verrouille le zoom de page : c'est lui qui faisait « grandir » l'interface
-  // petit à petit (Ctrl+molette / pincement, mémorisé entre les sessions).
+  // Locks the page zoom: it is what made the UI "grow" little by little
+  // (Ctrl+wheel / pinch, remembered between sessions).
   win.webContents.setZoomFactor(1.0);
   win.webContents.setVisualZoomLevelLimits(1, 1);
   win.webContents.on('zoom-changed', () => win.webContents.setZoomFactor(1.0));
@@ -75,13 +75,13 @@ function createWindow() {
 }
 
 app.whenReady().then(async () => {
-  Menu.setApplicationMenu(null); // supprime aussi les raccourcis de zoom du menu par défaut
+  Menu.setApplicationMenu(null); // also removes the default menu's zoom shortcuts
   await loadSettings();
   createWindow();
 });
 app.on('window-all-closed', () => app.quit());
 
-// --- Réglages persistants côté main (jeton SoundCloud, client_id) ---
+// --- Persistent main-side settings (SoundCloud token, client_id) ---
 const settingsPath = () => path.join(app.getPath('userData'), 'turbo-settings.json');
 let settings = {};
 async function loadSettings() {
@@ -93,36 +93,36 @@ async function loadSettings() {
 }
 async function saveSettings() {
   try {
-    // Miroir rétro-compat : une ancienne version de l'app ne connaît que
-    // settings.scToken — on y reflète le jeton du compte 0 à chaque
-    // sauvegarde pour qu'un retour en arrière ne perde pas la session
+    // Backward-compat mirror: an older version of the app only knows
+    // settings.scToken — account 0's token is mirrored there on every
+    // save so that a rollback doesn't lose the session
     if (Array.isArray(settings.scAccounts)) {
       settings.scToken = (settings.scAccounts[0] && settings.scAccounts[0].token) || null;
     }
     await fsp.writeFile(settingsPath(), JSON.stringify(settings));
-  } catch { /* non bloquant */ }
+  } catch { /* non-blocking */ }
 }
 
-// Comptes SoundCloud connectés (b2b : le mien + celui du pote), chacun avec
-// SON jeton. Migration paresseuse depuis l'ancien réglage mono-compte
-// scToken — la garde teste la PRÉSENCE du tableau (même vide), jamais
-// scToken : le miroir rétro-compat ci-dessus relancerait sinon la migration
-// en boucle et ressusciterait des comptes supprimés.
+// Connected SoundCloud accounts (b2b: mine + my buddy's), each with ITS
+// OWN token. Lazy migration from the old single-account scToken setting
+// — the guard tests the PRESENCE of the array (even empty), never
+// scToken: otherwise the backward-compat mirror above would rerun the
+// migration in a loop and resurrect deleted accounts.
 function scAccounts() {
   if (!Array.isArray(settings.scAccounts)) {
     settings.scAccounts = settings.scToken
       ? [{ name: null, token: settings.scToken, fromCookie: true }]
       : [];
-    // Le jeton historique venait du cookie de la session par défaut : la
-    // migration vaut adoption, on ne relira plus jamais ce cookie
+    // The historical token came from the default session's cookie: the
+    // migration counts as adoption, that cookie will never be read again
     if (settings.scToken) settings.scCookieMigrated = true;
     saveSettings();
   }
   return settings.scAccounts;
 }
 
-// Compte à utiliser pour une requête : celui demandé s'il a encore un jeton,
-// sinon le premier compte valide, sinon null (requête anonyme au client_id)
+// Account to use for a request: the requested one if it still has a token,
+// otherwise the first valid account, otherwise null (anonymous client_id request)
 function scAcctOrDefault(accountIdx) {
   const accounts = scAccounts();
   const acct = accountIdx != null ? accounts[accountIdx] : null;
@@ -139,7 +139,7 @@ ipcMain.handle('pick-folder', async () => {
   return r.filePaths[0];
 });
 
-// Import Rekordbox : choisir l'export XML de la collection
+// Rekordbox import: pick the collection's XML export
 ipcMain.handle('pick-xml', async () => {
   const r = await dialog.showOpenDialog(win, {
     title: 'Choose the Rekordbox XML export',
@@ -149,7 +149,7 @@ ipcMain.handle('pick-xml', async () => {
   return r.canceled || !r.filePaths.length ? null : r.filePaths[0];
 });
 
-// SAMPLER : choisir un ou plusieurs fichiers audio à poser sur les pads
+// SAMPLER: pick one or more audio files to put on the pads
 ipcMain.handle('pick-samples', async () => {
   const r = await dialog.showOpenDialog(win, {
     title: 'Choose samples',
@@ -161,9 +161,9 @@ ipcMain.handle('pick-samples', async () => {
 
 async function walk(dir, out, depth = 0) {
   if (depth > 6) return;
-  if (out.length > 4000) return; // plafond : une racine de disque ne doit pas noyer l'app
-  // À la RACINE d'un disque on ne descend PAS en récursif (des heures de
-  // scan) : la navigation par dossiers permet d'aller chercher la musique
+  if (out.length > 4000) return; // cap: a drive root must not drown the app
+  // At a drive ROOT we do NOT recurse (hours of scanning): folder
+  // navigation lets the user go and find the music
   if (depth === 0 && /^[A-Za-z]:[\\/]?$/.test(dir)) {
     let entries0;
     try {
@@ -177,7 +177,7 @@ async function walk(dir, out, depth = 0) {
         try {
           const st = await fsp.stat(p);
           out.push({ path: p, name: path.parse(e.name).name, size: st.size, mtime: st.mtimeMs });
-        } catch { /* illisible */ }
+        } catch { /* unreadable */ }
       }
     }
     return;
@@ -201,7 +201,7 @@ async function walk(dir, out, depth = 0) {
           size: st.size,
           mtime: st.mtimeMs
         });
-      } catch { /* fichier illisible : on l'ignore */ }
+      } catch { /* unreadable file: skip it */ }
     }
   }
 }
@@ -214,13 +214,13 @@ ipcMain.handle('scan-folder', async (_e, dir) => {
 });
 
 ipcMain.handle('read-file', async (_e, p) => {
-  if (!p || typeof p !== 'string') return null; // chemin absent : pas de crash
+  if (!p || typeof p !== 'string') return null; // missing path: no crash
   return fsp.readFile(p);
 });
 
-// POCHETTE d'un morceau : tags du fichier local (ID3/FLAC/MP4 via
-// music-metadata) ou téléchargement d'une jaquette distante (SoundCloud).
-// Retourne { data: base64, format: mime } ou null.
+// Track COVER ART: tags of the local file (ID3/FLAC/MP4 via
+// music-metadata) or download of a remote artwork (SoundCloud).
+// Returns { data: base64, format: mime } or null.
 ipcMain.handle('read-cover', async (_e, src) => {
   try {
     if (/^https?:\/\//i.test(src)) {
@@ -229,7 +229,7 @@ ipcMain.handle('read-cover', async (_e, src) => {
       const buf = Buffer.from(await r.arrayBuffer());
       return { data: buf.toString('base64'), format: r.headers.get('content-type') || 'image/jpeg' };
     }
-    const mm = await import('music-metadata'); // paquet ESM : import dynamique
+    const mm = await import('music-metadata'); // ESM package: dynamic import
     const meta = await mm.parseFile(src, { duration: false });
     const pic = meta.common.picture && meta.common.picture[0];
     if (!pic) return null;
@@ -258,8 +258,8 @@ ipcMain.handle('cache-save', async (_e, obj) => {
   }
 });
 
-// Version SYNCHRONE pour la fermeture de l'app : bloque jusqu'à l'écriture
-// disque — le quit ne peut plus couper une sauvegarde de calage en vol
+// SYNCHRONOUS version for app shutdown: blocks until written to disk —
+// quitting can no longer cut off a beatgrid save mid-flight
 ipcMain.on('cache-save-sync', (e, obj) => {
   try {
     require('fs').writeFileSync(cachePath(), JSON.stringify(obj));
@@ -269,10 +269,10 @@ ipcMain.on('cache-save-sync', (e, obj) => {
   }
 });
 
-// --- Grilles Rekordbox : lecture des fichiers ANLZ (format documenté par
-// rétro-ingénierie, projet crate-digger). PPTH = chemin du morceau,
-// PQTZ = grille complète : chaque temps avec sa position (ms), son tempo
-// local (BPM×100) et son numéro dans la mesure (1-2-3-4). Tout est big-endian.
+// --- Rekordbox grids: reading ANLZ files (format documented by reverse
+// engineering, crate-digger project). PPTH = track path,
+// PQTZ = full grid: each beat with its position (ms), its local tempo
+// (BPM×100) and its number within the bar (1-2-3-4). All big-endian.
 function parseAnlz(b) {
   if (b.length < 12 || b.toString('ascii', 0, 4) !== 'PMAI') return null;
   const headerLen = b.readUInt32BE(4);
@@ -328,7 +328,7 @@ ipcMain.handle('rb-grids', async () => {
       for (const u of subs) {
         try {
           const r = parseAnlz(await fsp.readFile(path.join(root, d, u, 'ANLZ0000.DAT')));
-          // < 8 temps = sample ou jingle, inutile pour une grille
+          // < 8 beats = sample or jingle, useless for a grid
           if (r && r.path && r.bpm && r.beats.length >= 8) {
             out.push({
               name: r.path.split('/').pop().toLowerCase(),
@@ -338,21 +338,21 @@ ipcMain.handle('rb-grids', async () => {
               lastBeat: r.beats[r.beats.length - 1]
             });
           }
-        } catch { /* fichier absent ou illisible : on passe */ }
+        } catch { /* missing or unreadable file: skip */ }
       }
     }
   }
   return out;
 });
 
-// --- Télécommande téléphone : petit serveur HTTP sur le réseau local ---
+// --- Phone remote: small HTTP server on the local network ---
 const REMOTE_PORT = 8722;
 let remoteServer = null;
 let remoteState = { decks: [], xf: 0.5 };
 
 ipcMain.on('remote-state', (_e, s) => { remoteState = s; });
 
-// Vagues compactes + bibliothèque poussées par le renderer pour la console
+// Compact waveforms + library pushed by the renderer for the console
 const remoteWaves = [null, null, null, null];
 let remoteLibData = { stamp: 0, items: [] };
 ipcMain.on('remote-wave', (_e, i, payload) => {
@@ -360,9 +360,9 @@ ipcMain.on('remote-wave', (_e, i, payload) => {
 });
 ipcMain.on('remote-lib', (_e, d) => { remoteLibData = d; });
 
-// --- 📨 DEMANDES DU PUBLIC (100 % local, sans compte ni service tiers) :
-// les invités votent des morceaux / envoient des messages depuis /guest ---
-const guestVotes = new Map(); // nom du morceau -> { name, bpm, votes }
+// --- 📨 CROWD REQUESTS (100% local, no account or third-party service):
+// guests vote for tracks / send messages from /guest ---
+const guestVotes = new Map(); // track name -> { name, bpm, votes }
 let guestMsgs = [];
 function guestSnapshot() {
   return {
@@ -372,8 +372,8 @@ function guestSnapshot() {
 }
 ipcMain.handle('guest-get', () => guestSnapshot());
 
-// QR CODE de la page invités : les potes scannent l'écran du DJ et tombent
-// direct sur /guest — généré côté main (paquet qrcode), renvoyé en dataURL
+// QR CODE for the guest page: friends scan the DJ's screen and land
+// straight on /guest — generated main-side (qrcode package), returned as a dataURL
 ipcMain.handle('guest-qr', async (_e, url) => {
   try {
     const QRCode = require('qrcode');
@@ -410,7 +410,7 @@ function startRemoteServer() {
       let body = '';
       req.on('data', (d) => { body += d; });
       req.on('end', () => {
-        try { win.webContents.send('remote-cmd', JSON.parse(body)); } catch { /* ignoré */ }
+        try { win.webContents.send('remote-cmd', JSON.parse(body)); } catch { /* ignored */ }
         res.writeHead(204);
         res.end();
       });
@@ -422,8 +422,8 @@ function startRemoteServer() {
       return;
     }
     if (req.url === '/shot') {
-      // Capture de la fenêtre OpenMix (documentation/README) — UNIQUEMENT
-      // depuis ce PC : jamais exposé au réseau
+      // Screenshot of the OpenMix window (documentation/README) — ONLY
+      // from this PC: never exposed to the network
       const ip = req.socket.remoteAddress || '';
       if (ip !== '127.0.0.1' && ip !== '::1' && ip !== '::ffff:127.0.0.1') {
         res.writeHead(403);
@@ -451,14 +451,14 @@ function startRemoteServer() {
       res.end(JSON.stringify(remoteLibData));
       return;
     }
-    // RECHERCHE SOUNDCLOUD POUR LES INVITÉS : ils cherchent dans TOUT le
-    // catalogue depuis leur téléphone, pas seulement dans ta bibliothèque
+    // SOUNDCLOUD SEARCH FOR GUESTS: they search the WHOLE catalog from
+    // their phone, not just your library
     if (req.url.startsWith('/scsearch')) {
       const q = decodeURIComponent((/[?&]q=([^&]*)/.exec(req.url) || [, ''])[1] || '');
       res.writeHead(200, { 'Content-Type': 'application/json' });
       scSearchTracks(q).then((r) => {
-        // On ne propose PAS aux invités les morceaux protégés (DRM) : ils ne
-        // pourraient pas être chargés, autant ne pas les faire voter dessus
+        // DRM-protected tracks are NOT offered to guests: they couldn't be
+        // loaded, so there's no point letting them vote for them
         const tracks = (r.ok ? r.tracks : []).filter((t) => !t.drm).slice(0, 40).map((t) => ({
           name: t.name,
           url: t.permalink,
@@ -471,14 +471,14 @@ function startRemoteServer() {
       });
       return;
     }
-    // --- pages et API des INVITÉS (votes de morceaux, messages) ---
+    // --- GUEST pages and API (track votes, messages) ---
     if (req.url === '/guest' || req.url.startsWith('/guest?')) {
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
       try {
         res.end(require('fs').readFileSync(
           require('path').join(__dirname, 'src', 'guest.html'), 'utf8'));
       } catch (err) {
-        res.end(`<h1>guest.html introuvable</h1><pre>${err}</pre>`);
+        res.end(`<h1>guest.html not found</h1><pre>${err}</pre>`);
       }
       return;
     }
@@ -499,35 +499,35 @@ function startRemoteServer() {
             const key = String(v.name).slice(0, 200);
             const cur = guestVotes.get(key) || { name: key, bpm: v.bpm || null, votes: 0 };
             cur.votes++;
-            // Demande venue de la RECHERCHE SOUNDCLOUD : on garde le lien et
-            // la pochette — le DJ charge le morceau en un clic même s'il
-            // n'est pas dans sa bibliothèque
+            // Request coming from the SOUNDCLOUD SEARCH: keep the link and
+            // the cover art — the DJ loads the track in one click even if
+            // it isn't in their library
             if (v.url) cur.url = String(v.url).slice(0, 400);
             if (v.art) cur.art = String(v.art).slice(0, 400);
             guestVotes.set(key, cur);
           }
-          try { win.webContents.send('guest-req', guestSnapshot()); } catch { /* fenêtre fermée */ }
-        } catch { /* corps invalide : ignoré */ }
+          try { win.webContents.send('guest-req', guestSnapshot()); } catch { /* window closed */ }
+        } catch { /* invalid body: ignored */ }
         res.writeHead(204);
         res.end();
       });
       return;
     }
-    // La console téléphone vit dans src/remote.html (relue à chaque
-    // requête : rechargement téléphone = dernière version, sans rebuild)
+    // The phone console lives in src/remote.html (re-read on every
+    // request: reloading the phone = latest version, no rebuild)
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
     try {
       res.end(require('fs').readFileSync(
         require('path').join(__dirname, 'src', 'remote.html'), 'utf8'));
     } catch (err) {
-      res.end(`<h1>remote.html introuvable</h1><pre>${err}</pre>`);
+      res.end(`<h1>remote.html not found</h1><pre>${err}</pre>`);
     }
   });
-  remoteServer.on('error', () => { /* port pris : on garde l'app vivante */ });
+  remoteServer.on('error', () => { /* port taken: keep the app alive */ });
   remoteServer.listen(REMOTE_PORT);
 }
 
-// La console téléphone est TOUJOURS prête : serveur lancé dès le démarrage
+// The phone console is ALWAYS ready: server started at launch
 app.whenReady().then(() => startRemoteServer());
 
 ipcMain.handle('remote-start', async () => {
@@ -535,15 +535,15 @@ ipcMain.handle('remote-start', async () => {
   return { url: `http://${lanIp()}:${REMOTE_PORT}` };
 });
 
-// --- Stems : séparation voix/batterie/basse/instru via Demucs (IA locale) ---
-// LE BON PYTHON. « python » tout court prend le PREMIER du PATH : il a
-// suffi qu'un autre logiciel (un venv « hermes-agent ») se glisse en tête
-// pour que les stems disparaissent — son Python n'a pas Demucs. On cherche
-// donc UN Python qui sait importer demucs (lanceur py, installations
-// classiques, conda…), puis on retient son chemin.
-let demucsPy = null;      // chemin du python validé
-let demucsCuda = false;    // torch voit une carte graphique NVIDIA
-let demucsPySearch = null; // recherche en cours (partagée)
+// --- Stems: vocals/drums/bass/instrumental separation via Demucs (local AI) ---
+// THE RIGHT PYTHON. Plain "python" takes the FIRST one on the PATH: it
+// only took another program (a "hermes-agent" venv) slipping in first
+// for the stems to vanish — its Python has no Demucs. So we look for
+// A Python that can import demucs (py launcher, standard installs,
+// conda…), then remember its path.
+let demucsPy = null;      // path of the validated python
+let demucsCuda = false;    // torch sees an NVIDIA GPU
+let demucsPySearch = null; // search in progress (shared)
 
 function pyTest(exe, args = []) {
   const { spawn } = require('child_process');
@@ -557,8 +557,8 @@ function pyTest(exe, args = []) {
         'import demucs, sys, torch; print(int(torch.cuda.is_available())); print(sys.executable)'],
         { windowsHide: true, env: { ...process.env, PYTHONIOENCODING: 'utf-8' } });
     } catch { finish(null); return; }
-    // import torch peut prendre plusieurs secondes à froid
-    const t = setTimeout(() => { try { p.kill(); } catch { /* rien */ } finish(null); }, 90000);
+    // import torch can take several seconds on a cold start
+    const t = setTimeout(() => { try { p.kill(); } catch { /* nothing */ } finish(null); }, 90000);
     p.stdout.on('data', (d) => { out += d; });
     p.on('error', () => { clearTimeout(t); finish(null); });
     p.on('close', (code) => {
@@ -593,14 +593,14 @@ function pyCandidates() {
           if (fs.existsSync(exe)) add(exe);
         }
       }
-    } catch { /* dossier absent */ }
+    } catch { /* missing folder */ }
   }
   for (const c of ['anaconda3', 'miniconda3', 'Anaconda3', 'Miniconda3']) {
     const exe = path.join(home, c, 'python.exe');
     if (fs.existsSync(exe)) add(exe);
   }
-  // Versions récentes d'abord (Demucs est en général installé sur la plus
-  // récente que torch supporte), puis le lanceur py et le python du PATH
+  // Recent versions first (Demucs is usually installed on the newest one
+  // torch supports), then the py launcher and the python on the PATH
   list.sort((a, b) => b.exe.localeCompare(a.exe, undefined, { numeric: true }));
   for (const v of ['3.13', '3.12', '3.11', '3.10']) add('py', [`-${v}`]);
   add('python');
@@ -613,7 +613,7 @@ function findDemucsPython() {
   if (demucsPySearch) return demucsPySearch;
   demucsPySearch = (async () => {
     const fs = require('fs');
-    // chemin retenu lors d'une séance précédente : on le revérifie
+    // path remembered from a previous session: re-check it
     const saved = settings.demucsPython;
     if (saved && fs.existsSync(saved) && await pyTest(saved)) {
       demucsPy = saved;
@@ -625,7 +625,7 @@ function findDemucsPython() {
         demucsPy = exe;
         settings.demucsPython = exe;
         saveSettings();
-        console.log(`[midi] stems : Demucs trouvé → ${exe}`);
+        console.log(`[midi] stems: Demucs found → ${exe}`);
         return demucsPy;
       }
     }
@@ -635,12 +635,12 @@ function findDemucsPython() {
   return demucsPySearch;
 }
 
-// Recherche lancée dès le démarrage, en tâche de fond : le premier clic sur
-// VOX/DRM/INST n'attend pas l'import de torch
+// Search started at launch, in the background: the first click on
+// VOX/DRM/INST doesn't wait for torch to import
 app.whenReady().then(() => setTimeout(() => { findDemucsPython(); }, 4000));
 
-// État du moteur de stems pour l'interface : avec une carte graphique, la
-// séparation est assez légère pour tourner PENDANT le mix
+// Stems engine status for the UI: with a GPU, separation is light
+// enough to run DURING the mix
 ipcMain.handle('stems-info', async () => {
   const py = await findDemucsPython();
   return { ok: !!py, cuda: !!(py && demucsCuda) };
@@ -674,31 +674,31 @@ ipcMain.handle('stems-separate', async (_e, trackPath) => {
     const tmpOut = path.join(outRoot, `tmp-${hash}`);
     await fsp.rm(tmpOut, { recursive: true, force: true });
     const result = await new Promise((resolve) => {
-      // UTF-8 forcé : un titre avec « — » ou « ä » faisait planter
-      // l'affichage console de Demucs sous Windows (encodage cp1252)
+      // Forced UTF-8: a title with "—" or "ä" crashed Demucs's console
+      // output on Windows (cp1252 encoding)
       const p = spawn(py, ['-m', 'demucs', '-n', 'htdemucs', '-o', tmpOut, trackPath], {
         windowsHide: true,
         env: { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUTF8: '1' }
       });
-      // PRIORITÉ BASSE : Demucs ne doit JAMAIS voler le CPU de l'audio en
-      // cours — sinon le son grésille et la manette répond avec des secondes
-      // de retard pendant la séparation
-      try { require('os').setPriority(p.pid, 19); } catch { /* déjà mort */ }
+      // LOW PRIORITY: Demucs must NEVER steal CPU from the playing audio —
+      // otherwise the sound crackles and the controller responds seconds
+      // late during separation
+      try { require('os').setPriority(p.pid, 19); } catch { /* already dead */ }
       let err = '';
       p.stderr.on('data', (d) => { err = (err + d).slice(-4000); });
-      p.on('error', () => resolve({ code: -1, err: 'python introuvable' }));
+      p.on('error', () => resolve({ code: -1, err: 'python not found' }));
       p.on('close', (code) => resolve({ code, err }));
     });
     if (result.code !== 0) {
       const last = String(result.err || '').trim().split(/\r?\n/).filter(Boolean).pop() || '';
-      console.log(`[midi] stems : échec Demucs (${result.code}) ${last}`);
+      console.log(`[midi] stems: Demucs failed (${result.code}) ${last}`);
       await fsp.rm(tmpOut, { recursive: true, force: true }).catch(() => {});
-      // le python retenu ne marche plus (désinstallé ?) : on recherchera
+      // the remembered python no longer works (uninstalled?): search again
       if (result.code === -1) { demucsPy = null; delete settings.demucsPython; }
       return { ok: false, error: `Demucs failed${last ? ` — ${last.slice(0, 140)}` : ''}` };
     }
-    // Dossier de sortie : Demucs le nomme d'après le fichier — on prend
-    // celui qu'il a réellement créé (pas de devinette sur les points/accents)
+    // Output folder: Demucs names it after the file — take the one it
+    // actually created (no guessing about dots/accents)
     const modelDir = path.join(tmpOut, 'htdemucs');
     const sub = (await fsp.readdir(modelDir).catch(() => []))[0];
     const src = sub ? path.join(modelDir, sub) : path.join(modelDir, path.parse(trackPath).name);
@@ -713,32 +713,32 @@ ipcMain.handle('stems-separate', async (_e, trackPath) => {
 });
 
 // ---------------------------------------------------------------------------
-// yt-dlp : téléchargement depuis YouTube, SoundCloud et tout site que yt-dlp
-// connaît. OpenMix garde SA PROPRE copie (version officielle, installée une
-// fois depuis GitHub avec l'accord de l'utilisateur) : dépendre d'un yt-dlp
-// « trouvé » dans le PATH, c'est se faire casser par le premier logiciel qui
-// en glisse un autre devant (vécu avec Python et les stems).
-// Rien n'est réencodé : on garde le meilleur flux audio d'origine (m4a si
-// possible, lisible partout, platines comprises).
+// yt-dlp: downloading from YouTube, SoundCloud and any site yt-dlp
+// knows. OpenMix keeps ITS OWN copy (official release, installed once
+// from GitHub with the user's consent): relying on a yt-dlp "found" on
+// the PATH means getting broken by the first program that slips another
+// one in front (happened with Python and the stems).
+// Nothing is re-encoded: we keep the best original audio stream (m4a if
+// possible, playable everywhere, decks included).
 // ---------------------------------------------------------------------------
 const YTDLP_ASSET = process.platform === 'win32' ? 'yt-dlp.exe'
   : process.platform === 'darwin' ? 'yt-dlp_macos' : 'yt-dlp_linux';
 const YTDLP_URL = `https://github.com/yt-dlp/yt-dlp/releases/latest/download/${YTDLP_ASSET}`;
 const ytdlpManaged = () => path.join(app.getPath('userData'), 'bin',
   process.platform === 'win32' ? 'yt-dlp.exe' : 'yt-dlp');
-// DOSSIER DE MUSIQUE NATIF d'OpenMix : reçoit les téléchargements, toujours
-// en tête de l'explorateur. Par défaut Musique\OpenMix, déplaçable (⚙).
+// OpenMix's NATIVE MUSIC FOLDER: receives downloads, always at the top
+// of the explorer. Music\OpenMix by default, movable (⚙).
 const ytdlpOutDir = () => settings.dlRoot || path.join(app.getPath('music'), 'OpenMix');
 app.whenReady().then(() => fsp.mkdir(ytdlpOutDir(), { recursive: true }).catch(() => {}));
 
-// Un chemin est-il DANS le dossier natif ? (on n'écrit jamais ailleurs)
+// Is a path INSIDE the native folder? (we never write anywhere else)
 function insideDlRoot(p) {
   const rel = path.relative(ytdlpOutDir(), String(p || ''));
   return !!p && !rel.startsWith('..') && !path.isAbsolute(rel);
 }
 const cleanSeg = (s) => String(s || '').replace(/[<>:"/\\|?*\x00-\x1F]/g, '_').replace(/[. ]+$/, '').trim().slice(0, 80);
 
-// Sous-dossiers du dossier natif (3 niveaux), pour choisir où ranger
+// Subfolders of the native folder (3 levels), to choose where to file
 ipcMain.handle('dl-info', async () => {
   const rootDir = ytdlpOutDir();
   await fsp.mkdir(rootDir, { recursive: true }).catch(() => {});
@@ -759,8 +759,8 @@ ipcMain.handle('dl-info', async () => {
   return { root: rootDir, folders };
 });
 
-// Nouveau dossier (« House » ou « House/Deep ») dans le dossier natif
-// (parent = dossier où le créer — l'explorateur crée DANS le dossier ouvert)
+// New folder ("House" or "House/Deep") in the native folder
+// (parent = folder to create it in — the explorer creates INSIDE the open folder)
 ipcMain.handle('dl-mkdir', async (_e, rel, parent) => {
   const segs = String(rel || '').split(/[\\/]+/).map(cleanSeg).filter(Boolean);
   if (!segs.length) return { ok: false, error: 'empty name' };
@@ -771,11 +771,11 @@ ipcMain.handle('dl-mkdir', async (_e, rel, parent) => {
   return { ok: true, path: dir, rel: path.relative(ytdlpOutDir(), dir).split(path.sep).join('/') };
 });
 
-// --- RANGEMENT dans le dossier natif (glisser-déposer de l'explorateur) ---
-// Tout reste DANS le dossier natif : on n'écrit, ne déplace et ne jette
-// jamais rien ailleurs.
+// --- ORGANIZING inside the native folder (explorer drag and drop) ---
+// Everything stays INSIDE the native folder: nothing is ever written,
+// moved or trashed anywhere else.
 const isDlRoot = (p) => !!p && path.resolve(p) === path.resolve(ytdlpOutDir());
-// Nom libre dans destDir : « Nom (2) », « Nom (3) »…
+// Free name in destDir: "Name (2)", "Name (3)"…
 async function freeName(destDir, base, ext = '') {
   let target = path.join(destDir, base + ext);
   for (let k = 2; k < 200; k++) {
@@ -784,7 +784,7 @@ async function freeName(destDir, base, ext = '') {
   }
   return target;
 }
-// Sons d'un dossier (récursif) : leur clé d'analyse suit le déplacement
+// Audio files in a folder (recursive): their analysis key follows the move
 async function audioUnder(dir, max = 5000) {
   const out = [];
   const walk = async (d) => {
@@ -798,7 +798,7 @@ async function audioUnder(dir, max = 5000) {
         try {
           const st = await fsp.stat(p);
           out.push({ path: p, size: st.size, mtime: st.mtimeMs });
-        } catch { /* fichier disparu */ }
+        } catch { /* file vanished */ }
       }
     }
   };
@@ -809,7 +809,7 @@ const remapMoves = (files, from, to) => files.map((f) => ({
   from: f.path, to: path.join(to, path.relative(from, f.path)), size: f.size, mtime: f.mtime
 }));
 
-// Déplacer un DOSSIER dans un autre (les deux dans le dossier natif)
+// Move a FOLDER into another (both inside the native folder)
 ipcMain.handle('dl-move-dir', async (_e, src, destDir) => {
   try {
     if (!insideDlRoot(src) || isDlRoot(src)) return { ok: false, error: 'outside' };
@@ -826,7 +826,7 @@ ipcMain.handle('dl-move-dir', async (_e, src, destDir) => {
   }
 });
 
-// Renommer un son ou un dossier du dossier natif
+// Rename an audio file or a folder in the native folder
 ipcMain.handle('dl-rename', async (_e, p, newName) => {
   try {
     if (!insideDlRoot(p) || isDlRoot(p)) return { ok: false, error: 'outside' };
@@ -834,15 +834,15 @@ ipcMain.handle('dl-rename', async (_e, p, newName) => {
     let name = cleanSeg(newName);
     if (!name) return { ok: false, error: 'empty name' };
     const ext = path.extname(p);
-    // un son garde son extension, même si on ne l'a pas retapée
+    // an audio file keeps its extension, even if it wasn't retyped
     if (!st.isDirectory() && path.extname(name).toLowerCase() !== ext.toLowerCase()) name += ext;
     const target = path.join(path.dirname(p), name);
     if (path.resolve(target) === path.resolve(p)) return { ok: false, error: 'same name' };
     try {
       await fsp.access(target);
-      // (Windows : changer seulement la casse vise le « même » fichier)
+      // (Windows: changing only the case targets the "same" file)
       if (target.toLowerCase() !== p.toLowerCase()) return { ok: false, error: 'exists' };
-    } catch { /* libre */ }
+    } catch { /* free */ }
     const files = st.isDirectory() ? await audioUnder(p) : [{ path: p, size: st.size, mtime: st.mtimeMs }];
     await fsp.rename(p, target);
     const moves = st.isDirectory()
@@ -854,7 +854,7 @@ ipcMain.handle('dl-rename', async (_e, p, newName) => {
   }
 });
 
-// À la CORBEILLE (récupérable) — seulement dans le dossier natif
+// To the RECYCLE BIN (recoverable) — only inside the native folder
 ipcMain.handle('dl-trash', async (_e, p) => {
   try {
     if (!insideDlRoot(p) || isDlRoot(p)) return { ok: false, error: 'outside' };
@@ -865,7 +865,7 @@ ipcMain.handle('dl-trash', async (_e, p) => {
   }
 });
 
-// Choisir un autre emplacement pour le dossier natif
+// Choose another location for the native folder
 ipcMain.handle('dl-choose-root', async () => {
   const r = await dialog.showOpenDialog(win, {
     title: 'OpenMix music folder (downloads)',
@@ -878,10 +878,10 @@ ipcMain.handle('dl-choose-root', async () => {
   return { ok: true, root: settings.dlRoot };
 });
 
-// RANGER un son dans un dossier du dossier natif : TOUJOURS DÉPLACÉ, d'où
-// qu'il vienne — jamais de copie, jamais de doublon (demande David : « on ne
-// fait pas de copier-coller »). Même son déjà présent à l'arrivée (même nom,
-// même taille) : l'original part à la CORBEILLE au lieu de créer « (2) ».
+// FILE an audio file into a folder of the native folder: ALWAYS MOVED,
+// wherever it comes from — never a copy, never a duplicate (David's request:
+// "we don't do copy-paste"). Same file already at the destination (same name,
+// same size): the original goes to the RECYCLE BIN instead of creating "(2)".
 ipcMain.handle('dl-place', async (_e, file, destDir) => {
   let target = null;
   let copied = false;
@@ -902,8 +902,8 @@ ipcMain.handle('dl-place', async (_e, file, destDir) => {
       await fsp.rename(file, target);
     } catch (err) {
       if (err.code !== 'EXDEV') throw err;
-      // autre disque : copie (même date → la clé d'analyse reste valable)
-      // puis suppression de l'original ; si elle échoue, on retire la copie
+      // other drive: copy (same date → the analysis key stays valid)
+      // then delete the original; if that fails, the copy is removed
       copied = true;
       await fsp.copyFile(file, target);
       await fsp.utimes(target, st0.atime, st0.mtime).catch(() => {});
@@ -918,7 +918,7 @@ ipcMain.handle('dl-place', async (_e, file, destDir) => {
   }
 });
 let ytdlpCmd = null;          // { exe, args, source, version }
-const ytdlpJobs = new Map();  // id → processus en cours
+const ytdlpJobs = new Map();  // id → running process
 
 function ytdlpVersion(exe, args = []) {
   const { spawn } = require('child_process');
@@ -930,7 +930,7 @@ function ytdlpVersion(exe, args = []) {
     try {
       p = spawn(exe, [...args, '--version'], { windowsHide: true });
     } catch { finish(null); return; }
-    const t = setTimeout(() => { try { p.kill(); } catch { /* rien */ } finish(null); }, 30000);
+    const t = setTimeout(() => { try { p.kill(); } catch { /* nothing */ } finish(null); }, 30000);
     p.stdout.on('data', (d) => { out += d; });
     p.on('error', () => { clearTimeout(t); finish(null); });
     p.on('close', (code) => {
@@ -946,8 +946,8 @@ async function findYtDlp(force = false) {
   const fs = require('fs');
   const cands = [];
   if (fs.existsSync(ytdlpManaged())) cands.push({ exe: ytdlpManaged(), args: [], source: 'openmix' });
-  if (settings.ytdlpPath && fs.existsSync(settings.ytdlpPath)) cands.push({ exe: settings.ytdlpPath, args: [], source: 'perso' });
-  cands.push({ exe: 'yt-dlp', args: [], source: 'système' });
+  if (settings.ytdlpPath && fs.existsSync(settings.ytdlpPath)) cands.push({ exe: settings.ytdlpPath, args: [], source: 'custom' });
+  cands.push({ exe: 'yt-dlp', args: [], source: 'system' });
   for (const c of cands) {
     const v = await ytdlpVersion(c.exe, c.args);
     if (v) {
@@ -964,8 +964,8 @@ ipcMain.handle('ytdlp-status', async () => {
   return c ? { ok: true, version: c.version, source: c.source, dir: ytdlpOutDir() } : { ok: false, dir: ytdlpOutDir() };
 });
 
-// Installe (ou met à jour) la copie d'OpenMix : la DERNIÈRE version
-// officielle, publiée par le projet yt-dlp sur GitHub
+// Installs (or updates) OpenMix's copy: the LATEST official release,
+// published by the yt-dlp project on GitHub
 ipcMain.handle('ytdlp-install', async () => {
   try {
     const dest = ytdlpManaged();
@@ -981,14 +981,14 @@ ipcMain.handle('ytdlp-install', async () => {
     await fsp.rename(tmp, dest);
     const c = await findYtDlp(true);
     if (!c) throw new Error('yt-dlp does not start');
-    console.log(`[midi] yt-dlp ${c.version} installé (${dest})`);
+    console.log(`[midi] yt-dlp ${c.version} installed (${dest})`);
     return { ok: true, version: c.version, source: c.source };
   } catch (err) {
     return { ok: false, error: String(err.message || err) };
   }
 });
 
-// Nom de fichier « Artiste - Titre » (la bibliothèque coupe sur le 1er tiret)
+// "Artist - Title" file name (the library splits on the 1st dash)
 const ytClean = (s) => String(s || '').replace(/[<>:"/\\|?*\x00-\x1F]/g, '_').replace(/\s+/g, ' ').trim().slice(0, 150);
 
 ipcMain.handle('ytdlp-download', async (e, url, id, destDir) => {
@@ -996,19 +996,19 @@ ipcMain.handle('ytdlp-download', async (e, url, id, destDir) => {
   const c = await findYtDlp();
   if (!c) return { ok: false, error: 'yt-dlp not installed' };
   if (!/^https?:\/\//i.test(String(url || ''))) return { ok: false, error: 'bad url' };
-  // dossier choisi par l'utilisateur, à condition qu'il soit DANS le dossier natif
+  // folder chosen by the user, provided it is INSIDE the native folder
   const outDir = destDir && insideDlRoot(destDir) ? destDir : ytdlpOutDir();
   await fsp.mkdir(outDir, { recursive: true });
-  const send = (msg) => { try { e.sender.send('ytdlp-progress', { id, ...msg }); } catch { /* fenêtre fermée */ } };
-  // YouTube exige désormais un moteur JavaScript : on prête à yt-dlp le
-  // Node.js EMBARQUÉ dans Electron (ELECTRON_RUN_AS_NODE) — rien à installer
+  const send = (msg) => { try { e.sender.send('ytdlp-progress', { id, ...msg }); } catch { /* window closed */ } };
+  // YouTube now requires a JavaScript runtime: we lend yt-dlp the Node.js
+  // BUNDLED with Electron (ELECTRON_RUN_AS_NODE) — nothing to install
   const args = [
     ...c.args,
     '--js-runtimes', `node:${process.execPath}`,
-    '--no-playlist',            // une vidéo avec &list= : seulement la vidéo
+    '--no-playlist',            // a video with &list=: only the video
     '--newline', '--progress', '--no-colors', '--encoding', 'utf-8',
     '-f', 'bestaudio[ext=m4a]/bestaudio/best',
-    '--windows-filenames', '--trim-filenames', '200', // (yt-dlp compte le CHEMIN entier)
+    '--windows-filenames', '--trim-filenames', '200', // (yt-dlp counts the whole PATH)
     '-o', path.join(outDir, '%(title)s.%(ext)s'),
     '--print', 'after_move:OMFILE\t%(filepath)s\t%(uploader)s\t%(title)s',
     String(url)
@@ -1028,7 +1028,7 @@ ipcMain.handle('ytdlp-download', async (e, url, id, destDir) => {
       return;
     }
     ytdlpJobs.set(id, p);
-    try { require('os').setPriority(p.pid, 10); } catch { /* rien */ }
+    try { require('os').setPriority(p.pid, 10); } catch { /* nothing */ }
     let item = 1;
     let of = 1;
     let title = '';
@@ -1078,7 +1078,7 @@ ipcMain.handle('ytdlp-download', async (e, url, id, destDir) => {
   const cancelled = ytdlpJobs.get(id) && ytdlpJobs.get(id)._omCancelled;
   ytdlpJobs.delete(id);
   if (cancelled) return { ok: false, cancelled: true, error: 'cancelled' };
-  // Renommage « Artiste - Titre » quand le titre ne porte pas l'artiste
+  // Rename to "Artist - Title" when the title doesn't include the artist
   const out = [];
   for (const f of files) {
     let fp = f.fp;
@@ -1096,7 +1096,7 @@ ipcMain.handle('ytdlp-download', async (e, url, id, destDir) => {
       }
       const st = await fsp.stat(fp);
       out.push({ path: fp, name: path.parse(fp).name, size: st.size, mtime: st.mtimeMs });
-    } catch { /* fichier introuvable : ignoré */ }
+    } catch { /* file not found: ignored */ }
   }
   if (!out.length) {
     return { ok: false, error: lastErr || (code === 0 ? 'nothing downloaded' : `yt-dlp exit ${code}`) };
@@ -1104,8 +1104,8 @@ ipcMain.handle('ytdlp-download', async (e, url, id, destDir) => {
   return { ok: true, files: out, dir: outDir, partial: code !== 0 ? lastErr : null };
 });
 
-// RECHERCHE YouTube (yt-dlp « ytsearch ») : titres, chaîne, durée,
-// miniature — sans rien télécharger
+// YouTube SEARCH (yt-dlp "ytsearch"): titles, channel, duration,
+// thumbnail — without downloading anything
 ipcMain.handle('ytdlp-search', async (_e, query, n = 20) => {
   const { spawn } = require('child_process');
   const c = await findYtDlp();
@@ -1124,7 +1124,7 @@ ipcMain.handle('ytdlp-search', async (_e, query, n = 20) => {
       resolve({ ok: false, error: String(ex.message || ex) });
       return;
     }
-    const t = setTimeout(() => { try { p.kill(); } catch { /* rien */ } }, 40000);
+    const t = setTimeout(() => { try { p.kill(); } catch { /* nothing */ } }, 40000);
     p.stdout.on('data', (d) => { out += d; });
     p.stderr.on('data', (d) => { err = (err + d).slice(-2000); });
     p.on('error', (ex) => { clearTimeout(t); resolve({ ok: false, error: String(ex.message || ex) }); });
@@ -1137,7 +1137,7 @@ ipcMain.handle('ytdlp-search', async (_e, query, n = 20) => {
           id: e.id,
           url: e.url && /^https?:/.test(e.url) ? e.url : `https://www.youtube.com/watch?v=${e.id}`,
           title: e.title || e.id,
-          // « Artiste - Topic » = la chaîne officielle de l'artiste
+          // "Artist - Topic" = the artist's official channel
           artist: String(e.channel || e.uploader || '').replace(/ - Topic$/, ''),
           duration: e.duration || null,
           views: e.view_count || null,
@@ -1157,18 +1157,18 @@ ipcMain.handle('ytdlp-cancel', async (_e, id) => {
   p._omCancelled = true;
   try {
     if (process.platform === 'win32') {
-      // yt-dlp.exe relance un sous-processus : on arrête tout l'arbre
+      // yt-dlp.exe spawns a child process: kill the whole tree
       require('child_process').spawn('taskkill', ['/pid', String(p.pid), '/T', '/F'], { windowsHide: true });
     } else {
       p.kill();
     }
-  } catch { /* déjà fini */ }
+  } catch { /* already finished */ }
   return true;
 });
 
-// Relance pour une mise à jour SANS perdre les decks chargés : un fichier
-// « restore-once » posé dans le dossier de données fait restaurer la séance
-// au prochain démarrage, UNE fois (le fichier est consommé)
+// Restart for an update WITHOUT losing the loaded decks: a "restore-once"
+// file dropped in the data folder makes the next launch restore the
+// session, ONCE (the file is consumed)
 ipcMain.handle('take-restore-once', async () => {
   const f = path.join(app.getPath('userData'), 'restore-once');
   try {
@@ -1180,23 +1180,23 @@ ipcMain.handle('take-restore-once', async () => {
   }
 });
 
-// --- Explorateur de fichiers (arborescence classique) ---
+// --- File explorer (classic tree view) ---
 ipcMain.handle('fs-roots', async () => {
   const fs = require('fs');
   const roots = [];
   const add = (name, p) => {
-    try { if (p && fs.existsSync(p)) roots.push({ name, path: p }); } catch { /* rien */ }
+    try { if (p && fs.existsSync(p)) roots.push({ name, path: p }); } catch { /* nothing */ }
   };
-  // dossier NATIF d'OpenMix : toujours en tête (l'interface lui donne son nom)
+  // OpenMix's NATIVE folder: always first (the UI gives it its name)
   try {
     await fsp.mkdir(ytdlpOutDir(), { recursive: true });
     roots.push({ name: '📁 OpenMix', path: ytdlpOutDir(), native: true });
-  } catch { /* emplacement inaccessible */ }
-  add('📁 Musique', app.getPath('music'));
-  add('📁 Téléchargements', app.getPath('downloads'));
-  add('📁 Bureau', app.getPath('desktop'));
+  } catch { /* location inaccessible */ }
+  add('📁 Music', app.getPath('music'));
+  add('📁 Downloads', app.getPath('downloads'));
+  add('📁 Desktop', app.getPath('desktop'));
   add('📁 Documents', app.getPath('documents'));
-  for (const l of ['C', 'D', 'E', 'F', 'G']) add(`Disque ${l}:`, `${l}:\\`);
+  for (const l of ['C', 'D', 'E', 'F', 'G']) add(`Drive ${l}:`, `${l}:\\`);
   return roots;
 });
 
@@ -1213,9 +1213,9 @@ ipcMain.handle('fs-list', async (_e, dir) => {
   }
 });
 
-// --- Export d'une playlist sur clé USB (format universel) ---
-// Fichiers copiés + playlist M3U8 (lisible par les CDJ en navigation dossier
-// et par quasiment tout le matériel) + turbomix.json (grilles, cues).
+// --- Export a playlist to a USB drive (universal format) ---
+// Copied files + M3U8 playlist (readable by CDJs in folder browsing
+// and by almost all hardware) + turbomix.json (grids, cues).
 ipcMain.handle('export-playlist', async (_e, plName, items) => {
   try {
     const r = await dialog.showOpenDialog(win, {
@@ -1224,7 +1224,7 @@ ipcMain.handle('export-playlist', async (_e, plName, items) => {
     });
     if (r.canceled || !r.filePaths.length) return { ok: false, canceled: true };
     const root = r.filePaths[0];
-    const clean = (s) => String(s).replace(/[<>:"/\\|?*\x00-\x1F]/g, '_').trim().slice(0, 120) || 'sans-nom';
+    const clean = (s) => String(s).replace(/[<>:"/\\|?*\x00-\x1F]/g, '_').trim().slice(0, 120) || 'untitled';
     const dir = path.join(root, 'TurboMix', clean(plName));
     await fsp.mkdir(dir, { recursive: true });
 
@@ -1261,11 +1261,11 @@ ipcMain.handle('export-playlist', async (_e, plName, items) => {
   }
 });
 
-// Sauvegarde d'un enregistrement de mix (boîte de dialogue "Enregistrer sous")
+// Save a mix recording ("Save as" dialog)
 ipcMain.handle('save-recording', async (_e, data, defaultName) => {
   try {
     const r = await dialog.showSaveDialog(win, {
-      title: 'Enregistrer le mix',
+      title: 'Save the mix',
       defaultPath: path.join(app.getPath('music'), defaultName),
       filters: [{ name: 'Audio WebM (Opus)', extensions: ['webm'] }]
     });
@@ -1278,23 +1278,23 @@ ipcMain.handle('save-recording', async (_e, data, defaultName) => {
 });
 
 // ---------------------------------------------------------------------------
-// SoundCloud : API publique v2 du site + client_id extrait comme le fait le lecteur web
+// SoundCloud: the site's public v2 API + client_id extracted the way the web player does
 // ---------------------------------------------------------------------------
 
 const SC_API = 'https://api-v2.soundcloud.com';
 let scClientId = null;
 
-// `acct` est l'OBJET compte de settings.scAccounts (pas un jeton nu) : c'est
-// ce qui permet d'invalider LE BON compte sur un 401 sans toucher aux autres
+// `acct` is the account OBJECT from settings.scAccounts (not a bare token):
+// that is what lets a 401 invalidate THE RIGHT account without touching the others
 function scAuthHeaders(acct) {
   return acct && acct.token ? { 'Authorization': `OAuth ${acct.token}` } : {};
 }
 
-// Sonde d'identité : le SEUL verdict qui autorise à effacer un jeton.
-// /me répond 200 avec un OAuth valide MÊME SANS client_id — un client_id
-// périmé ne peut donc plus faire passer une session vivante pour morte.
-// Mémoïsée 30 s : une playlist qui échoue en boucle ne doit pas déclencher
-// une sonde par piste.
+// Identity probe: the ONLY verdict allowed to clear a token.
+// /me answers 200 with a valid OAuth EVEN WITHOUT a client_id — so an
+// expired client_id can no longer make a live session look dead.
+// Memoized for 30 s: a playlist failing in a loop must not trigger
+// one probe per track.
 let scProbe = { at: 0, key: null, dead: false, pending: null };
 async function scTokenReallyDead(acct) {
   const key = acct.token;
@@ -1307,9 +1307,9 @@ async function scTokenReallyDead(acct) {
       const r = await fetch(`${SC_API}/me`, {
         headers: { 'Accept': 'application/json', 'Authorization': `OAuth ${key}` }
       });
-      dead = r.status === 401; // 403 / 404 / 429 / 5xx : on ne conclut RIEN
+      dead = r.status === 401; // 403 / 404 / 429 / 5xx: conclude NOTHING
     } catch {
-      dead = false;            // réseau coupé : surtout ne pas déconnecter
+      dead = false;            // network down: above all, don't log out
     }
     scProbe = { at: Date.now(), key, dead, pending: null };
     return dead;
@@ -1320,40 +1320,40 @@ async function scTokenReallyDead(acct) {
 async function scGetJson(url, acct = null, opts = {}) {
   const get = () => fetch(url, { headers: { 'Accept': 'application/json', ...scAuthHeaders(acct) } });
   let r = await get();
-  // 429 = trop de requêtes (SoundCloud limite le débit) : on patiente et on
-  // retente au lieu d'afficher une erreur de chargement à l'utilisateur
+  // 429 = too many requests (SoundCloud rate-limits): wait and retry
+  // instead of showing the user a loading error
   for (let i = 0; i < 2 && r.status === 429; i++) {
     await new Promise((ok) => setTimeout(ok, 1200 * (i + 1)));
     r = await get();
   }
-  // opts.keepToken : un 401 venu de l'URL D'UN FLUX ne prouve RIEN sur la
-  // session (il manque le plus souvent track_authorization) — invalider le
-  // jeton là-dessus déconnectait un compte payant parfaitement valide, et
-  // faisait échouer tous les morceaux suivants en cascade.
+  // opts.keepToken: a 401 from A STREAM's URL proves NOTHING about the
+  // session (most often track_authorization is missing) — invalidating the
+  // token on that logged out a perfectly valid paid account, and made
+  // every following track fail in cascade.
   if (r.status === 401 && acct && acct.token && !opts.keepToken) {
-    // Un 401 ne PROUVE PAS que la session est morte : ce peut être le
-    // client_id public périmé, une piste sans droits, une URL mal formée.
-    // On ne déconnecte QUE si la sonde /me le confirme — sinon on éjectait
-    // des comptes payants valides, DE FAÇON PERSISTANTE (le null repart
-    // dans les réglages), et tout le reste de la soirée échouait.
+    // A 401 does NOT PROVE the session is dead: it may be the expired
+    // public client_id, a track without rights, a malformed URL.
+    // We log out ONLY if the /me probe confirms it — otherwise valid paid
+    // accounts got kicked out, PERSISTENTLY (the null goes back into the
+    // settings), and the rest of the night failed.
     if (await scTokenReallyDead(acct)) {
-      // Invalidation CIBLÉE : seul CE compte est marqué expiré (l'entrée
-      // reste dans la liste pour proposer la reconnexion) — en b2b, le
-      // jeton mort du pote ne doit pas déconnecter tout le monde.
+      // TARGETED invalidation: only THIS account is marked expired (the entry
+      // stays in the list to offer reconnection) — in b2b, the buddy's
+      // dead token must not log everyone out.
       acct.token = null;
       await saveSettings();
       throw new Error(`SoundCloud session for ${acct.name || 'your account'} expired — reconnect this account`);
     }
-    // Session vivante : c'est très probablement le client_id. On laisse
-    // « SoundCloud HTTP 401 » remonter pour que scTry en réextraie un frais.
+    // Live session: it's most likely the client_id. Let
+    // "SoundCloud HTTP 401" bubble up so scTry re-extracts a fresh one.
     throw new Error('SoundCloud HTTP 401');
   }
   if (!r.ok) throw new Error(`SoundCloud HTTP ${r.status}`);
   return r.json();
 }
 
-// Récupère un client_id : variable d'environnement, réglages sauvegardés,
-// sinon découverte automatique dans les scripts du site web de SoundCloud.
+// Gets a client_id: environment variable, saved settings, otherwise
+// automatic discovery in the SoundCloud website's scripts.
 async function scEnsureClientId(force = false) {
   if (!force) {
     if (scClientId) return scClientId;
@@ -1378,20 +1378,20 @@ async function scEnsureClientId(force = false) {
         await saveSettings();
         return scClientId;
       }
-    } catch { /* script suivant */ }
+    } catch { /* next script */ }
   }
-  throw new Error('client_id SoundCloud introuvable');
+  throw new Error('SoundCloud client_id not found');
 }
 
-// Retente une fois avec un client_id frais si SoundCloud renvoie 401/403
+// Retries once with a fresh client_id if SoundCloud returns 401/403
 async function scTry(fn) {
   try {
     return await fn();
   } catch (e) {
-    // ANCRÉ sur « SoundCloud HTTP » : seuls les appels d'API justifient de
-    // réextraire le client_id. Un « Segment HTTP 403 » (URL de CDN signée
-    // qui expire) relançait tout le téléchargement du morceau — alors qu'un
-    // client_id neuf ne resigne évidemment pas une URL de CDN.
+    // ANCHORED on "SoundCloud HTTP": only API calls justify re-extracting
+    // the client_id. A "Segment HTTP 403" (expiring signed CDN URL)
+    // restarted the whole track download — while a new client_id
+    // obviously doesn't re-sign a CDN URL.
     if (/SoundCloud HTTP (401|403)/.test(String(e))) {
       await scEnsureClientId(true);
       return fn();
@@ -1400,38 +1400,38 @@ async function scTry(fn) {
   }
 }
 
-// Adopte le jeton de la session navigateur HISTORIQUE (connexion d'avant le
-// multi-compte, cookie dans la session par défaut). ONE-SHOT : le flag
-// scCookieMigrated garantit qu'on ne relit JAMAIS ce cookie ensuite — sinon
-// supprimer le compte historique le ressusciterait au sc-status suivant.
+// Adopts the token from the HISTORICAL browser session (pre-multi-account
+// login, cookie in the default session). ONE-SHOT: the scCookieMigrated
+// flag guarantees this cookie is NEVER read again — otherwise deleting
+// the historical account would resurrect it at the next sc-status.
 async function scAdoptCookieToken() {
-  const accounts = scAccounts(); // déclenche au passage la migration scToken
+  const accounts = scAccounts(); // also triggers the scToken migration along the way
   if (settings.scCookieMigrated) return;
-  settings.scCookieMigrated = true; // même en cas d'échec : une seule tentative
+  settings.scCookieMigrated = true; // even on failure: a single attempt
   try {
     const cookies = await session.defaultSession.cookies.get({ name: 'oauth_token' });
     const c = cookies.find(k => k.domain.includes('soundcloud.com') && k.value);
-    // fromCookie : à la suppression de ce compte on saura qu'il faut AUSSI
-    // retirer le cookie de la session par défaut
+    // fromCookie: when this account is removed we'll know the cookie must
+    // ALSO be removed from the default session
     if (c) accounts.push({ name: null, token: c.value, fromCookie: true });
-  } catch { /* pas de cookie */ }
+  } catch { /* no cookie */ }
   await saveSettings();
 }
 
-// Fenêtre de connexion officielle SoundCloud ; on récupère le jeton de session
-// (cookie oauth_token) une fois l'utilisateur connecté.
+// Official SoundCloud login window; the session token (oauth_token
+// cookie) is retrieved once the user is logged in.
 function scLoginWindow() {
   return new Promise((resolve) => {
     const lw = new BrowserWindow({
       width: 540,
       height: 760,
       parent: win,
-      title: 'Connexion SoundCloud',
+      title: 'SoundCloud login',
       autoHideMenuBar: true,
-      // Partition ÉPHÉMÈRE (pas de préfixe « persist: » = session en RAM,
-      // jetée à la fermeture) : chaque connexion part d'une page VIERGE.
-      // Sans elle, le 2e compte tombait sur la session déjà connectée du 1er
-      // (impossible d'ajouter le compte du pote sans déconnecter le sien).
+      // EPHEMERAL partition (no "persist:" prefix = in-memory session,
+      // discarded on close): every login starts from a BLANK page.
+      // Without it, the 2nd account landed on the 1st one's logged-in session
+      // (impossible to add the buddy's account without logging out your own).
       webPreferences: {
         nodeIntegration: false,
         contextIsolation: true,
@@ -1450,7 +1450,7 @@ function scLoginWindow() {
           resolve(c.value);
           lw.close();
         }
-      } catch { /* on réessaie */ }
+      } catch { /* try again */ }
     }, 700);
     lw.on('closed', () => {
       clearInterval(timer);
@@ -1459,37 +1459,37 @@ function scLoginWindow() {
   });
 }
 
-// Connexion d'un compte : le MÊME handler sert au 1er login, à l'ajout du
-// compte du pote (b2b) et à la reconnexion d'un compte expiré. Plus de
-// court-circuit « déjà connecté » : chaque appel ouvre une fenêtre vierge.
+// Account login: the SAME handler serves the 1st login, adding the
+// buddy's account (b2b) and reconnecting an expired account. No more
+// "already connected" short-circuit: every call opens a blank window.
 ipcMain.handle('sc-login', async () => {
   try {
     const accounts = scAccounts();
     const token = await scLoginWindow();
     if (!token) return { ok: false, error: 'Login canceled' };
     let cid = '';
-    try { cid = await scEnsureClientId(); } catch { /* le jeton peut suffire */ }
+    try { cid = await scEnsureClientId(); } catch { /* the token may be enough */ }
     const q = cid ? `?client_id=${cid}` : '';
-    // /me avec CE jeton : identifie le compte (nom affiché + anti-doublon).
-    // Objet compte jetable : un 401 ici ne doit invalider personne d'autre.
+    // /me with THIS token: identifies the account (display name + duplicate check).
+    // Throwaway account object: a 401 here must not invalidate anyone else.
     const me = await scGetJson(`${SC_API}/me${q}`, { name: null, token });
     const name = me.username || null;
-    // Un compte migré (name encore null) doit être identifié AVANT
-    // l'anti-doublon, sinon se reconnecter à son propre compte le dupliquerait
+    // A migrated account (name still null) must be identified BEFORE the
+    // duplicate check, otherwise reconnecting to your own account would duplicate it
     for (const a of accounts) {
       if (!a.name && a.token) {
         try {
           const m = await scGetJson(`${SC_API}/me${q}`, a);
           a.name = m.username || null;
-        } catch { /* jeton mort : déjà invalidé par scGetJson */ }
+        } catch { /* dead token: already invalidated by scGetJson */ }
       }
     }
-    // Reconnexion IN-PLACE : même compte déjà connu → on RÉUTILISE son index,
-    // les acctIdx tagués sur les lignes déjà affichées restent valables
+    // IN-PLACE reconnection: same account already known → REUSE its index,
+    // the acctIdx tagged on rows already displayed stay valid
     const existing = accounts.findIndex(a => name && a.name === name);
     if (existing >= 0) {
       if (accounts[existing].token) {
-        await saveSettings(); // les noms fraîchement appris méritent d'être gardés
+        await saveSettings(); // freshly learned names are worth keeping
         return { ok: false, error: `Account ${name} already connected` };
       }
       accounts[existing].token = token;
@@ -1504,19 +1504,19 @@ ipcMain.handle('sc-login', async () => {
   }
 });
 
-// Retire un compte de la liste (clic droit sur sa ligne 👤 dans l'interface)
+// Removes an account from the list (right-click on its 👤 row in the UI)
 ipcMain.handle('sc-remove-account', async (_e, idx) => {
   try {
     const accounts = scAccounts();
     const acct = accounts[idx];
     if (!acct) return { ok: false, error: 'Unknown account' };
     accounts.splice(idx, 1);
-    // Compte hérité de la session navigateur historique : on retire AUSSI le
-    // cookie de la session par défaut, sinon le jeton traînerait sur le disque
+    // Account inherited from the historical browser session: ALSO remove the
+    // cookie from the default session, otherwise the token would linger on disk
     if (acct.fromCookie) {
       try {
         await session.defaultSession.cookies.remove('https://soundcloud.com', 'oauth_token');
-      } catch { /* déjà absent */ }
+      } catch { /* already gone */ }
     }
     await saveSettings();
     return { ok: true, accounts: accounts.map(a => ({ name: a.name, expired: !a.token })) };
@@ -1534,8 +1534,8 @@ ipcMain.handle('sc-status', async () => {
   };
 });
 
-// Playlists DU COMPTE DEMANDÉ (accountIdx) : celles de l'utilisateur +
-// celles de sa bibliothèque. Sans index → compte 0, comme avant le multi.
+// Playlists OF THE REQUESTED ACCOUNT (accountIdx): the user's own +
+// those in their library. No index → account 0, as before multi-account.
 ipcMain.handle('sc-my-playlists', async (_e, accountIdx) => {
   try {
     await scAdoptCookieToken();
@@ -1544,10 +1544,10 @@ ipcMain.handle('sc-my-playlists', async (_e, accountIdx) => {
     if (!acct || !acct.token) return { ok: false, needLogin: true, error: 'Not connected to SoundCloud' };
     return await scTry(async () => {
       let cid = '';
-      try { cid = await scEnsureClientId(); } catch { /* le jeton peut suffire */ }
+      try { cid = await scEnsureClientId(); } catch { /* the token may be enough */ }
       const q = cid ? `client_id=${cid}&` : '';
       const me = await scGetJson(`${SC_API}/me?${q}`.replace(/[?&]$/, ''), acct);
-      // Compte migré de l'ancien réglage mono-compte : on apprend son nom ici
+      // Account migrated from the old single-account setting: learn its name here
       if (!acct.name && me.username) {
         acct.name = me.username;
         await saveSettings();
@@ -1568,12 +1568,12 @@ ipcMain.handle('sc-my-playlists', async (_e, accountIdx) => {
       try {
         const lib = await scGetJson(`${SC_API}/me/library/all?${q}limit=100`, acct);
         for (const it of (lib.collection || [])) push(it.playlist);
-      } catch { /* endpoint parfois indisponible */ }
+      } catch { /* endpoint sometimes unavailable */ }
       try {
         const own = await scGetJson(`${SC_API}/users/${me.id}/playlists?${q}limit=100`, acct);
         for (const p of (own.collection || [])) push(p);
-      } catch { /* idem */ }
-      // Les LIKES en tête, comme une playlist — « une playlist like » (David)
+      } catch { /* same */ }
+      // LIKES first, like a playlist — "a likes playlist" (David)
       items.unshift({ scLikes: true, name: '❤ Likes', trackCount: null });
       return { ok: true, username: me.username, accountIdx: idx, playlists: items };
     });
@@ -1582,7 +1582,7 @@ ipcMain.handle('sc-my-playlists', async (_e, accountIdx) => {
   }
 });
 
-// Tous les sons LIKÉS du compte demandé (paginé) — sans index : compte 0
+// All LIKED tracks of the requested account (paginated) — no index: account 0
 ipcMain.handle('sc-my-likes', async (_e, accountIdx) => {
   try {
     await scAdoptCookieToken();
@@ -1591,7 +1591,7 @@ ipcMain.handle('sc-my-likes', async (_e, accountIdx) => {
     if (!acct || !acct.token) return { ok: false, needLogin: true, error: 'Not connected to SoundCloud' };
     return await scTry(async () => {
       let cid = '';
-      try { cid = await scEnsureClientId(); } catch { /* le jeton peut suffire */ }
+      try { cid = await scEnsureClientId(); } catch { /* the token may be enough */ }
       const q = cid ? `client_id=${cid}&` : '';
       const me = await scGetJson(`${SC_API}/me?${q}`.replace(/[?&]$/, ''), acct);
       if (!acct.name && me.username) {
@@ -1618,9 +1618,9 @@ ipcMain.handle('sc-my-likes', async (_e, accountIdx) => {
   }
 });
 
-// Un flux « encrypted-hls » est protégé par DRM (FairPlay/Widevine) : sa clé
-// n'est délivrée qu'au lecteur du site. On ne peut ni le lire ni l'analyser —
-// il faut le DIRE, pas afficher « erreur de chargement ».
+// An "encrypted-hls" stream is DRM-protected (FairPlay/Widevine): its key
+// is only delivered to the site's player. We can neither play nor analyze it —
+// we must SAY so, not show "loading error".
 const scIsDrm = (c) => /encrypted/i.test((c.format && c.format.protocol) || '');
 
 function scSimplifyTrack(t) {
@@ -1631,24 +1631,24 @@ function scSimplifyTrack(t) {
     scId: t.id,
     name: `${(t.user && t.user.username) || '?'} - ${t.title || t.id}`,
     duration: t.duration ? t.duration / 1000 : null,
-    // LIEN DU MORCEAU — sans lui, les demandes du public venues de la
-    // recherche SoundCloud arrivaient sans adresse et étaient TOUTES refusées
+    // TRACK LINK — without it, crowd requests coming from the SoundCloud
+    // search arrived without an address and were ALL rejected
     permalink: t.permalink_url || null,
-    // Droits : on les affiche au lieu de faire disparaître la ligne
+    // Rights: show them instead of making the row disappear
     policy: t.policy || null,             // ALLOW / MONETIZE / SNIP / BLOCK
     snipped: t.snipped === true || codings.some((c) => c.snipped === true),
     blocked: t.policy === 'BLOCK',
     streamable: t.streamable !== false && t.policy !== 'BLOCK',
-    // Jaquette SoundCloud (t500 = grande taille) — pochette sur le deck
+    // SoundCloud artwork (t500 = large size) — cover art on the deck
     artwork: t.artwork_url ? t.artwork_url.replace('-large', '-t500x500') : null,
-    // Forme d'onde publiée par SoundCloud : l'aperçu dans la liste SANS
-    // télécharger le son
+    // Waveform published by SoundCloud: the preview in the list WITHOUT
+    // downloading the audio
     waveform: t.waveform_url || null
   };
 }
 
-// Forme d'onde SoundCloud (wave.sndcdn.com) : la version .json donne
-// ~1800 hauteurs 0-140. Réduite à 600 points pour l'aperçu de la liste.
+// SoundCloud waveform (wave.sndcdn.com): the .json version gives
+// ~1800 heights 0-140. Reduced to 600 points for the list preview.
 ipcMain.handle('sc-waveform', async (_e, url) => {
   try {
     if (!/^https:\/\/([a-z0-9-]+\.)*sndcdn\.com\//i.test(String(url || ''))) return { ok: false };
@@ -1672,9 +1672,9 @@ ipcMain.handle('sc-waveform', async (_e, url) => {
   }
 });
 
-// Complète les pistes « stub » (les playlists ne renvoient en entier que les
-// premières). Le compte est propagé : sans lui, les pistes privées/Go+ d'une
-// playlist resteraient des stubs invisibles.
+// Fills in "stub" tracks (playlists only return the first ones in full).
+// The account is passed along: without it, a playlist's private/Go+
+// tracks would remain invisible stubs.
 async function scHydrateTracks(tracks, cid, acct = null) {
   const stubs = tracks.filter(t => !t.title).map(t => t.id);
   const byId = new Map();
@@ -1683,20 +1683,20 @@ async function scHydrateTracks(tracks, cid, acct = null) {
     try {
       const full = await scGetJson(`${SC_API}/tracks?ids=${ids}&client_id=${cid}`, acct);
       for (const t of full) byId.set(t.id, t);
-    } catch { /* pistes indisponibles : ignorées */ }
+    } catch { /* unavailable tracks: ignored */ }
   }
   return tracks
     .map(t => (t.title ? t : byId.get(t.id)))
     .filter(Boolean);
 }
 
-// Résout une URL SoundCloud : playlist -> pistes ; profil -> liste de playlists.
-// accountIdx = compte dont le jeton accompagne les requêtes (playlists
-// privées / Go+) ; à défaut, premier compte valide, sinon anonyme.
+// Resolves a SoundCloud URL: playlist -> tracks; profile -> list of playlists.
+// accountIdx = account whose token goes with the requests (private / Go+
+// playlists); failing that, the first valid account, otherwise anonymous.
 ipcMain.handle('sc-resolve', async (_e, url, accountIdx) => {
   try {
     if (!/^https?:\/\/(www\.|m\.|on\.)?soundcloud\.com\//.test(url.trim())) {
-      return { ok: false, error: 'Ce n’est pas un lien soundcloud.com' };
+      return { ok: false, error: 'This is not a soundcloud.com link' };
     }
     const acct = scAcctOrDefault(accountIdx);
     return await scTry(async () => {
@@ -1727,13 +1727,13 @@ ipcMain.handle('sc-resolve', async (_e, url, accountIdx) => {
   }
 });
 
-// Recherche dans TOUT le catalogue SoundCloud (pas seulement les playlists).
-// Fonction partagée : utilisée par le logiciel (IPC) ET par la page des
-// invités (/scsearch) — ils cherchent depuis leur téléphone.
+// Search the WHOLE SoundCloud catalog (not just playlists).
+// Shared function: used by the app (IPC) AND by the guest page
+// (/scsearch) — guests search from their phone.
 async function scSearchTracks(query, accountIdx) {
   try {
     const q = String(query || '').trim();
-    if (!q) return { ok: false, error: 'Recherche vide' };
+    if (!q) return { ok: false, error: 'Empty search' };
     const acct = scAcctOrDefault(accountIdx);
     return await scTry(async () => {
       const cid = await scEnsureClientId();
@@ -1742,10 +1742,10 @@ async function scSearchTracks(query, accountIdx) {
       const tracks = (res.collection || [])
         .filter(t => t && t.id && (t.kind === 'track' || !t.kind))
         .map(scSimplifyTrack)
-        // « streamable » est un champ HÉRITÉ de l'ancienne API : il vaut
-        // false sur des pistes qui se lisent très bien une fois authentifié
-        // — il supprimait EN SILENCE des résultats. On ne masque plus que
-        // le vrai retrait (BLOCK), qu'aucun abonnement ne débloque.
+        // "streamable" is a LEGACY field from the old API: it is false on
+        // tracks that play just fine once authenticated — it SILENTLY
+        // dropped results. Now only actual takedowns (BLOCK) are hidden,
+        // which no subscription unlocks.
         .filter(t => !t.blocked);
       return { ok: true, tracks };
     });
@@ -1755,7 +1755,7 @@ async function scSearchTracks(query, accountIdx) {
 }
 ipcMain.handle('sc-search', (_e, query, accountIdx) => scSearchTracks(query, accountIdx));
 
-// Ouvre un lien dans le NAVIGATEUR du système (page invités cliquable)
+// Opens a link in the system BROWSER (clickable guest page)
 ipcMain.handle('open-external', (_e, url) => {
   try {
     const u = String(url || '');
@@ -1767,11 +1767,11 @@ ipcMain.handle('open-external', (_e, url) => {
   }
 });
 
-// Téléchargement du flux audio d'une piste SoundCloud vers un fichier.
-// Le compte (acct) ouvre l'accès aux pistes privées/Go+ ; les fetch bruts du
-// flux plus bas restent sans auth : ce sont des URLs déjà signées.
-// Téléchargements SoundCloud EN COURS (scId → AbortController) : charger un
-// autre son sur le deck ANNULE le premier (un set de 3 h lancé par erreur)
+// Downloads a SoundCloud track's audio stream to a file.
+// The account (acct) opens access to private/Go+ tracks; the raw stream
+// fetches further down stay unauthenticated: they are already-signed URLs.
+// IN-PROGRESS SoundCloud downloads (scId → AbortController): loading
+// another track on the deck CANCELS the first (a 3 h set started by mistake)
 const scAborts = new Map();
 ipcMain.handle('sc-cancel', async (_e, scId) => {
   const ac = scAborts.get(String(scId));
@@ -1791,38 +1791,38 @@ async function scDownloadToFile(scId, dest, acct = null, signal = null) {
         ? 'Track blocked in your country'
         : 'This track has no available stream (removed, private, or deleted)');
     }
-    // On ÉCARTE les flux protégés par DRM : leur clé est réservée au lecteur
-    // du site (FairPlay/Widevine). Les télécharger ne donnerait que des
-    // octets chiffrés — un faux « succès » avec un fichier illisible.
+    // DRM-protected streams are DISCARDED: their key is reserved for the
+    // site's player (FairPlay/Widevine). Downloading them would only give
+    // encrypted bytes — a fake "success" with an unreadable file.
     const codings = allCodings.filter((c) => !scIsDrm(c));
     if (!codings.length) {
-      // Flux chiffré : la clé n'est délivrée qu'au lecteur du site. Rien à
-      // « réparer » côté code, et rien à contourner — on le dit, c'est tout.
+      // Encrypted stream: the key is only delivered to the site's player.
+      // Nothing to "fix" in code, and nothing to bypass — we say so, that's all.
       throw new Error('Protected track (DRM): playback outside the service’s site isn’t allowed. Use a file you own, or another track.');
     }
 
-    // ORDRE DE PRÉFÉRENCE des flux — on ne rejette plus RIEN d'emblée :
-    // beaucoup de pistes (dont les Go+) n'exposent que de l'AAC ou de
-    // l'Opus, et l'ancien filtre « mpeg|mp3 » les déclarait illisibles.
+    // Stream PREFERENCE ORDER — nothing is rejected up front anymore:
+    // many tracks (Go+ ones included) only expose AAC or Opus, and the
+    // old "mpeg|mp3" filter declared them unplayable.
     const score = (c) => {
       const p = (c.format && c.format.protocol) || '';
       const m = (c.format && c.format.mime_type) || '';
-      if (p === 'progressive' && /mpeg/.test(m)) return 0; // mp3 direct : idéal
+      if (p === 'progressive' && /mpeg/.test(m)) return 0; // direct mp3: ideal
       if (p === 'progressive') return 1;
       if (p === 'hls' && /mpeg/.test(m)) return 2;
-      if (p === 'hls' && /(mp4|aac)/.test(m)) return 3;    // AAC : Chromium sait lire
-      return 4;                                            // opus & co : dernier recours
+      if (p === 'hls' && /(mp4|aac)/.test(m)) return 3;    // AAC: Chromium can play it
+      return 4;                                            // opus & co: last resort
     };
     const ordered = [...codings].sort((a, b) => score(a) - score(b));
-    // track_authorization : jeton PAR PISTE renvoyé avec le morceau — sans
-    // lui l'API répond 401/403 sur la plupart des pistes. C'était LA cause
-    // des « erreurs de chargement » à répétition, compte payant compris.
+    // track_authorization: PER-TRACK token returned with the track — without
+    // it the API answers 401/403 on most tracks. It was THE cause of the
+    // repeated "loading errors", paid account included.
     const ta = track.track_authorization
       ? `&track_authorization=${encodeURIComponent(track.track_authorization)}`
       : '';
 
     const getBin = async (u, what) => {
-      if (signal && signal.aborted) throw new Error('Chargement annulé');
+      if (signal && signal.aborted) throw new Error('Loading cancelled');
       let r = await fetch(u, { signal });
       for (let i = 0; i < 2 && (r.status === 429 || r.status >= 500); i++) {
         await new Promise((ok) => setTimeout(ok, 900 * (i + 1)));
@@ -1832,8 +1832,8 @@ async function scDownloadToFile(scId, dest, acct = null, signal = null) {
       return Buffer.from(await r.arrayBuffer());
     };
 
-    // On ESSAIE CHAQUE FLUX dans l'ordre : un transcodage cassé ne condamne
-    // plus le morceau tant qu'il en reste un autre
+    // TRY EACH STREAM in order: a broken transcoding no longer dooms the
+    // track as long as another one remains
     let lastErr = null;
     for (const chosen of ordered) {
       try {
@@ -1853,10 +1853,10 @@ async function scDownloadToFile(scId, dest, acct = null, signal = null) {
         }
         if (!buf || buf.length < 2048) throw new Error('Empty stream');
         await fsp.writeFile(dest, buf);
-        // Piste « extrait » : SoundCloud ne sert que 30 s quand le compte
-        // n'a pas les droits. On le SIGNALE et on le note dans le cache —
-        // sinon l'extrait était rejoué éternellement, même après avoir
-        // connecté le compte abonné.
+        // "Preview" track: SoundCloud only serves 30 s when the account
+        // lacks the rights. We FLAG it and record it in the cache —
+        // otherwise the preview was replayed forever, even after
+        // connecting the subscribed account.
         return {
           dest,
           bytes: buf.length,
@@ -1866,8 +1866,8 @@ async function scDownloadToFile(scId, dest, acct = null, signal = null) {
             : null
         };
       } catch (e) {
-        // annulé : on n'essaie surtout pas le flux suivant
-        if (signal && signal.aborted) throw new Error('Chargement annulé');
+        // cancelled: definitely don't try the next stream
+        if (signal && signal.aborted) throw new Error('Loading cancelled');
         lastErr = e;
       }
     }
@@ -1876,18 +1876,18 @@ async function scDownloadToFile(scId, dest, acct = null, signal = null) {
       : `No playable stream: ${lastErr ? lastErr.message : 'unknown'}`);
 }
 
-// Télécharge la piste dans le cache local (pour la lecture) — le reste du
-// pipeline (décodage, BPM) est identique aux fichiers locaux.
-// accountIdx : le compte d'où vient la piste (ses Go+/privées à lui).
-// Identité du compte qui a rempli le cache : si on connecte enfin le compte
-// abonné, un extrait de 30 s en cache DOIT être retéléchargé au lieu d'être
-// rejoué à vie.
+// Downloads the track into the local cache (for playback) — the rest of
+// the pipeline (decoding, BPM) is identical to local files.
+// accountIdx: the account the track comes from (its own Go+/private tracks).
+// Identity of the account that filled the cache: if the subscribed account
+// is finally connected, a cached 30 s preview MUST be re-downloaded instead
+// of being replayed forever.
 function scAcctKey(acct) {
   return acct && acct.token ? `u:${acct.name || 'sans-nom'}` : 'anonyme';
 }
 
-// Chemin du son SoundCloud déjà en cache COMPLET (sinon null) — pour
-// analyser sa tonalité en tâche de fond sans rien télécharger
+// Path of a SoundCloud track already cached IN FULL (otherwise null) — to
+// analyze its key in the background without downloading anything
 ipcMain.handle('sc-cached-path', async (_e, scId) => {
   try {
     const dir = path.join(app.getPath('userData'), 'sc-cache');
@@ -1908,17 +1908,17 @@ ipcMain.handle('sc-fetch-track', async (_e, scId, accountIdx) => {
     const meta = path.join(dir, `${scId}.json`);
     const acct = scAcctOrDefault(accountIdx);
     const key = scAcctKey(acct);
-    // Le cache n'est réutilisé que s'il est PROUVÉ complet, ou s'il vient du
-    // MÊME compte. Un fichier sans fiche vient d'une version qui ne savait
-    // pas repérer les extraits : on le retélécharge une fois — c'est la
-    // purge automatique des extraits déjà sur le disque.
+    // The cache is reused only if it is PROVEN complete, or if it comes from
+    // the SAME account. A file without a metadata file comes from a version
+    // that couldn't detect previews: re-download it once — this is the
+    // automatic purge of previews already on disk.
     try {
       const st = await fsp.stat(dest);
       const m = JSON.parse(await fsp.readFile(meta, 'utf8'));
       if (st.size > 0 && (m.full === true || m.acct === key)) {
         return { ok: true, path: dest, full: m.full !== false, warning: m.warning || null };
       }
-    } catch { /* pas en cache, extrait, ou cache d'ancienne version */ }
+    } catch { /* not cached, preview, or cache from an older version */ }
     const ac = new AbortController();
     scAborts.set(String(scId), ac);
     let r;
@@ -1932,16 +1932,16 @@ ipcMain.handle('sc-fetch-track', async (_e, scId, accountIdx) => {
       await fsp.writeFile(meta, JSON.stringify({
         full: r.full, bytes: r.bytes, acct: key, at: Date.now(), warning: r.warning || null
       }));
-    } catch { /* fiche non écrite : on retéléchargera, sans gravité */ }
+    } catch { /* metadata not written: will re-download, harmless */ }
     return { ok: true, path: dest, full: r.full, warning: r.warning || null };
   } catch (err) {
-    const cancelled = /annulé|abort/i.test(String(err && (err.name + err.message)));
+    const cancelled = /cancelled|abort/i.test(String(err && (err.name + err.message)));
     return { ok: false, cancelled, error: cancelled ? 'Loading cancelled' : String(err.message || err) };
   }
 });
 
-// Télécharge une piste EN DUR dans Musique\TurboMix (pour les playlists) —
-// accountIdx : compte propriétaire de la piste (jeton pour les privées/Go+)
+// Downloads a track PERMANENTLY into Music\TurboMix (for playlists) —
+// accountIdx: account that owns the track (token for private/Go+ tracks)
 ipcMain.handle('sc-download-to', async (_e, scId, baseName, accountIdx) => {
   try {
     const dir = path.join(app.getPath('music'), 'TurboMix');
@@ -1951,10 +1951,10 @@ ipcMain.handle('sc-download-to', async (_e, scId, baseName, accountIdx) => {
     try {
       const st = await fsp.stat(dest);
       if (st.size > 0) return { ok: true, path: dest };
-    } catch { /* pas encore téléchargé */ }
-    // Déjà dans le cache de lecture ? On copie — MAIS seulement si c'est le
-    // morceau ENTIER : on ne veut pas exporter un extrait de 30 s dans la
-    // discothèque de l'utilisateur.
+    } catch { /* not downloaded yet */ }
+    // Already in the playback cache? Copy it — BUT only if it is the
+    // WHOLE track: we don't want to export a 30 s preview into the
+    // user's music collection.
     const cdir = path.join(app.getPath('userData'), 'sc-cache');
     const cached = path.join(cdir, `${scId}.mp3`);
     try {
@@ -1964,7 +1964,7 @@ ipcMain.handle('sc-download-to', async (_e, scId, baseName, accountIdx) => {
         await fsp.copyFile(cached, dest);
         return { ok: true, path: dest };
       }
-    } catch { /* pas en cache, ou extrait : on télécharge proprement */ }
+    } catch { /* not cached, or a preview: download properly */ }
     const r = await scTry(() => scDownloadToFile(scId, dest, scAcctOrDefault(accountIdx)));
     return { ok: true, path: dest, full: r.full, warning: r.warning || null };
   } catch (err) {

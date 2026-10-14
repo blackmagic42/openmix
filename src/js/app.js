@@ -7,30 +7,30 @@ import { gridIndexFracAt, gridTimeAtIndex, gridPeriodAt, setGlobalGridOffset, ge
 import { camelotLabel, keyName, keyDistance, heardKey, shiftKey } from './key.js';
 import { t, getLang, setLang, applyStaticTranslations } from './i18n.js';
 
-// Traduit tout ce qui porte data-i18n / data-i18n-title / data-i18n-placeholder
-// avant même de construire le reste de l'interface (decks, mixer…), pour que
-// tout démarre déjà dans la bonne langue, sans flash de texte français.
+// Translate everything carrying data-i18n / data-i18n-title / data-i18n-placeholder
+// before building the rest of the interface (decks, mixer…), so that
+// everything starts in the right language, with no flash of untranslated text.
 applyStaticTranslations();
 
 const DECK_COLORS = ['#39c2ff', '#ff9f43', '#5fe08a', '#ff6b9d'];
-// En dessous de cette distance (px), un clic-relâché ne compte pas comme un
-// glisser : pas de scratch, pas de pause — juste un saut ponctuel, musique
-// non coupée. Au-delà, le geste devient un vrai scrub/scratch à la souris.
+// Below this distance (px), a click-and-release doesn't count as a drag:
+// no scratch, no pause — just a one-off jump, the music keeps playing.
+// Beyond it, the gesture becomes a real mouse scrub/scratch.
 const DRAG_THRESHOLD_PX = 3;
 
 const engine = new AudioEngine();
 let activeDeck = 0;
 let deckCount = Number(localStorage.getItem('deckCount')) === 2 ? 2 : 4;
-let dragTrack = null;      // morceau en cours de drag & drop depuis la bibliothèque
-let dragDir = null;        // dossier de la musique OpenMix en cours de glisser
-// dossier de musique NATIF d'OpenMix { root, folders } (voir refreshDlInfo)
+let dragTrack = null;      // track being dragged & dropped from the library
+let dragDir = null;        // OpenMix music folder being dragged
+// OpenMix's NATIVE music folder { root, folders } (see refreshDlInfo)
 let dlInfo = { root: null, folders: [] };
-let waveWindowSec = 8;     // zoom de la vue empilée (secondes visibles)
-let scratchSound = localStorage.getItem('scratchSound') !== '0'; // scratch audible ?
-let keepBarOnJump = localStorage.getItem('keepBarOnJump') !== '0'; // garder la mesure intacte lors d'un saut ?
+let waveWindowSec = 8;     // zoom of the stacked view (visible seconds)
+let scratchSound = localStorage.getItem('scratchSound') !== '0'; // audible scratch?
+let keepBarOnJump = localStorage.getItem('keepBarOnJump') !== '0'; // keep the bar intact when jumping?
 
 // ---------------------------------------------------------------------------
-// Petits composants : knob rotatif et faders
+// Small components: rotary knob and faders
 // ---------------------------------------------------------------------------
 
 function makeKnob(label, getVal, setVal) {
@@ -61,7 +61,7 @@ function makeKnob(label, getVal, setVal) {
     const dy = lastY - e.clientY;
     lastY = e.clientY;
     let v = Math.max(-1, Math.min(1, getVal() + dy * 0.012));
-    // Zéro aimanté : le point neutre est facile à retrouver
+    // Magnetic zero: the neutral point is easy to find again
     if (Math.abs(v) < 0.07) v = 0;
     setVal(v);
     update();
@@ -117,7 +117,7 @@ function makeHFader(el, getVal, setVal) {
     const r = el.getBoundingClientRect();
     let v = (e.clientX - r.left - 9) / (r.width - 18);
     v = Math.max(0, Math.min(1, v));
-    // Centre aimanté : le 0 (milieu) est facile à retrouver
+    // Magnetic center: 0 (the middle) is easy to find again
     if (Math.abs(v - 0.5) < 0.035) v = 0.5;
     setVal(v);
     update();
@@ -138,7 +138,7 @@ function makeHFader(el, getVal, setVal) {
 }
 
 // ---------------------------------------------------------------------------
-// Panneaux de deck
+// Deck panels
 // ---------------------------------------------------------------------------
 
 const deckUI = [];
@@ -150,8 +150,8 @@ function formatTime(s) {
   return `${m}:${String(sec).padStart(2, '0')}`;
 }
 
-// Rangée de forme d'onde empilée (panneau du haut) : une par deck, alignées
-// pour pouvoir caler les morceaux entre eux visuellement.
+// Stacked waveform row (top panel): one per deck, aligned so the tracks
+// can be lined up against each other visually.
 function buildWaveRow(i) {
   const row = document.createElement('div');
   row.className = 'wave-row';
@@ -165,9 +165,9 @@ function buildWaveRow(i) {
   row.addEventListener('pointerdown', () => setActiveDeck(i));
   document.getElementById('waves').appendChild(row);
 
-  // Scratch à la souris : clic maintenu = pause, glisser = déplacer la piste
-  // (glisser à droite -> la position recule, comme si on tirait le vinyle).
-  // En mode 🔊, on entend le son sous la tête pendant le déplacement.
+  // Mouse scratch: click and hold = pause, drag = move the track
+  // (drag right -> the position goes back, as if pulling the vinyl).
+  // In 🔊 mode, you hear the sound under the playhead while moving.
   const canvas = row.querySelector('canvas');
   let scrub = null;
   canvas.addEventListener('pointerdown', (e) => {
@@ -183,24 +183,24 @@ function buildWaveRow(i) {
       audible: scratchSound,
       dragging: false
     };
-    // On ne coupe/pause RIEN tant qu'on ne sait pas si c'est un vrai glisser
-    // (voir pointermove) : un simple clic ne doit jamais couper la musique.
+    // Nothing is cut/paused until we know whether it's a real drag
+    // (see pointermove): a simple click must never cut the music.
   });
   canvas.addEventListener('pointermove', (e) => {
     if (!scrub) return;
     const deck = engine.decks[i];
     if (!scrub.dragging) {
       const moved = Math.hypot(e.clientX - scrub.startX, e.clientY - scrub.startY);
-      if (moved < DRAG_THRESHOLD_PX) return; // simple tremblement de main : on ignore
-      // Le geste devient un vrai glisser : on bascule en scratch/scrub
+      if (moved < DRAG_THRESHOLD_PX) return; // just a hand tremor: ignore it
+      // The gesture becomes a real drag: switch to scratch/scrub
       scrub.dragging = true;
       if (scrub.wasPlaying) deck.pause();
       if (scrub.audible) deck.scrubStart();
     }
     const secPerPx = (waveWindowSec * (deck.tempo || 1)) / Math.max(1, canvas.clientWidth);
     const dx = e.clientX - scrub.startX;
-    // On peut tirer la piste AU-DELÀ de son début (position négative) pour
-    // la faire commencer plus tard — plus aucun blocage à 0
+    // The track can be pulled PAST its start (negative position) to make
+    // it start later — no more blocking at 0
     const t = Math.max(-3600, Math.min(deck.duration, scrub.startTime - dx * secPerPx));
     if (scrub.audible) {
       deck.scrubMove(t);
@@ -214,10 +214,10 @@ function buildWaveRow(i) {
     if (scrub.dragging) {
       deck.scrubEnd();
       if (scrub.wasPlaying) deck.play();
-      // Recale automatiquement : segment sur segment (désactivable en ⚙)
+      // Auto-realign: segment on segment (can be disabled in ⚙)
       if (localStorage.getItem('snapRelease') !== '0') engine.snapToRef(i);
-      // Le placement posé à la souris est ADOPTÉ : sans ré-ancrage, le servo
-      // RAMENAIT le son à l'ancien alignement (« il se remet sur le rouge »)
+      // The placement set with the mouse is ADOPTED: without re-anchoring, the servo
+      // used to PULL the sound back to the old alignment ("it snaps back onto the red")
       for (let k = 0; k < 4; k++) engine.reanchorSync(k);
     }
     scrub = null;
@@ -232,7 +232,7 @@ function buildWaveRow(i) {
   };
 }
 
-// --- File d'attente par deck : les morceaux s'enchaînent automatiquement ---
+// --- Per-deck queue: tracks chain one after another automatically ---
 const deckQueues = [[], [], [], []];
 
 function updateQueueUI(i) {
@@ -243,17 +243,17 @@ function updateQueueUI(i) {
     ui.queueInfo.classList.remove('filled');
     ui.queueClear.classList.add('hidden');
   } else {
-    ui.queueInfo.textContent = `${q.length} en file — prochain : ${q[0].name}`;
+    ui.queueInfo.textContent = t('deck_queue_next_info', { count: q.length, name: q[0].name });
     ui.queueInfo.classList.add('filled');
     ui.queueClear.classList.remove('hidden');
   }
 }
 
 function queuePush(i, track) {
-  // Les lignes de navigation (playlists SC, comptes 👤) ne se mettent pas en file
+  // Navigation rows (SC playlists, 👤 accounts) are never queued
   if (!track || track.scPlaylist || track.scAccountRow) return;
   const deck = engine.decks[i];
-  // Deck vide et file vide : on charge directement
+  // Empty deck and empty queue: load directly
   if (!deck.buffer && !deckQueues[i].length) {
     loadTrackToDeck(i, track);
     return;
@@ -282,8 +282,8 @@ function makeQueueDropTarget(el, deckIdx) {
   });
 }
 
-// Rend un élément capable de recevoir un morceau par drag & drop
-// Un LIEN glissé depuis le navigateur (YouTube, SoundCloud…)
+// Makes an element able to receive a track via drag & drop
+// A LINK dragged from the browser (YouTube, SoundCloud…)
 const dragHasLink = (dt) => !!dt && [...(dt.types || [])].some((ty) => ty === 'text/uri-list' || ty === 'text/plain');
 const linkFromDrop = (dt) => {
   const raw = (dt && (dt.getData('text/uri-list') || dt.getData('text/plain'))) || '';
@@ -303,7 +303,7 @@ function makeDropTarget(el, deckIdx) {
     e.preventDefault();
     el.classList.remove('drop-hover');
     if (!dragTrack) {
-      // lien déposé sur le deck : téléchargé (yt-dlp) puis chargé ICI
+      // link dropped on the deck: downloaded (yt-dlp) then loaded HERE
       const url = linkFromDrop(e.dataTransfer);
       if (url) {
         setActiveDeck(deckIdx);
@@ -344,7 +344,7 @@ function buildDeckPanel(i) {
     </div>
     <canvas class="wave-over"></canvas>
     <div class="queue-line" title="${t('queue_drop_title')}">
-      <span class="queue-chip">FILE</span>
+      <span class="queue-chip">${t('deck_queue_chip_label')}</span>
       <span class="queue-info">${t('queue_empty')}</span>
       <button class="queue-clear hidden" title="${t('queue_clear_title')}">✕</button>
     </div>
@@ -399,7 +399,7 @@ function buildDeckPanel(i) {
 
   const wave = buildWaveRow(i);
 
-  // Marqueurs BPM des autres decks sur l'échelle de tempo
+  // BPM markers of the other decks on the tempo scale
   const tempoSliderEl = el.querySelector('.tempo-slider');
   const tempoMarksEls = [];
   for (let j = 0; j < 4; j++) {
@@ -438,8 +438,8 @@ function buildDeckPanel(i) {
     keyDn: el.querySelector('.key-dn'),
     keylock: el.querySelector('.keylock'),
     padModeBtns: [...el.querySelectorAll('.pad-modes button[data-m]')],
-    cueOwner: Array(10).fill(null), // joueur qui a posé chaque cue
-    loopOwner: null,                // joueur qui tient la boucle
+    cueOwner: Array(10).fill(null), // player who set each cue
+    loopOwner: null,                // player holding the loop
     padsEl: el.querySelector('.pads'),
     pads: [],
     padMode: 'jump',
@@ -465,18 +465,18 @@ function buildDeckPanel(i) {
   el.addEventListener('pointerdown', () => setActiveDeck(i));
   ui.play.addEventListener('click', () => playDeck(i));
 
-  // CUE façon CDJ : maintenir = le son joue depuis le point de cue,
-  // relâcher = retour au point et arrêt
+  // CDJ-style CUE: hold = the sound plays from the cue point,
+  // release = back to the point and stop
   let cueHold = false;
   ui.cue.addEventListener('pointerdown', (e) => {
     engine.resume();
     if (deck.playing) {
-      deck.cue(); // retour au cue + pause
+      deck.cue(); // back to cue + pause
       return;
     }
     const atCue = deck.buffer && Math.abs(deck.currentTime() - deck.cuePoint) < 0.02;
     if (!atCue) {
-      deck.cue(); // pose le point de cue ici
+      deck.cue(); // sets the cue point here
       return;
     }
     ui.cue.setPointerCapture(e.pointerId);
@@ -494,7 +494,7 @@ function buildDeckPanel(i) {
 
   ui.sync.addEventListener('click', () => { syncDeck(i); });
 
-  // File d'attente du deck : drop pour ajouter, enchaînement auto en fin de morceau
+  // Deck queue: drop to add, auto-chains at the end of the track
   makeQueueDropTarget(ui.queueLine, i);
   ui.queueClear.addEventListener('click', () => {
     deckQueues[i].length = 0;
@@ -506,26 +506,26 @@ function buildDeckPanel(i) {
     const next = q.shift();
     updateQueueUI(i);
     flashStatus(t('queue_loaded', { n: i + 1, name: next.name }));
-    loadTrackToDeck(i, next); // chargé PRÊT, en pause — à toi de lancer
+    loadTrackToDeck(i, next); // loaded READY, paused — up to you to start it
   };
-  // Recalage de grille : partagé entre le bouton écran ET le bouton GRID
-  // des platines MIDI (le calage est SAUVEGARDÉ sur le morceau, il revient
-  // tout seul au prochain chargement)
+  // Grid realignment: shared between the on-screen button AND the GRID button
+  // of MIDI decks (the alignment is SAVED on the track, it comes back
+  // by itself on the next load)
   const recalGrid = () => {
     if (!deck.buffer || !deck.bpm) {
       flashStatus(t('grid_need_bpm'));
       return;
     }
-    const t = deck.currentTime();
+    const now = deck.currentTime();
     if (deck.beats) {
-      // Grille dynamique : le temps le plus proche devient un DÉBUT DE MESURE,
-      // posé exactement sous la tête de lecture
-      const k = Math.round(gridIndexFracAt(deck, t));
-      deck.gridShift += t - gridTimeAtIndex(deck, k);
+      // Dynamic grid: the nearest beat becomes a BAR START,
+      // placed exactly under the playhead
+      const k = Math.round(gridIndexFracAt(deck, now));
+      deck.gridShift += now - gridTimeAtIndex(deck, k);
       deck.barAnchor = k;
       if (deck.track) library.setGridMeta(deck.track, { gridShift: deck.gridShift, barAnchor: deck.barAnchor });
     } else {
-      deck.beatOffset = t;
+      deck.beatOffset = now;
       if (deck.track) library.setBeatOffset(deck.track, deck.beatOffset);
     }
     flashStatus(t('grid_realigned', { n: i + 1 }));
@@ -533,15 +533,15 @@ function buildDeckPanel(i) {
   ui.grid.addEventListener('click', recalGrid);
   ui.recalGrid = recalGrid;
 
-  // CORRECTION MANUELLE DU BPM : double-clic sur l'affichage BPM du deck —
-  // porte de sortie quand l'analyse se trompe (ex. 162 détecté pour 145).
-  // La valeur saisie est SAUVEGARDÉE sur le morceau (manualBpm : la
-  // ré-analyse ne l'écrasera plus), la grille est reconstruite dessus.
-  // (l'ancien affichage BPM de l'en-tête a été retiré : le BPM vit
-  // maintenant dans le cadran du disque — c'est LUI qu'on double-clique)
+  // MANUAL BPM CORRECTION: double-click the deck's BPM display —
+  // an escape hatch when the analysis gets it wrong (e.g. 162 detected for 145).
+  // The entered value is SAVED on the track (manualBpm: re-analysis
+  // won't overwrite it anymore), and the grid is rebuilt on it.
+  // (the old BPM display in the header was removed: the BPM now lives
+  // in the jog wheel dial — that's what you double-click)
   ui.wheelCv.style.cursor = 'pointer';
-  // Le BAS du cadran affiche la plage de la jauge : un clic dessus la fait
-  // tourner ±6 % → ±16 % → WIDE (±50 %), comme le bouton TEMPO RANGE d'un CDJ
+  // The BOTTOM of the dial shows the slider range: clicking it cycles
+  // ±6 % → ±16 % → WIDE (±50 %), like a CDJ's TEMPO RANGE button
   const onRangeZone = (e) => {
     const r = ui.wheelCv.getBoundingClientRect();
     return (e.clientY - r.top) / r.height > 0.62;
@@ -550,7 +550,7 @@ function buildDeckPanel(i) {
     if (!onRangeZone(e)) return;
     const k = TEMPO_RANGES.indexOf(deck.tempoRange);
     deck.tempoRange = TEMPO_RANGES[(k + 1) % TEMPO_RANGES.length];
-    try { localStorage.setItem(`tempoRange${i}`, String(deck.tempoRange)); } catch { /* stockage indisponible */ }
+    try { localStorage.setItem(`tempoRange${i}`, String(deck.tempoRange)); } catch { /* storage unavailable */ }
     applyTempoRange(i);
     flashStatus(t('tempo_range_status', { n: i + 1, range: tempoRangeLabel(deck.tempoRange) }));
   });
@@ -558,17 +558,17 @@ function buildDeckPanel(i) {
     if (onRangeZone(e)) return;
     if (!deck.buffer || !deck.bpm) return;
     const val = await askText(t('ask_real_bpm', { n: i + 1, bpm: deck.bpm.toFixed(1) }), deck.bpm.toFixed(1));
-    const nb = Number(String(val).replace(',', '.'));
-    if (!nb || nb < 40 || nb > 260) return;
-    deck.bpm = nb;
-    deck.beats = null; // grille FIXE reconstruite sur le BPM saisi
+    const newBpm = Number(String(val).replace(',', '.'));
+    if (!newBpm || newBpm < 40 || newBpm > 260) return;
+    deck.bpm = newBpm;
+    deck.beats = null; // FIXED grid rebuilt on the entered BPM
     if (deck.beatOffset == null) deck.beatOffset = 0;
     deck.synced = false;
     deck._syncBase = null;
     deck._pllCorr = 0;
-    if (deck.track) library.setBpmValue(deck.track, nb);
+    if (deck.track) library.setBpmValue(deck.track, newBpm);
     updateTempoLabel(i);
-    flashStatus(t('bpm_corrected', { n: i + 1, bpm: nb }));
+    flashStatus(t('bpm_corrected', { n: i + 1, bpm: newBpm }));
   });
   ui.masterBtn.addEventListener('click', () => {
     engine.setMaster(i);
@@ -576,48 +576,48 @@ function buildDeckPanel(i) {
   });
   const gridScale = (mult) => {
     if (!deck.bpm) return;
-    const nb = Math.round(deck.bpm * mult * 1000) / 1000;
-    if (nb < 40 || nb > 320) return;
+    const newBpm = Math.round(deck.bpm * mult * 1000) / 1000;
+    if (newBpm < 40 || newBpm > 320) return;
     if (deck.beats) {
-      // Grille dynamique : on double la densité (points intermédiaires) ou on
-      // garde un temps sur deux (en préservant l'ancrage de mesure)
-      let nbBeats;
+      // Dynamic grid: double the density (midpoints) or keep every
+      // other beat (preserving the bar anchor)
+      let newBeats;
       if (mult > 1) {
-        nbBeats = [];
+        newBeats = [];
         for (let k = 0; k < deck.beats.length - 1; k++) {
-          nbBeats.push(deck.beats[k]);
-          nbBeats.push(Math.round(((deck.beats[k] + deck.beats[k + 1]) / 2) * 1000) / 1000);
+          newBeats.push(deck.beats[k]);
+          newBeats.push(Math.round(((deck.beats[k] + deck.beats[k + 1]) / 2) * 1000) / 1000);
         }
-        nbBeats.push(deck.beats[deck.beats.length - 1]);
+        newBeats.push(deck.beats[deck.beats.length - 1]);
         deck.barAnchor = (deck.barAnchor || 0) * 2;
       } else {
-        const par = ((deck.barAnchor || 0) % 2 + 2) % 2;
-        nbBeats = deck.beats.filter((_, k) => k % 2 === par);
+        const parity = ((deck.barAnchor || 0) % 2 + 2) % 2;
+        newBeats = deck.beats.filter((_, k) => k % 2 === parity);
         deck.barAnchor = Math.floor((deck.barAnchor || 0) / 2);
       }
-      deck.beats = nbBeats;
-      deck.bpm = nb;
+      deck.beats = newBeats;
+      deck.bpm = newBpm;
       deck.synced = false;
-      // Le BPM vient de changer ×2/÷2 : l'ancien ratio de sync est caduc
+      // The BPM just changed ×2/÷2: the old sync ratio is obsolete
       deck._syncBase = null;
       deck._pllCorr = 0;
-      if (deck.track) library.setGridData(deck.track, { beats: nbBeats, barAnchor: deck.barAnchor, bpm: nb });
+      if (deck.track) library.setGridData(deck.track, { beats: newBeats, barAnchor: deck.barAnchor, bpm: newBpm });
     } else {
-      deck.bpm = nb;
+      deck.bpm = newBpm;
       deck.synced = false;
       deck._syncBase = null;
       deck._pllCorr = 0;
-      if (deck.track) library.setBpmValue(deck.track, nb);
+      if (deck.track) library.setBpmValue(deck.track, newBpm);
     }
     updateTempoLabel(i);
-    flashStatus(t('grid_changed', { n: i + 1, bpm: nb.toFixed(1), cmp: mult > 1 ? t('grid_tighter') : t('grid_wider') }));
+    flashStatus(t('grid_changed', { n: i + 1, bpm: newBpm.toFixed(1), cmp: mult > 1 ? t('grid_tighter') : t('grid_wider') }));
   };
   el.querySelector('.btn-grid-half').addEventListener('click', () => gridScale(0.5));
   el.querySelector('.btn-grid-dbl').addEventListener('click', () => gridScale(2));
 
-  // Flèches de calibrage fin : appui = petit décalage de la grille,
-  // maintien = continu, SANS couper le son.
-  // Avec SHIFT : réglage fin du BPM (±0,01) — pour tuer une dérive résiduelle.
+  // Fine calibration arrows: press = small grid shift,
+  // hold = continuous, WITHOUT cutting the sound.
+  // With SHIFT: fine BPM adjustment (±0.01) — to kill a residual drift.
   const gridNudge = (dir) => {
     if (deck.beats) {
       deck.gridShift += dir * 0.002;
@@ -626,7 +626,7 @@ function buildDeckPanel(i) {
     }
   };
   const bpmNudge = (dir) => {
-    if (!deck.bpm || deck.beats) return; // inutile sur grille dynamique
+    if (!deck.bpm || deck.beats) return; // pointless on a dynamic grid
     deck.bpm = Math.round((deck.bpm + dir * 0.005) * 1000) / 1000;
     updateTempoLabel(i);
   };
@@ -676,14 +676,14 @@ function buildDeckPanel(i) {
   ui.keyLbl.addEventListener('click', () => keySync(i));
   ui.keyUp.addEventListener('click', () => applyKey(1));
   ui.keyDn.addEventListener('click', () => applyKey(-1));
-  // KEYLOCK : mémorisé, et rétabli au prochain lancement
+  // KEYLOCK: remembered, and restored on the next launch
   const setLock = (on) => {
     deck.setKeylock(on);
     ui.keylock.classList.toggle('on', on);
     localStorage.setItem(`keylock${i}`, on ? '1' : '0');
     if (ui.keyLbl) updateKeyUI(i);
   };
-  ui.setLock = setLock; // utilisé par KEY SYNC
+  ui.setLock = setLock; // used by KEY SYNC
   ui.keylock.addEventListener('click', () => {
     const on = !deck.keylock;
     setLock(on);
@@ -691,15 +691,15 @@ function buildDeckPanel(i) {
   });
   setLock(localStorage.getItem(`keylock${i}`) === '1');
   ui.keyVal.addEventListener('dblclick', () => applyKey(-deck.keyShift));
-  ui.applyKey = applyKey; // utilisé par les pads du mode KEY
+  ui.applyKey = applyKey; // used by the KEY mode pads
 
-  // Pads de performance : HOT CUE / BEAT JUMP / BEAT LOOP (10 = 5×L/R)
+  // Performance pads: HOT CUE / BEAT JUMP / BEAT LOOP (10 = 5×L/R)
   for (let p = 0; p < PAD_COUNT; p++) {
     const pad = document.createElement('button');
     pad.className = 'pad';
-    // PAD FX = MAINTENIR (pointerdown/up), SAMPLER = frappe immédiate au
-    // pointerdown (le click arrive au relâcher : trop mou pour jouer) —
-    // les autres modes gardent le click classique
+    // PAD FX = HOLD (pointerdown/up), SAMPLER = immediate hit on
+    // pointerdown (click fires on release: too sluggish to play) —
+    // the other modes keep the classic click
     pad.addEventListener('pointerdown', (e) => {
       if (e.button !== 0) return;
       if (ui.padMode === 'fx') {
@@ -715,7 +715,7 @@ function buildDeckPanel(i) {
     pad.addEventListener('pointerup', padRelease);
     pad.addEventListener('pointercancel', padRelease);
     pad.addEventListener('click', () => {
-      if (ui.padMode === 'fx' || ui.padMode === 'smp') return; // déjà gérés
+      if (ui.padMode === 'fx' || ui.padMode === 'smp') return; // already handled
       padPress(i, p);
     });
     pad.addEventListener('contextmenu', (e) => {
@@ -744,13 +744,13 @@ function buildDeckPanel(i) {
     b.addEventListener('click', () => stemPress(i, b.dataset.s));
   });
 
-  // Drag & drop d'un morceau sur le panneau du deck ou sur sa forme d'onde
+  // Drag & drop of a track onto the deck panel or onto its waveform
   makeDropTarget(el, i);
   makeDropTarget(wave.el, i);
   applyTempoRange(i);
   ui.tempo.addEventListener('input', () => {
-    // Zéro aimanté : près du centre, on colle à 0.0 % pile (zone
-    // proportionnelle à la plage : ±0,1 % en ±6, ±0,8 % en WIDE)
+    // Magnetic zero: near the center, snap to exactly 0.0 % (zone
+    // proportional to the range: ±0.1 % at ±6, ±0.8 % at WIDE)
     let v = Number(ui.tempo.value);
     if (Math.abs(v) < deck.tempoRange * 1.6) {
       v = 0;
@@ -765,7 +765,7 @@ function buildDeckPanel(i) {
     deck.synced = false;
     updateTempoLabel(i);
   });
-  // − / + : ±0,1 BPM par clic (Maj = ±1 BPM), maintenu = ça défile
+  // − / + : ±0.1 BPM per click (Shift = ±1 BPM), hold = it keeps going
   const holdNudge = (btn, dir) => {
     let timer = null;
     let n = 0;
@@ -779,7 +779,7 @@ function buildDeckPanel(i) {
       deckBpmNudge(i, dir * (big ? 1 : 0.1));
       const rep = () => {
         n++;
-        // après ~1,5 s maintenu : pas de 0,5 BPM (on traverse vite)
+        // after ~1.5 s held: steps of 0.5 BPM (to move through quickly)
         deckBpmNudge(i, dir * (big ? 1 : n > 20 ? 0.5 : 0.1));
         timer = setTimeout(rep, 75);
       };
@@ -789,19 +789,19 @@ function buildDeckPanel(i) {
   };
   holdNudge(ui.tempoDn, -1);
   holdNudge(ui.tempoUp, 1);
-  // Miniature : un simple CLIC (sans bouger) = saut ponctuel, la musique ne
-  // s'arrête jamais. Un vrai GLISSER (au-delà de quelques pixels) bascule en
-  // navigation continue (avec le son de scrub si activé) — voir DRAG_THRESHOLD_PX.
+  // Thumbnail: a simple CLICK (without moving) = one-off jump, the music never
+  // stops. A real DRAG (beyond a few pixels) switches to continuous
+  // navigation (with the scrub sound if enabled) — see DRAG_THRESHOLD_PX.
   let overScrub = null;
   const overPosFromEvent = (e) => {
     const r = ui.over.getBoundingClientRect();
     const frac = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width));
     return frac * deck.duration;
   };
-  // Calcule et applique la position cible (alignée sur la mesure si activé),
-  // en gardant TOUJOURS la même référence "beforeTime" (capturée une seule
-  // fois, avant tout saut) même si le morceau continue de jouer pendant le
-  // geste — sinon la phase de mesure dériverait à chaque appel.
+  // Computes and applies the target position (bar-aligned if enabled),
+  // ALWAYS keeping the same "beforeTime" reference (captured only once,
+  // before any jump) even if the track keeps playing during the
+  // gesture — otherwise the bar phase would drift on every call.
   const applyOverSeek = (e) => {
     let t = overPosFromEvent(e);
     if (keepBarOnJump) t = barAlignedSeekTime(deck, overScrub.beforeTime, t);
@@ -819,16 +819,16 @@ function buildDeckPanel(i) {
       beforeTime: deck.currentTime(),
       dragging: false
     };
-    // Simple clic : on place juste la tête de lecture, la musique continue
-    // (ou reste arrêtée) sans coupure — pas de pause, pas de scrub sonore.
+    // Simple click: just place the playhead, the music keeps playing
+    // (or stays stopped) without a gap — no pause, no scrub sound.
     applyOverSeek(e);
   });
   ui.over.addEventListener('pointermove', (e) => {
     if (!overScrub) return;
     if (!overScrub.dragging) {
       const moved = Math.hypot(e.clientX - overScrub.startX, e.clientY - overScrub.startY);
-      if (moved < DRAG_THRESHOLD_PX) return; // simple tremblement de main : on ignore
-      // Le geste devient un vrai glisser : on bascule en scrub/navigation continue
+      if (moved < DRAG_THRESHOLD_PX) return; // just a hand tremor: ignore it
+      // The gesture becomes a real drag: switch to scrub/continuous navigation
       overScrub.dragging = true;
       if (overScrub.wasPlaying) deck.pause();
       if (overScrub.audible) deck.scrubStart();
@@ -845,15 +845,15 @@ function buildDeckPanel(i) {
       if (overScrub.audible) deck.scrubEnd();
       if (overScrub.wasPlaying) deck.play();
     }
-    // Miniature = navigation : JAMAIS de recadrage — et la sync ADOPTE la
-    // position choisie au lieu de la « recalibrer » aussitôt
+    // Thumbnail = navigation: NEVER any realignment — and sync ADOPTS the
+    // chosen position instead of "recalibrating" it right away
     for (let k = 0; k < 4; k++) engine.reanchorSync(k);
     overScrub = null;
   };
   ui.over.addEventListener('pointerup', endOverScrub);
   ui.over.addEventListener('pointercancel', endOverScrub);
 
-  // Vignette PAD FX : l'effet en cours s'affiche en grand sur le deck
+  // PAD FX badge: the running effect is shown large on the deck
   const padFxChip = document.createElement('div');
   padFxChip.className = 'padfx-chip';
   el.appendChild(padFxChip);
@@ -862,26 +862,26 @@ function buildDeckPanel(i) {
   deckUI.push(ui);
 }
 
-// --- Pads : hot cues, beat jump, beat loop ---
-// 10 pads : moitié GAUCHE = ce que fait L2 (une par rangée de knob),
-// moitié DROITE = ce que fait R2, en miroir (grosses forces à l'extérieur).
-// Rangée r (TRIM=1 … FILTER=5) → pad L = r-1, pad R = 10-r.
-// JUMP : −16 −8 −4 −2 −1 | +1 +2 +4 +8 +16 (mesures)
-// LOOP : IN OUT ✕ ✕ ✕ | 1 2 4 8 16 temps (IN/OUT = boucle manuelle, ✕ = sortir)
-// CUE  : A B C D E | F G H I J
+// --- Pads: hot cues, beat jump, beat loop ---
+// 10 pads: LEFT half = what L2 does (one per knob row),
+// RIGHT half = what R2 does, mirrored (big strengths on the outside).
+// Row r (TRIM=1 … FILTER=5) → pad L = r-1, pad R = 10-r.
+// JUMP: −16 −8 −4 −2 −1 | +1 +2 +4 +8 +16 (bars)
+// LOOP: IN OUT ✕ ✕ ✕ | 1 2 4 8 16 beats (IN/OUT = manual loop, ✕ = exit)
+// CUE : A B C D E | F G H I J
 const LOOP_BEATS = [null, null, null, null, null, 1, 2, 4, 8, 16];
-// Sauts en MESURES : 1/8 · 1/4 · 1/2 · 1 · 2 (miroir, grands sauts à l'extérieur)
+// Jumps in BARS: 1/8 · 1/4 · 1/2 · 1 · 2 (mirrored, big jumps on the outside)
 const JUMP_VALS = [-2, -1, -0.5, -0.25, -0.125, 0.125, 0.25, 0.5, 1, 2];
-// Force par rangée (TRIM → FILTER) selon le mode
+// Strength per row (TRIM → FILTER) depending on the mode
 const JUMP_ROW_MEASURES = [2, 1, 0.5, 0.25, 0.125];
 const LOOP_ROW_BEATS = [16, 8, 4, 2, 1];
-const KEY_VALS = [-5, -4, -3, -2, -1, 1, 2, 3, 4, 5]; // demi-tons (mode KEY)
-// PAD FX façon Rekordbox : MAINTENIR = l'effet joue, RELÂCHER = il se coupe
-// et l'unité FX du deck retrouve exactement son réglage d'avant.
-// beats = fraction de temps (suit le BPM master), level = dosage fixe du pad
-// Sélection retenue : V.BRAKE et
-// BACKSPIN gardés (effets « platine » : spin = manipulation du disque),
-// plus 8 effets wet (echo, sweep…)
+const KEY_VALS = [-5, -4, -3, -2, -1, 1, 2, 3, 4, 5]; // semitones (KEY mode)
+// Rekordbox-style PAD FX: HOLD = the effect plays, RELEASE = it stops
+// and the deck's FX unit gets back exactly its previous setting.
+// beats = fraction of a beat (follows the master BPM), level = the pad's fixed amount
+// Chosen selection: V.BRAKE and
+// BACKSPIN kept ("turntable" effects: spin = handling the platter),
+// plus 8 wet effects (echo, sweep…)
 const PADFX = [
   { label: 'ROLL ½', type: 'roll', beats: 0.5, level: 0.9 },
   { label: 'SWEEP', type: 'filter', beats: 4, level: 0.9 },
@@ -895,13 +895,13 @@ const PADFX = [
   { label: 'BACKSPIN', spin: 'backspin' }
 ];
 const PAD_COUNT = 10;
-// Niveau du son SEC pendant qu'un pad FX est TENU (par type d'effet)
+// Level of the DRY sound while an FX pad is HELD (per effect type)
 const PADFX_DRY = { roll: 0, filter: 0, trans: 0, echo: 0.2, mtdelay: 0.25, reverb: 0.45, flanger: 1 };
 const padForSide = (row, side) => (side > 0 ? 10 - row : row - 1);
-// Couleur NÉON propre à chaque JOUEUR — volontairement DIFFÉRENTES des
-// couleurs de pistes (bleu/orange/vert/rose) pour toujours savoir qui est où
+// NEON color specific to each PLAYER — deliberately DIFFERENT from the
+// track colors (blue/orange/green/pink) so you always know who is where
 const PLAYER_COLORS = ['#c724ff', '#ffe600', '#ff1744', '#00ffd0'];
-const GP_MODES = ['jump', 'loop', 'hotcue', 'key', 'fx', 'smp']; // ordre des onglets
+const GP_MODES = ['jump', 'loop', 'hotcue', 'key', 'fx', 'smp']; // tab order
 const GP_MODE_NAMES = {
   hotcue: 'HOT CUE', jump: 'BEAT JUMP', loop: 'BEAT LOOP', key: 'KEY',
   fx: 'PAD FX', smp: 'SAMPLER'
@@ -914,8 +914,8 @@ function formatMeasures(v) {
   return `${sign}1/${Math.round(1 / a)}`;
 }
 
-// --- TONALITÉ (mix harmonique) ---
-// Tonalité que donnerait le pad KEY idx (transposition ABSOLUE kv)
+// --- KEY (harmonic mixing) ---
+// Key that KEY pad idx would give (ABSOLUTE transposition kv)
 function keyPadLabel(i, p, idx) {
   const deck = engine.decks[i];
   const kv = KEY_VALS[idx];
@@ -944,8 +944,8 @@ function keyPadLabel(i, p, idx) {
   });
 }
 
-// Étiquette de tonalité du deck (tonalité ENTENDUE : morceau + KEY + effet
-// du tempo si le keylock est coupé), colorée selon le master
+// Deck key label (HEARD key: track + KEY + effect of the tempo
+// if keylock is off), colored relative to the master
 function updateKeyUI(i) {
   const ui = deckUI[i];
   const deck = engine.decks[i];
@@ -977,9 +977,9 @@ function updateKeyUI(i) {
   if (ui.padMode === 'key') ui.pads.forEach((p, idx) => keyPadLabel(i, p, idx));
 }
 
-// KEY SYNC : transpose le deck pour qu'il sonne dans la tonalité du master
-// (ou sa relative, même numéro Camelot) avec le plus petit décalage. Le
-// KEYLOCK est activé : sinon le tempo du sync désaccorderait le résultat.
+// KEY SYNC: transposes the deck so it sounds in the master's key
+// (or its relative, same Camelot number) with the smallest shift.
+// KEYLOCK is enabled: otherwise the sync tempo would detune the result.
 function keySync(i) {
   const deck = engine.decks[i];
   if (deck.musicKey == null) {
@@ -997,10 +997,10 @@ function keySync(i) {
   const own = deck.musicKey;
   const ownMinor = own >= 12;
   const refMinor = ref.code >= 12;
-  // cible dans le MÊME mode que le morceau (relative si besoin)
+  // target in the SAME mode as the track (relative if needed)
   let tgt = ref.code % 12;
-  if (ownMinor && !refMinor) tgt = (tgt + 9) % 12;      // relative mineure
-  else if (!ownMinor && refMinor) tgt = (tgt + 3) % 12; // relative majeure
+  if (ownMinor && !refMinor) tgt = (tgt + 9) % 12;      // relative minor
+  else if (!ownMinor && refMinor) tgt = (tgt + 3) % 12; // relative major
   let semis = (tgt - (own % 12) + 12) % 12;
   if (semis > 6) semis -= 12;
   if (ui.applyKey) ui.applyKey(semis - deck.keyShift);
@@ -1010,15 +1010,15 @@ function keySync(i) {
 
 function renderPads(i) {
   const ui = deckUI[i];
-  ui._padViewSig = null; // force les vues par joueur à se reposer si besoin
-  ui._padSig = null;     // le contenu des pads est refait : repeint l'état
+  ui._padViewSig = null; // forces the per-player views to be laid out again if needed
+  ui._padSig = null;     // the pad content is rebuilt: repaint the state
   ui.pads.forEach((p) => {
     p.classList.remove('pad-tinted', 'set-any');
     p.style.background = '';
     p.style.borderColor = '';
   });
   ui.padModeBtns.forEach((b) => b.classList.toggle('on', b.dataset.m === ui.padMode));
-  // FX et SAMPLER portent du TEXTE (noms) : police réduite pour tout caser
+  // FX and SAMPLER carry TEXT (names): smaller font to fit everything
   ui.padsEl.classList.toggle('pads-text', ui.padMode === 'fx' || ui.padMode === 'smp');
   ui.pads.forEach((p, idx) => {
     p.classList.remove('set', 'on');
@@ -1043,7 +1043,7 @@ function renderPads(i) {
         ? t('sampler_pad_filled_title', { name: s.name })
         : t('sampler_pad_empty_title');
     } else if (LOOP_BEATS[idx] == null) {
-      // moitié gauche du mode LOOP : IN · OUT · ✕ (boucle manuelle rangée là)
+      // left half of LOOP mode: IN · OUT · ✕ (the manual loop lives there)
       p.textContent = idx === 0 ? 'IN' : idx === 1 ? 'OUT' : '✕';
       p.title = idx === 0
         ? t('loop_set_in_title')
@@ -1059,22 +1059,22 @@ function renderPads(i) {
   });
 }
 
-// Play/Pause avec recalage SYNC : au LANCEMENT d'un deck synchronisé, on
-// recale immédiatement ses traits rouges sur ceux du master (mesure sur
-// mesure) — « quand je lance deux sons sync on doit bien caler les traits
-// rouges sur traits rouges comparé au master directement »
+// Play/Pause with SYNC realignment: when a synced deck STARTS, its red
+// lines are immediately aligned to the master's (bar on bar)
+// — "when I start two synced tracks, the red lines must line up red
+// on red against the master directly"
 function playDeck(d) {
   engine.resume();
   const deck = engine.decks[d];
   const wasPlaying = deck.playing;
   deck.togglePlay();
-  // (jamais sur le MASTER lui-même : c'est la référence, il se serait calé
-  // sur un de ses esclaves)
+  // (never on the MASTER itself: it's the reference, it would have aligned
+  // to one of its followers)
   const mi = engine.masterIdx !== null ? engine.masterIdx : engine.autoMasterIdx;
   if (!wasPlaying && deck.playing && deck.synced && mi !== d) engine.sync(d);
 }
 
-// Cale un temps sur le beat le plus proche de la grille (dynamique ou fixe)
+// Snaps a time to the nearest beat of the grid (dynamic or fixed)
 function snapToBeat(deck, t) {
   if (deck.beats) {
     const s = gridTimeAtIndex(deck, Math.round(gridIndexFracAt(deck, t)));
@@ -1086,15 +1086,17 @@ function snapToBeat(deck, t) {
   return t;
 }
 
-// Boucle MANUELLE façon Rekordbox : IN pose le départ (calé sur le temps le
-// plus proche), OUT ferme la boucle et l'active — ✕ / EXIT pour sortir
-// Longueur de boucle en « temps » lisible (8 temps, 1/2 temps…)
+// Rekordbox-style MANUAL loop: IN sets the start (snapped to the nearest
+// beat), OUT closes the loop and activates it — ✕ / EXIT to leave
+// Loop length as readable "beats" (8 beats, 1/2 beat…)
 function loopLenLabel(deck) {
   if (!deck.bpm) return '';
   const b = (deck.loopEnd - deck.loopStart) / (60 / deck.bpm);
-  return b >= 0.94 ? `${Math.round(b)} temps` : `1/${Math.round(1 / b)} temps`;
+  if (b < 0.94) return t('loop_length_fraction', { d: Math.round(1 / b) });
+  const n = Math.round(b);
+  return n === 1 ? t('loop_length_one_beat') : t('loop_length_beats', { n });
 }
-// Boutons DÉDIÉS de la FLX6 (capturés : ÷2 = note 81, ×2 = note 83)
+// DEDICATED FLX6 buttons (captured: ÷2 = note 81, ×2 = note 83)
 function loopHalve(i) {
   const deck = engine.decks[i];
   if (!deck.looping) {
@@ -1127,7 +1129,7 @@ function loopDouble(i) {
 function loopIn(i) {
   const deck = engine.decks[i];
   if (!deck.buffer) return;
-  // Pendant une boucle, IN divise aussi (sérigraphie « 1/2X »)
+  // During a loop, IN also halves (printed "1/2X" on the hardware)
   if (deck.looping) {
     loopHalve(i);
     return;
@@ -1138,7 +1140,7 @@ function loopIn(i) {
 function loopOut(i) {
   const deck = engine.decks[i];
   if (!deck.buffer) return;
-  // Pendant une boucle, OUT double aussi (sérigraphie « 2X »)
+  // During a loop, OUT also doubles (printed "2X" on the hardware)
   if (deck.looping) {
     loopDouble(i);
     return;
@@ -1147,20 +1149,20 @@ function loopOut(i) {
     flashStatus(t('loop_set_in_first', { n: i + 1 }));
     return;
   }
-  const t = snapToBeat(deck, deck.currentTime());
-  if (t <= deck._loopInPoint + 0.05) {
+  const outPoint = snapToBeat(deck, deck.currentTime());
+  if (outPoint <= deck._loopInPoint + 0.05) {
     flashStatus(t('loop_out_after_in', { n: i + 1 }));
     return;
   }
-  deck.setLoop(deck._loopInPoint, t);
-  deck._loopBeats = deck.bpm ? Math.round((t - deck._loopInPoint) / (60 / deck.bpm)) : 0;
-  flashStatus(t('loop_extended', { n: i + 1, from: formatTime(deck._loopInPoint), to: formatTime(t) }));
+  deck.setLoop(deck._loopInPoint, outPoint);
+  deck._loopBeats = deck.bpm ? Math.round((outPoint - deck._loopInPoint) / (60 / deck.bpm)) : 0;
+  flashStatus(t('loop_extended', { n: i + 1, from: formatTime(deck._loopInPoint), to: formatTime(outPoint) }));
 }
 
-// Réglage du OUT au STICK GAUCHE (mode activé par re-appui sur OUT) :
-// ▶ = le OUT saute au SEGMENT suivant de la grille (pas à pas) ·
-// ◀ = réduction FINE et continue, petit à petit — pendant ce mode le stick
-// ne décale plus le son (pas de jog), il ne touche qu'à la boucle
+// Adjusting OUT with the LEFT STICK (mode enabled by pressing OUT again):
+// ▶ = OUT jumps to the next grid SEGMENT (step by step) ·
+// ◀ = FINE, continuous shrinking, little by little — in this mode the stick
+// no longer shifts the sound (no jog), it only touches the loop
 function gpLoopEditAdjust(d, v, dt) {
   const deck = engine.decks[d];
   const ui = deckUI[d];
@@ -1168,7 +1170,7 @@ function gpLoopEditAdjust(d, v, dt) {
   const period = 60 / deck.bpm;
   const now = performance.now();
   if (v > 0) {
-    // pas à pas : +1 segment toutes les ~280 ms tant qu'on pousse à droite
+    // step by step: +1 segment every ~280 ms while pushing right
     if (now - (ui._loopEditLast || 0) < 280) return;
     ui._loopEditLast = now;
     let end = null;
@@ -1182,8 +1184,8 @@ function gpLoopEditAdjust(d, v, dt) {
     deck._loopBeats = Math.round((end - deck.loopStart) / period);
     flashStatus(t('loop_out_forward', { beats: deck._loopBeats }));
   } else if (v < 0) {
-    // par CRANS de 100 ms — modifier la source audio à chaque frame la
-    // faisait wrapper en rafale (le son « courait » à toute vitesse)
+    // in STEPS of 100 ms — changing the audio source on every frame made
+    // it wrap in bursts (the sound "ran" at full speed)
     if (now - (ui._loopEditLast || 0) < 100) return;
     ui._loopEditLast = now;
     const minLen = period / 8;
@@ -1192,8 +1194,8 @@ function gpLoopEditAdjust(d, v, dt) {
     if (end >= deck.loopEnd) return;
     deck.setLoop(deck.loopStart, end);
     deck._loopBeats = Math.round(((end - deck.loopStart) / period) * 8) / 8;
-    // le playhead est passé DERRIÈRE le nouveau OUT : UN retour propre dans
-    // la boucle, pas une mitraillette de wraps
+    // the playhead went PAST the new OUT: ONE clean jump back into
+    // the loop, not a machine-gun burst of wraps
     const cur = deck.currentTime();
     if (cur > end) {
       const len = end - deck.loopStart;
@@ -1206,36 +1208,36 @@ function gpLoopEditAdjust(d, v, dt) {
   }
 }
 
-// Petite PLATINE par deck (façon jog Rekordbox) : anneau bleu, sillons,
-// marqueur qui tourne à 33 tr/min pendant la lecture — belle pour pas cher
+// Small per-deck PLATTER (Rekordbox jog style): blue ring, grooves,
+// marker spinning at 33 rpm during playback — looks nice for cheap
 function drawDeckWheel(ui, deck, t) {
   const cv = ui.wheelCv;
   if (!cv) return;
   const playing = deck.playing;
-  // Écart de tempo affiché AU CENTRE du disque, comme sur un CDJ
-  // Écart de tempo SANS la micro-correction du servo : sinon la décimale
-  // clignotait en permanence sur un deck syncé
+  // Tempo offset shown IN THE CENTER of the platter, like on a CDJ
+  // Tempo offset WITHOUT the servo micro-correction: otherwise the decimal
+  // kept flickering on a synced deck
   const pct = (((deck.tempo || 1) / (1 + (deck._pllCorr || 0))) - 1) * 100;
   const pctTxt = `${pct >= 0 ? '+' : ''}${pct.toFixed(1)}%`;
-  // à l'arrêt : un seul dessin (signature), en lecture : chaque frame
+  // when stopped: a single draw (signature), when playing: every frame
   const sig = playing ? null : `stop:${deck.buffer ? 1 : 0}:${pctTxt}:${deck.tempoRange}:${deck.bpm}`;
   if (sig && ui._wheelSig === sig) return;
   ui._wheelSig = sig;
 
-  // RÉSOLUTION RÉELLE : le canevas était figé à 96 px pour un affichage de
-  // 48 px — le texte tombait à 6 px, illisible. On dessine à la taille
-  // affichée × la densité de l'écran, dans un repère de 100 unités.
+  // REAL RESOLUTION: the canvas was fixed at 96 px for a 48 px display
+  // — the text dropped to 6 px, unreadable. We draw at the displayed
+  // size × the screen density, in a 100-unit coordinate space.
   const dpr = window.devicePixelRatio || 1;
   const cssW = cv.clientWidth || 86;
   const px = Math.round(cssW * dpr);
   if (cv.width !== px) { cv.width = px; cv.height = px; }
   const g = cv.getContext('2d');
-  const k = px / 100;                 // échelle : on raisonne en /100
+  const k = px / 100;                 // scale: we work in /100 units
   g.setTransform(k, 0, 0, k, 0, 0);
   g.clearRect(0, 0, 100, 100);
   const c = 50;
 
-  // Anneau extérieur
+  // Outer ring
   g.beginPath();
   g.arc(c, c, 46, 0, Math.PI * 2);
   g.lineWidth = 3;
@@ -1254,8 +1256,8 @@ function drawDeckWheel(ui, deck, t) {
     g.arc(c, c, r, 0, Math.PI * 2);
     g.stroke();
   }
-  // Repère de rotation (~33 tr/min) : dans la COURONNE, il ne passe plus
-  // devant les chiffres
+  // Rotation marker (~33 rpm): in the OUTER BAND, it no longer passes
+  // in front of the digits
   const ang = (t || 0) * 3.49;
   g.beginPath();
   g.moveTo(c + Math.cos(ang) * 29, c + Math.sin(ang) * 29);
@@ -1264,7 +1266,7 @@ function drawDeckWheel(ui, deck, t) {
   g.strokeStyle = playing ? '#2d7df1' : '#3a4258';
   g.stroke();
 
-  // --- CADRAN CENTRAL façon CDJ ---
+  // --- CDJ-style CENTER DIAL ---
   g.beginPath();
   g.arc(c, c, 30, 0, Math.PI * 2);
   g.fillStyle = 'rgba(6,8,11,0.95)';
@@ -1276,10 +1278,10 @@ function drawDeckWheel(ui, deck, t) {
   g.textAlign = 'center';
   g.textBaseline = 'middle';
   const MONO = 'ui-monospace, Menlo, Consolas, monospace';
-  // DECK SYNCÉ = ON AFFICHE LE BPM DU MASTER. Le verrou garantit la même
-  // vitesse réelle ; afficher la valeur instantanée du deck montrait les
-  // micro-corrections du servo (139.07 face à 139.00) et donnait
-  // l'impression que « le BPM n'arrête pas de changer ».
+  // SYNCED DECK = SHOW THE MASTER'S BPM. The lock guarantees the same
+  // real speed; showing the deck's instantaneous value exposed the
+  // servo's micro-corrections (139.07 vs 139.00) and gave the
+  // impression that "the BPM keeps changing".
   let bpmNow = deck.bpm ? (deck.bpm * (deck.tempo || 1)) : null;
   if (deck.synced && deck.playing && deck._syncBase) {
     const mstr = engine.getMasterDeck(deck.id);
@@ -1291,21 +1293,21 @@ function drawDeckWheel(ui, deck, t) {
   g.fillStyle = deck.buffer ? '#eef2f8' : '#39414f';
   g.fillText(bpmNow ? bpmNow.toFixed(2) : '--.--', c, c - 8);
 
-  // Écart de tempo : VERT à zéro, ORANGE dès qu'on s'écarte — on voit d'un
-  // coup d'œil où on est par rapport à la jauge, sans la regarder
+  // Tempo offset: GREEN at zero, ORANGE as soon as you move away — you see
+  // at a glance where you are relative to the slider, without looking at it
   g.font = `800 14px ${MONO}`;
   g.fillStyle = Math.abs(pct) < 0.05 ? '#5fe08a' : '#ffb054';
   g.fillText(pctTxt, c, c + 8);
 
-  // Plage de la jauge (clic = ±6 → ±16 → WIDE). Le keylock a son
-  // propre bouton cadenas dans l'en-tête du deck.
+  // Slider range (click = ±6 → ±16 → WIDE). The keylock has its
+  // own padlock button in the deck header.
   g.font = `800 10px ${MONO}`;
   g.fillStyle = deck.tempoRange >= 0.5 ? '#ff7a59' : '#8b94a8';
   g.fillText(tempoRangeLabel(deck.tempoRange), c, c + 21);
 }
 
-// PLAGE DE TEMPO par deck : ±6 %, ±16 % ou WIDE (±50 %). La jauge écran et
-// le fader physique couvrent toute la plage choisie.
+// Per-deck TEMPO RANGE: ±6 %, ±16 % or WIDE (±50 %). The on-screen slider
+// and the physical fader cover the whole chosen range.
 const TEMPO_RANGES = [0.06, 0.16, 0.5];
 function tempoRangeLabel(r) {
   return r >= 0.5 ? 'WIDE' : `±${Math.round(r * 100)}%`;
@@ -1315,7 +1317,7 @@ function applyTempoRange(i) {
   const ui = deckUI[i] || null;
   if (!TEMPO_RANGES.includes(deck.tempoRange)) {
     let r = 0.16;
-    try { r = Number(localStorage.getItem(`tempoRange${i}`)) || 0.16; } catch { /* défaut */ }
+    try { r = Number(localStorage.getItem(`tempoRange${i}`)) || 0.16; } catch { /* default */ }
     deck.tempoRange = TEMPO_RANGES.includes(r) ? r : 0.16;
   }
   const el = ui ? ui.tempo : document.querySelector(`#deck-slot-${i} .tempo`);
@@ -1327,7 +1329,7 @@ function applyTempoRange(i) {
   if (ui) ui._wheelSig = null;
 }
 
-// Deck qui MÈNE le groupe syncé de i : le master qui joue, sinon i lui-même
+// Deck that LEADS i's synced group: the master if it's playing, otherwise i itself
 function syncGroupLead(i) {
   const deck = engine.decks[i];
   if (deck.synced) {
@@ -1336,8 +1338,8 @@ function syncGroupLead(i) {
   }
   return i;
 }
-// Change le tempo du GROUPE syncé de i d'un facteur (fader physique d'un
-// deck syncé) : le meneur bouge, les suiveurs suivent dans la même image
+// Scales the tempo of i's synced GROUP by a factor (physical fader of a
+// synced deck): the leader moves, the followers follow in the same frame
 function syncGroupTempoScale(i, factor) {
   const ti = syncGroupLead(i);
   const td = engine.decks[ti];
@@ -1351,9 +1353,9 @@ function syncGroupTempoScale(i, factor) {
   if (typeof updateMasterBpmVal === 'function') updateMasterBpmVal();
 }
 
-// − / + du deck : monte ou descend le BPM. Deck SYNCÉ = on agit sur le
-// MASTER, tout le groupe suit d'un bloc (le moteur met les suiveurs à
-// l'échelle dans la même image — voir _followMaster).
+// Deck − / +: raises or lowers the BPM. SYNCED deck = we act on the
+// MASTER, the whole group follows as one (the engine scales the followers
+// in the same frame — see _followMaster).
 function deckBpmNudge(i, delta) {
   engine.resume();
   const deck = engine.decks[i];
@@ -1362,10 +1364,10 @@ function deckBpmNudge(i, delta) {
   const td = engine.decks[ti];
   const base = (td.tempo || 1) / (1 + (td._pllCorr || 0));
   const cur = td.bpm * base;
-  // aligné sur le pas : 124,03 + 0,1 → 124,1
+  // aligned to the step: 124.03 + 0.1 → 124.1
   const step = Math.abs(delta);
-  const nb = Math.round((cur + delta) / step) * step;
-  const nt = Math.max(0.5, Math.min(1.6, nb / td.bpm));
+  const newBpm = Math.round((cur + delta) / step) * step;
+  const nt = Math.max(0.5, Math.min(1.6, newBpm / td.bpm));
   if (td.synced && td._syncBase) td._syncBase = nt;
   td.setTempo(nt);
   updateTempoLabel(ti);
@@ -1374,7 +1376,7 @@ function deckBpmNudge(i, delta) {
   flashStatus(t('tempo_nudge_status', { n: ti + 1, bpm: (td.bpm * nt).toFixed(2) }));
 }
 
-// Saut de N mesures (négatif = arrière). Boucle active = c'est elle qui bouge.
+// Jump by N bars (negative = backward). Active loop = the loop is what moves.
 function doBeatJump(d, measures) {
   const deck = engine.decks[d];
   if (!deck.bpm || !deck.buffer) return;
@@ -1400,7 +1402,7 @@ function doBeatJump(d, measures) {
   }
 }
 
-// Pose (ou redimensionne) une boucle de N temps, calée sur la grille
+// Sets (or resizes) an N-beat loop, snapped to the grid
 function applyLoop(d, beats) {
   const deck = engine.decks[d];
   if (!deck.bpm || !deck.buffer) return;
@@ -1431,21 +1433,21 @@ function applyLoop(d, beats) {
   deck._loopBeats = beats;
 }
 
-// modeArg : les MANETTES passent le mode DU JOUEUR (chacun garde sa config),
-// la souris utilise l'onglet du deck. ownerGi : index du joueur — flash bref
-// de SA couleur à l'appui, et MÉMORISÉ si l'action pose quelque chose
-// (cue, loop) pour n'allumer QUE sa partie du bouton.
+// modeArg: GAMEPADS pass the PLAYER's mode (each one keeps their own setup),
+// the mouse uses the deck's tab. ownerGi: player index — brief flash
+// of THEIR color on press, and REMEMBERED if the action sets something
+// (cue, loop) so that ONLY their part of the button lights up.
 function padPress(i, idx, modeArg, ownerGi) {
   const deck = engine.decks[i];
   const ui = deckUI[i];
   const modeEarly = modeArg || ui.padMode;
   if (modeEarly === 'smp') {
-    // Le sampler ne dépend PAS du morceau chargé — il joue toujours
+    // The sampler does NOT depend on the loaded track — it always plays
     samplerPress(i, idx);
     return;
   }
   if (modeEarly === 'fx') {
-    // Source sans évènement de relâcher (téléphone…) : rafale courte d'un temps
+    // Source with no release event (phone…): short burst of one beat
     padFxPress(i, idx, true);
     setTimeout(() => padFxPress(i, idx, false), 400);
     return;
@@ -1459,14 +1461,14 @@ function padPress(i, idx, modeArg, ownerGi) {
 
   if (mode === 'key') {
     const kv = KEY_VALS[idx];
-    const target = deck.keyShift === kv ? 0 : kv; // re-appuyer = retour à 0
+    const target = deck.keyShift === kv ? 0 : kv; // press again = back to 0
     if (ui.applyKey) ui.applyKey(target - deck.keyShift);
     return;
   }
   if (mode === 'hotcue') {
     const c = deck.hotCues[idx];
     if (c == null) {
-      // Le hot cue se cale toujours sur le début du segment (temps) le plus proche
+      // The hot cue always snaps to the start of the nearest segment (beat)
       let t = deck.currentTime();
       if (deck.beats) {
         const snapped = gridTimeAtIndex(deck, Math.round(gridIndexFracAt(deck, t)));
@@ -1476,12 +1478,12 @@ function padPress(i, idx, modeArg, ownerGi) {
         t = Math.max(0, deck.beatOffset + Math.round((t - deck.beatOffset) / period) * period);
       }
       deck.hotCues[idx] = t;
-      if (ui.cueOwner) ui.cueOwner[idx] = ownerGi != null ? [ownerGi] : null; // QUI l'a posé
+      if (ui.cueOwner) ui.cueOwner[idx] = ownerGi != null ? [ownerGi] : null; // WHO set it
       if (deck.track) library.setHotCues(deck.track, deck.hotCues);
     } else {
       deck.seek(c);
-      // Un joueur qui UTILISE le cue d'un autre le co-adopte : l'affichage
-      // se partage entre les deux couleurs (moitié/moitié)
+      // A player who USES another player's cue co-adopts it: the display
+      // is split between the two colors (half/half)
       if (ownerGi != null && ui.cueOwner) {
         const arr = gpOwnersOf(ui.cueOwner[idx]);
         if (!arr.includes(ownerGi)) arr.push(ownerGi);
@@ -1490,8 +1492,8 @@ function padPress(i, idx, modeArg, ownerGi) {
     }
   } else if (mode === 'jump') {
     if (!deck.bpm) return;
-    // Saut en MESURES (4 temps), modulé par la force ½ / ×2.
-    // Grille dynamique : le saut suit les VRAIS temps du morceau.
+    // Jump in BARS (4 beats), scaled by the ½ / ×2 strength.
+    // Dynamic grid: the jump follows the track's REAL beats.
     const cur = deck.currentTime();
     let jump;
     if (deck.beats) {
@@ -1510,20 +1512,20 @@ function padPress(i, idx, modeArg, ownerGi) {
       deck.setLoop(ns, ns + len);
       deck.seek(Math.max(0, Math.min(deck.duration, cur + delta)));
     } else {
-      // même lecture d'horloge que le calcul du saut : atterrissage EXACT
+      // same clock reading as the jump computation: EXACT landing
       deck.seek(cur + jump);
     }
   } else {
     if (!deck.bpm) return;
     if (LOOP_BEATS[idx] == null) {
-      // Moitié gauche du mode LOOP : IN (pad 1), OUT (pad 2), ✕ (le reste)
+      // Left half of LOOP mode: IN (pad 1), OUT (pad 2), ✕ (the rest)
       if (idx === 0) {
         loopIn(i);
         return;
       }
       if (idx === 1) {
         if (deck.looping) {
-          // OUT pendant la boucle : rappel — le stick gauche la règle déjà
+          // OUT during the loop: reminder — the left stick already adjusts it
           flashStatus(t('gamepad_loop_stick', { n: i + 1 }));
         } else {
           loopOut(i);
@@ -1537,12 +1539,12 @@ function padPress(i, idx, modeArg, ownerGi) {
     }
     const beats = LOOP_BEATS[idx] * (ui.jumpScale || 1);
     const period = 60 / deck.bpm;
-    ui.loopOwner = ownerGi != null ? ownerGi : null; // QUI tient la boucle
+    ui.loopOwner = ownerGi != null ? ownerGi : null; // WHO holds the loop
     if (deck.looping && deck._loopBeats === beats) {
       deck.exitLoop();
       ui.loopOwner = null;
     } else if (deck.looping) {
-      // Boucle déjà active : on la REDIMENSIONNE sans bouger son départ
+      // Loop already active: RESIZE it without moving its start
       let end;
       if (deck.beats) {
         const fs = gridIndexFracAt(deck, deck.loopStart);
@@ -1553,8 +1555,8 @@ function padPress(i, idx, modeArg, ownerGi) {
     } else {
       let start = deck.currentTime();
       let end = null;
-      // Départ TOUJOURS calé sur un segment/micro-segment ; sur grille
-      // dynamique, la boucle suit les VRAIS temps (longueur exacte)
+      // Start ALWAYS snapped to a segment/micro-segment; on a dynamic
+      // grid, the loop follows the REAL beats (exact length)
       if (deck.beats) {
         const q = Math.round(gridIndexFracAt(deck, start) * 4) / 4;
         const s = gridTimeAtIndex(deck, q);
@@ -1571,9 +1573,9 @@ function padPress(i, idx, modeArg, ownerGi) {
   }
 }
 
-// --- Stems : 3 boutons toujours visibles (VOX / DRM / INST, style Rekordbox).
-// Premier clic = séparation IA puis coupe la partie choisie ; ensuite chaque
-// bouton allume/éteint sa partie. INST regroupe basse + mélodies.
+// --- Stems: 3 always-visible buttons (VOX / DRM / INST, Rekordbox style).
+// First click = AI separation then mutes the chosen part; after that each
+// button turns its part on/off. INST groups bass + melodies.
 const STEM_GROUPS = { vocals: ['vocals'], drums: ['drums'], inst: ['bass', 'other'] };
 
 function resetStemsCol(i) {
@@ -1585,16 +1587,16 @@ function resetStemsCol(i) {
   ui._stemState = null;
 }
 
-// Sépare (ou récupère du cache) et décode les stems du morceau du deck i,
-// SANS les activer : ils sont juste prêts (deck.stems). UNE séparation à la
-// fois (GPU/CPU) : les demandes s'enchaînent dans une file — un clic sur
-// VOX pendant que le deck voisin se prépare ATTEND son tour au lieu
-// d'échouer (« une séparation est déjà en cours »).
+// Separates (or fetches from cache) and decodes the stems of deck i's track,
+// WITHOUT enabling them: they are just ready (deck.stems). ONE separation at
+// a time (GPU/CPU): requests are chained in a queue — a click on VOX
+// while the neighboring deck is being prepared WAITS its turn instead
+// of failing ("a separation is already running").
 let stemBusy = false;
 let stemJob = Promise.resolve();
-const stemPending = [null, null, null, null]; // { track, p } par deck
-// Moteur de stems : { ok, cuda } — avec une carte graphique, la
-// séparation est assez légère pour tourner PENDANT le mix
+const stemPending = [null, null, null, null]; // { track, p } per deck
+// Stems engine: { ok, cuda } — with a graphics card, the separation
+// is light enough to run DURING the mix
 let stemsEngine = null;
 window.api.stemsInfo?.().then((r) => { stemsEngine = r; }).catch(() => {});
 
@@ -1604,18 +1606,18 @@ async function decodeStemFile(file) {
   return engine.ctx.decodeAudioData(ab);
 }
 
-// CALAGE DES STEMS SUR LE MORCEAU. Demucs décode le mp3 avec ffmpeg, le
-// logiciel avec le décodeur de Chromium : selon l'encodeur, les deux
-// timelines diffèrent de quelques dizaines de ms (délai d'encodeur LAME).
-// Sans correction, activer VOX/DRM/INST décalait le son de la grille et du
-// sync. On mesure l'écart par intercorrélation (somme des stems ≈ morceau)
-// et on recale les tampons des stems à l'échantillon près.
+// ALIGNING THE STEMS TO THE TRACK. Demucs decodes the mp3 with ffmpeg, the
+// app with Chromium's decoder: depending on the encoder, the two
+// timelines differ by a few tens of ms (LAME encoder delay).
+// Without correction, enabling VOX/DRM/INST shifted the sound off the grid and
+// the sync. We measure the offset by cross-correlation (sum of stems ≈ track)
+// and shift the stem buffers to the exact sample.
 function alignStems(orig, bufs) {
   const sr = orig.sampleRate;
   const n = Math.min(orig.length, ...bufs.map((b) => b.length));
   if (n < sr * 12) return 0;
-  // On ne travaille QUE sur une fenêtre au milieu du morceau (4 s + marges) :
-  // quelques millisecondes de calcul, pas de gel de l'interface
+  // We ONLY work on a window in the middle of the track (4 s + margins):
+  // a few milliseconds of computation, no UI freeze
   const D = 8;
   const maxLag = Math.floor(0.12 * sr);
   const win = Math.floor(4 * sr);
@@ -1628,13 +1630,13 @@ function alignStems(orig, bufs) {
     const c = b.getChannelData(0).subarray(r0, r0 + len);
     for (let k = 0; k < len; k++) sum[k] += c[k];
   }
-  const from = maxLag + 2 * D; // début de la fenêtre utile dans la région
+  const from = maxLag + 2 * D; // start of the useful window within the region
   const corrAt = (a, b, f, l, lag) => {
     let acc = 0;
     for (let k = f; k < f + l; k++) acc += a[k] * b[k + lag];
     return acc;
   };
-  // 1) grossier : décimé ×8, ±120 ms
+  // 1) coarse: decimated ×8, ±120 ms
   const dec = (src) => {
     const out = new Float32Array(Math.floor(len / D));
     for (let k = 0; k < out.length; k++) {
@@ -1653,7 +1655,7 @@ function alignStems(orig, bufs) {
     const v = corrAt(oD, sD, Math.floor(from / D), Math.floor(win / D), L);
     if (v > bestV) { bestV = v; best = L * D; }
   }
-  // 2) fin : à l'échantillon près, ±D autour, sur 1 s
+  // 2) fine: to the exact sample, ±D around, over 1 s
   let fine = best;
   let fineV = -Infinity;
   for (let L = best - D; L <= best + D; L++) {
@@ -1661,7 +1663,7 @@ function alignStems(orig, bufs) {
     if (v > fineV) { fineV = v; fine = L; }
   }
   if (!fine) return 0;
-  // stem[k + fine] ≈ morceau[k] : on décale les stems de « fine » échantillons
+  // stem[k + fine] ≈ track[k]: shift the stems by "fine" samples
   for (const b of bufs) {
     for (let c = 0; c < b.numberOfChannels; c++) {
       const d = b.getChannelData(c);
@@ -1694,20 +1696,20 @@ function ensureStems(i, silent) {
   ui.stemBtns.forEach((b) => b.classList.add('loading'));
   if (!silent) flashStatus(t('stems_running'));
   const run = async () => {
-    // le morceau a changé pendant l'attente dans la file : rien à faire
+    // the track changed while waiting in the queue: nothing to do
     if (engine.decks[i].track !== track) return false;
     stemBusy = true;
     try {
       const res = await window.api.stemsSeparate(track.path);
       if (!res.ok) {
-        if (!silent) flashStatus(`STEMS : ${res.error}`);
-        else console.log(`[midi] stems deck ${i + 1} : ${res.error}`);
+        if (!silent) flashStatus(t('stems_separation_error', { error: res.error }));
+        else console.log(`[midi] stems deck ${i + 1}: ${res.error}`);
         return false;
       }
       if (engine.decks[i].track !== track) return false;
-      // INST = basse + mélodies : les deux sont toujours coupées/rendues
-      // ENSEMBLE, on les fusionne en un seul tampon (−25 % de mémoire :
-      // 4 stems décodés pèsent ~500 Mo par morceau de 6 min)
+      // INST = bass + melodies: both are always muted/restored
+      // TOGETHER, so they're merged into a single buffer (−25 % memory:
+      // 4 decoded stems weigh ~500 MB per 6-min track)
       const [vocals, drums, bass, other] = await Promise.all(
         ['vocals', 'drums', 'bass', 'other'].map((k) => decodeStemFile(res.stems[k])));
       for (let c = 0; c < bass.numberOfChannels; c++) {
@@ -1716,16 +1718,16 @@ function ensureStems(i, silent) {
         const n = Math.min(a.length, b.length);
         for (let k = 0; k < n; k++) a[k] += b[k];
       }
-      // Le morceau a pu changer pendant la séparation
+      // The track may have changed during the separation
       if (engine.decks[i].track !== track) return false;
       const lag = alignStems(deck.buffer, [vocals, drums, bass]);
-      if (lag) console.log(`[midi] stems deck ${i + 1} : recalés de ${(lag * 1000).toFixed(1)} ms sur le morceau`);
+      if (lag) console.log(`[midi] stems deck ${i + 1}: realigned by ${(lag * 1000).toFixed(1)} ms to the track`);
       deck.stems = { vocals, drums, bass, other: null };
       ui.stemBtns.forEach((b) => b.classList.add('ready'));
       flashStatus(t('stems_ready', { n: i + 1 }));
       return true;
     } catch (err) {
-      if (!silent) flashStatus(`STEMS : erreur — ${err.message || err}`);
+      if (!silent) flashStatus(t('stems_separation_exception', { error: err.message || err }));
       return false;
     } finally {
       stemBusy = false;
@@ -1741,11 +1743,11 @@ function ensureStems(i, silent) {
   return p;
 }
 
-// Préparation automatique en arrière-plan dès qu'un morceau est chargé
-// (désactivable dans les paramètres)
-// Auto-stems DIFFÉRÉ sur processeur seul : Demucs y est très gourmand — on
-// ne le lance alors JAMAIS pendant qu'un son joue (sinon audio qui grésille
-// + manette qui lag). Avec une carte graphique NVIDIA, il part tout de suite.
+// Automatic background preparation as soon as a track is loaded
+// (can be disabled in the settings)
+// Auto-stems DEFERRED on CPU only: Demucs is very heavy there — so it is
+// NEVER started while a track is playing (otherwise crackling audio
+// + laggy gamepad). With an NVIDIA graphics card, it starts right away.
 const stemAutoQueue = new Set();
 let stemPumpTimer = null;
 function pumpStemQueue() {
@@ -1756,7 +1758,7 @@ function pumpStemQueue() {
     const anyPlaying = engine.decks.some((dk) => dk.playing);
     const gpu = stemsEngine && stemsEngine.cuda;
     if ((anyPlaying && !gpu) || stemBusy) {
-      pumpStemQueue(); // on repousse tant que ça joue
+      pumpStemQueue(); // postpone while something is playing
       return;
     }
     const i = [...stemAutoQueue][0];
@@ -1783,7 +1785,7 @@ async function stemPress(i, group) {
     ui.stemBtns.forEach((b) => b.classList.add('on'));
   }
   const state = ui._stemState;
-  // Au premier clic, l'intention est de COUPER la partie cliquée
+  // On the first click, the intent is to MUTE the clicked part
   state[group] = firstTime ? false : !state[group];
   const now = engine.ctx.currentTime;
   for (const key of STEM_GROUPS[group]) {
@@ -1809,12 +1811,12 @@ function padClear(i, idx, modeArg) {
   }
 }
 
-// --- Effets « platine » : V.BRAKE (le disque freine jusqu'à l'arrêt) et
-// BACKSPIN (il repart en arrière comme un rembobinage) — simulés avec le
-// moteur de scrub (les mêmes grains sonores que le scratch au jog)
-// EFFET SONORE SEULEMENT : le morceau « continue » virtuellement en dessous
-// pendant le geste, et REPREND EXACTEMENT là où il serait rendu — le pad ne
-// déplace jamais la position dans le mix (demande explicite de David)
+// --- "Turntable" effects: V.BRAKE (the platter brakes to a stop) and
+// BACKSPIN (it spins backward like a rewind) — simulated with the
+// scrub engine (the same sound grains as jog scratching)
+// SOUND EFFECT ONLY: the track virtually "keeps going" underneath
+// during the gesture, and RESUMES EXACTLY where it would have got to — the pad
+// never moves the position in the mix (explicit request from David)
 function padSpinFx(i, idx, on, kind) {
   const deck = engine.decks[i];
   const ui = deckUI[i];
@@ -1824,8 +1826,8 @@ function padSpinFx(i, idx, on, kind) {
     engine.resume();
     const wasPlaying = deck.playing;
     if (wasPlaying) deck.pause();
-    // Son CONTINU du moteur (tranche inversée + rampe de vitesse) : propre
-    // à toutes les vitesses — plus aucun grain de scrub ici
+    // CONTINUOUS sound from the engine (reversed slice + speed ramp): clean
+    // at every speed — no scrub grains here anymore
     deck.spinSound(kind);
     ui._spinFx = {
       pos0: deck.currentTime(),
@@ -1842,8 +1844,8 @@ function padSpinFx(i, idx, on, kind) {
     ui._spinFx = null;
     deck.stopSpinSound();
     if (s.wasPlaying) {
-      // Reprise CALÉE : position d'origine + temps écoulé (comme si le
-      // son n'avait jamais été touché) — c'était juste un effet sonore
+      // ALIGNED resume: original position + elapsed time (as if the
+      // sound had never been touched) — it was just a sound effect
       const elapsed = (performance.now() - s.start) / 1000;
       deck.seek(Math.min(deck.duration || s.pos0, s.pos0 + elapsed * (deck.tempo || 1)));
       deck.play();
@@ -1855,7 +1857,7 @@ function padSpinFx(i, idx, on, kind) {
   }
 }
 
-// Vignette bleue sur le deck : QUEL pad FX est en train de jouer
+// Blue badge on the deck: WHICH FX pad is playing
 function padFxChipShow(i, label) {
   const chip = deckUI[i] && deckUI[i].padFxChip;
   if (!chip) return;
@@ -1867,10 +1869,10 @@ function padFxChipShow(i, label) {
   }
 }
 
-// --- PAD FX (maintenir = jouer, relâcher = couper) ---
-// Chaque deck a sa PROPRE unité pad FX (engine.padFx), séparée des 4 unités
-// du panneau : appuyer sur un pad ne touche à AUCUN réglage affiché — c'est
-// un simple bouton momentané, pas un changement de config.
+// --- PAD FX (hold = play, release = stop) ---
+// Each deck has its OWN pad FX unit (engine.padFx), separate from the panel's
+// 4 units: pressing a pad touches NONE of the displayed settings — it's
+// a simple momentary button, not a config change.
 function padFxPress(i, idx, on) {
   const preset = PADFX[idx];
   if (!preset) return;
@@ -1880,13 +1882,13 @@ function padFxPress(i, idx, on) {
   }
   const ui = deckUI[i];
   if (on) {
-    if (ui._padFxHeld != null) return; // un seul pad FX à la fois par deck
+    if (ui._padFxHeld != null) return; // only one FX pad at a time per deck
     engine.resume();
     ui._padFxHeld = idx;
     if (preset.type === 'roll') {
-      // VRAI ROLL : le deck répète la tranche de la grille où on se trouve
-      // (½ temps…) et le morceau continue dessous — au relâcher, il reprend
-      // pile où il en serait. (L'ancien « roll » n'était qu'un écho bouclé.)
+      // REAL ROLL: the deck repeats the grid slice we're in
+      // (½ beat…) and the track keeps going underneath — on release, it resumes
+      // exactly where it would be. (The old "roll" was only a looped echo.)
       const d = engine.decks[i];
       d._padRoll = { beats: preset.beats, mix: 1 };
       d.startRoll(preset.beats, 1);
@@ -1896,14 +1898,14 @@ function padFxPress(i, idx, on) {
       return;
     }
     engine.setPadFx(i, preset);
-    // Le son SEC du deck se dose selon la NATURE de l'effet : « c'est le
-    // son qu'on manipule », il ne s'ajoute pas par-dessus. ROLL/SWEEP/
-    // TRANS remplacent tout, ECHO/DELAY coupent avec la traînée, REVERB
-    // garde un lit, FLANGER a BESOIN du sec (c'est le peigne des deux).
+    // The deck's DRY sound is dosed according to the NATURE of the effect: "it's
+    // the sound being manipulated", it isn't layered on top. ROLL/SWEEP/
+    // TRANS replace everything, ECHO/DELAY cut with the tail, REVERB
+    // keeps a bed, FLANGER NEEDS the dry signal (it's the comb of the two).
     engine.decks[i]._padDryHold = PADFX_DRY[preset.type] ?? 1;
     if (ui.pads[idx]) ui.pads[idx].classList.add('on');
     padFxChipShow(i, preset.label);
-    ledTick(); // LED du pad TENU : retour immédiat, sans attendre le tick
+    ledTick(); // LED of the HELD pad: immediate feedback, without waiting for the tick
   } else {
     if (ui._padFxHeld !== idx) return;
     ui._padFxHeld = null;
@@ -1924,17 +1926,17 @@ function padFxPress(i, idx, on) {
   }
 }
 
-// --- SAMPLER : un son par pad, banque PARTAGÉE par les 4 decks ---
-// Pad vide : choisir un/des fichiers (ils remplissent les pads suivants).
-// Pad plein : le joue immédiatement (re-appui = redémarre). Clic droit : retire.
-// Les chemins sont mémorisés (localStorage) et rechargés au démarrage.
+// --- SAMPLER: one sound per pad, bank SHARED by the 4 decks ---
+// Empty pad: choose one or more files (they fill the following pads).
+// Filled pad: plays it immediately (press again = restart). Right-click: removes.
+// Paths are remembered (localStorage) and reloaded at startup.
 const samplerBank = Array(PAD_COUNT).fill(null); // { path, name, buffer }
 let samplerGain = null;
 
 function samplerSave() {
   try {
     localStorage.setItem('samplerBank', JSON.stringify(samplerBank.map((s) => (s ? s.path : null))));
-  } catch { /* non bloquant */ }
+  } catch { /* non-blocking */ }
 }
 
 async function samplerLoadSlot(idx, path) {
@@ -1953,10 +1955,10 @@ async function samplerLoadSlot(idx, path) {
 
 async function samplerInit() {
   let paths = null;
-  try { paths = JSON.parse(localStorage.getItem('samplerBank')); } catch { /* rien */ }
+  try { paths = JSON.parse(localStorage.getItem('samplerBank')); } catch { /* nothing */ }
   if (!Array.isArray(paths)) return;
   await Promise.all(paths.slice(0, PAD_COUNT).map((p, idx) => (p ? samplerLoadSlot(idx, p) : null)));
-  samplerSave(); // purge les fichiers disparus
+  samplerSave(); // purges files that no longer exist
   deckUI.forEach((_, d) => { if (deckUI[d].padMode === 'smp') renderPads(d); });
 }
 
@@ -1986,7 +1988,7 @@ function samplerPress(i, idx) {
     samplerGain.connect(engine.postBus);
   }
   if (slot._src) {
-    try { slot._src.stop(); } catch { /* déjà fini */ }
+    try { slot._src.stop(); } catch { /* already finished */ }
   }
   const src = engine.ctx.createBufferSource();
   src.buffer = slot.buffer;
@@ -1996,14 +1998,14 @@ function samplerPress(i, idx) {
   padFlash(i, idx, DECK_COLORS[i]);
 }
 
-// Propriétaires d'un cue : normalise null / index seul / tableau d'index
+// Owners of a cue: normalizes null / single index / array of indexes
 function gpOwnersOf(v) {
   if (v == null) return [];
   return Array.isArray(v) ? v : [v];
 }
 
-// Couleur(s) d'un groupe de propriétaires : une couleur, ou un dégradé
-// moitié/moitié quand deux joueurs partagent le même cue
+// Color(s) of a group of owners: one color, or a half/half
+// gradient when two players share the same cue
 function gpOwnersBg(owners, fallback) {
   if (!owners.length) return fallback;
   if (owners.length === 1) return PLAYER_COLORS[owners[0]];
@@ -2013,22 +2015,22 @@ function gpOwnersBg(owners, fallback) {
   return `linear-gradient(90deg, ${stops})`;
 }
 
-// Tracks visées par un geste de knob : si la colonne fait partie de la
-// SÉLECTION, tout le groupe bouge ensemble ; sinon la colonne seule
+// Tracks targeted by a knob gesture: if the column is part of the
+// SELECTION, the whole group moves together; otherwise just the column
 function gpGroupTargets(d) {
   return gpSelection.size && gpSelection.has(d) ? [...gpSelection] : [d];
 }
 
-// Applique un DELTA au knob de la rangée pour toutes les tracks du groupe
+// Applies a DELTA to the row's knob for every track in the group
 function gpGroupKnobAdjust(cur, dv) {
   const d = Math.min(cur.c, deckCount - 1);
   const k = GP_KNOBS[cur.r - 1];
   gpGroupTargets(d).forEach((t) => k.set(t, k.get(t) + dv));
 }
 
-// 🔊 BASCULE DES BASSES vers le deck d — même règle que le bouton logo sur
-// LOW : ce deck récupère ses basses, TOUTES les autres sont coupées
-// (une seule basse active à la fois). Silencieux : l'appelant flashe.
+// 🔊 BASS SWAP to deck d — same rule as the logo button on
+// LOW: this deck gets its bass back, ALL the others are cut
+// (only one bass active at a time). Silent: the caller flashes the status.
 function gpBassTo(d) {
   const kkey = `low:${d}`;
   if (gpKillStore.has(kkey)) {
@@ -2047,18 +2049,18 @@ function gpBassTo(d) {
   }
 }
 
-// ↺ R1 en mode SÉLECTION : LE relâcheur de mix — filtres des sélectionnées
-// à 0, leurs FX à 0 et éteints, volumes coupés restaurés, sélection vidée.
-// BONUS : R1 posé sur un knob LOW = la bascule des basses vers CE deck est
-// incluse dans le drop (comme le bouton logo) — tout en un seul geste.
+// ↺ R1 in SELECTION mode: THE mix release — filters of the selected tracks
+// at 0, their FX at 0 and off, cut volumes restored, selection cleared.
+// BONUS: R1 on a LOW knob = the bass swap to THIS deck is
+// included in the drop (like the logo button) — all in a single gesture.
 function gpSelReset(fallbackDeck, cur) {
   if (!gpSelection.size) return;
   [...gpSelection].forEach((t) => {
     engine.setDeckColor(t, 0);
     stripUI[t].kFilt.update();
   });
-  // dé-assigner les sélectionnées de TOUTES les unités (les unités sont
-  // par JOUEUR) — sinon un FX fantôme survit au reset
+  // unassign the selected tracks from ALL units (units are
+  // per PLAYER) — otherwise a ghost FX survives the reset
   const units = new Set();
   [...gpSelection].forEach((t) => {
     for (let u = 0; u < 4; u++) {
@@ -2067,7 +2069,7 @@ function gpSelReset(fallbackDeck, cur) {
     }
   });
   units.forEach((u) => {
-    // une unité encore routée vers des decks HORS sélection reste intacte
+    // a unit still routed to decks OUTSIDE the selection stays intact
     if (engine.fxAssign[u].some(Boolean)) return;
     engine.fx[u].setLevel(0);
     uiRefs.fxUnits[u].levelKnob.update();
@@ -2079,14 +2081,14 @@ function gpSelReset(fallbackDeck, cur) {
       GP_KNOBS[cur.r - 1].key === 'low') {
     const bd = Math.min(cur.c, deckCount - 1);
     gpBassTo(bd);
-    bassTxt = ` · basses → deck ${bd + 1}`;
+    bassTxt = t('bass_routed_suffix', { n: bd + 1 });
   }
   if (gpCutStore.size) gpCutToggle(fallbackDeck);
   flashStatus(t('reset_r1', { bass: bassTxt }));
   gpClearSelection();
 }
 
-// Vide la sélection (Rond) — les SEL s'éteignent partout
+// Clears the selection (Circle) — the SEL lights go off everywhere
 function gpClearSelection() {
   if (!gpSelection.size) return;
   gpSelOwners.forEach((s) => s.clear());
@@ -2096,15 +2098,15 @@ function gpClearSelection() {
   flashStatus(t('selection_cleared'));
 }
 
-// Pose directement une assignation FX (et synchronise les boutons cachés)
+// Sets an FX assignment directly (and syncs the hidden buttons)
 function gpFxAssignSet(u, d, on) {
   engine.fxAssign[u][d] = on;
   const btn = uiRefs.fxUnits[u].assignEl.querySelectorAll('.fxu-assign-btn')[d];
   if (btn) btn.classList.toggle('on', on);
 }
 
-// ⚡ ENGAGER (R3 sur la ligne SELECT) : les tracks sélectionnées rejoignent
-// le FX du joueur (SON unité personnelle), qui s'allume
+// ⚡ ENGAGE (R3 on the SELECT row): the selected tracks join
+// the player's FX (THEIR personal unit), which turns on
 function gpFxEngage(st) {
   const u = Math.min(st.player - 1, 3);
   const targets = gpSelection.size
@@ -2116,7 +2118,7 @@ function gpFxEngage(st) {
   flashStatus(t('fx_enabled_on_decks', { u: u + 1, decks: targets.map((x) => x + 1).sort().join(' + ') }));
 }
 
-// Colonne FX : L2/R2 = effet précédent / suivant
+// FX column: L2/R2 = previous / next effect
 function gpFxTypeStep(u, dir) {
   const sel = uiRefs.fxUnits[u].typeSel;
   sel.selectedIndex = (sel.selectedIndex + dir + sel.options.length) % sel.options.length;
@@ -2124,19 +2126,19 @@ function gpFxTypeStep(u, dir) {
   flashStatus(`FX ${u + 1} — ${sel.options[sel.selectedIndex].textContent}`);
 }
 
-// Colonne FX : L2/R2 = durée ÷2 / ×2 (un cran dans la liste des durées)
+// FX column: L2/R2 = duration ÷2 / ×2 (one step in the duration list)
 function gpFxBeatsStep(u, dir) {
   const sel = uiRefs.fxUnits[u].beatsSel;
   const idx = Math.max(0, Math.min(sel.options.length - 1, sel.selectedIndex + dir));
-  if (idx === sel.selectedIndex) return false; // déjà en butée
+  if (idx === sel.selectedIndex) return false; // already at the limit
   sel.selectedIndex = idx;
   sel.dispatchEvent(new Event('change'));
   flashStatus(t('fx_duration', { u: u + 1, val: sel.options[idx].textContent.trim() }));
   return true;
 }
 
-// Retour lumineux des boutons BEAT ◄/► de la platine : flash net du bouton
-// pressé à chaque cran — TRIPLE clignotement quand on est en butée
+// Light feedback for the controller's BEAT ◄/► buttons: a crisp flash of the
+// pressed button on each step — TRIPLE blink when at the limit
 function midiBeatFlash(note, ok) {
   const set = (on) => {
     midi.setLed(4, note, on);
@@ -2158,8 +2160,8 @@ function midiBeatFlash(note, ok) {
   }
 }
 
-// Durée du FX un cran plus long / plus court — dans la liste COMPLÈTE
-// (1/4 … 1/2 … 3/4 … 32) : le 3/4 reste accessible, David y tient
+// FX duration one step longer / shorter — within the FULL list
+// (1/4 … 1/2 … 3/4 … 32): 3/4 stays reachable, David insists on it
 function gpFxBeatsX2(u, dir) {
   const sel = uiRefs.fxUnits[u].beatsSel;
   const cur = Number(sel.value);
@@ -2167,13 +2169,13 @@ function gpFxBeatsX2(u, dir) {
   const next = dir > 0
     ? opts.find((v) => v > cur)
     : [...opts].reverse().find((v) => v < cur);
-  if (next == null) return false; // déjà en butée (1/16 ou 16)
+  if (next == null) return false; // already at the limit (1/16 or 16)
   sel.value = String(next);
   sel.dispatchEvent(new Event('change'));
   return true;
 }
 
-// Flash bref de la couleur du joueur sur le pad appuyé
+// Brief flash of the player's color on the pressed pad
 function padFlash(i, idx, color) {
   const p = deckUI[i].pads[idx];
   if (!p) return;
@@ -2188,20 +2190,20 @@ function updateTempoLabel(i) {
   const ui = deckUI[i];
   const pct = (deck.tempo - 1) * 100;
   ui.tempo.value = pct;
-  // La valeur affichée près de la jauge est TOUJOURS le POURCENTAGE (la
-  // langue du fader physique) : sur un deck syncé, c'est LA valeur où
-  // amener la jauge (« je dois d'abord mettre le bouton sur le +5,5 % »)
-  // avant de reprendre la main — le BPM, lui, est affiché en haut du deck.
-  // (plus AUCUN chiffre autour de la jauge : le BPM et le % vivent sur la
-  // platine, demande de David — « laisse sur le deck avec les % »)
+  // The value shown next to the slider is ALWAYS the PERCENTAGE (the
+  // language of the physical fader): on a synced deck, it's THE value to
+  // bring the slider to ("I first have to put the knob on +5.5 %")
+  // before taking back control — the BPM is shown at the top of the deck.
+  // (NO more numbers at all around the slider: the BPM and the % live on the
+  // platter, David's request — "leave it on the deck with the %")
 }
 
 function syncDeck(i) {
   engine.resume();
   const d = engine.decks[i];
   const mi = engine.masterIdx !== null ? engine.masterIdx : engine.autoMasterIdx;
-  // Le MASTER peut être SYNC : on arme sans toucher à SON tempo (il est la
-  // référence) — s'il redevient esclave plus tard, la passation le re-vise
+  // The MASTER can be SYNC: arm it without touching ITS tempo (it is the
+  // reference) — if it becomes a follower again later, the handover re-targets it
   if (mi === i && d.bpm) {
     d.synced = true;
     d._syncBase = d.tempo;
@@ -2213,8 +2215,8 @@ function syncDeck(i) {
     updateTempoLabel(i);
     flashStatus(t('deck_synced_master', { n: i + 1 }));
   } else if (d.bpm) {
-    // Pas encore de référence ? SYNC s'ARME quand même : le verrou
-    // auto-réparant le calera dès qu'un autre son jouera
+    // No reference yet? SYNC ARMS anyway: the self-healing
+    // lock will align it as soon as another track plays
     d.synced = true;
     flashStatus(t('sync_armed', { n: i + 1 }));
   } else {
@@ -2232,12 +2234,12 @@ function setActiveDeck(i) {
 }
 
 // ---------------------------------------------------------------------------
-// Mixer (4 tranches + crossfader)
+// Mixer (4 channels + crossfader)
 // ---------------------------------------------------------------------------
 
 const stripUI = [];
 let xfFader = null;
-// Références UI pour la grille de contrôles manette (curseur 5×5)
+// UI references for the gamepad control grid (5×5 cursor)
 const uiRefs = { master: {}, fxUnits: [] };
 let masterMeterFill = null;
 let masterMeterClip = null;
@@ -2247,7 +2249,7 @@ let masterClipUntil = 0;
 function buildMixer() {
   const mixer = document.getElementById('mixer');
 
-  // Color FX : ce que contrôle le knob FILTER de chaque tranche
+  // Color FX: what each channel's FILTER knob controls
   const colorRow = document.createElement('div');
   colorRow.id = 'color-row';
   colorRow.innerHTML = `
@@ -2278,7 +2280,7 @@ function buildMixer() {
     colorOn.classList.toggle('on', engine.colorEnabled);
   });
 
-  // Rangée MASTER : filtre global + volume du mix assemblé + VU-mètre master
+  // MASTER row: global filter + volume of the combined mix + master VU meter
   const masterRow = document.createElement('div');
   masterRow.id = 'master-row';
   const mfKnob = makeKnob('FILTER', () => engine.masterFilterVal, (v) => engine.setMasterFilter(v));
@@ -2294,10 +2296,10 @@ function buildMixer() {
   mLabel.textContent = 'MASTER';
   const mMeter = document.createElement('div');
   mMeter.id = 'master-meter';
-  mMeter.title = 'Niveau du mix — rouge = saturation';
+  mMeter.title = t('master_meter_level_title');
   mMeter.innerHTML = '<div id="master-meter-fill"></div><div id="master-meter-clip"></div>';
-  // BPM MASTER : − / + décalent le tempo du master de 0,5 BPM — tous les
-  // sons en SYNC suivent instantanément (il dirige tout le monde)
+  // MASTER BPM: − / + shift the master tempo by 0.5 BPM — every
+  // SYNCed track follows instantly (it leads everyone)
   const bpmWrap = document.createElement('span');
   bpmWrap.id = 'master-bpm';
   bpmWrap.title = t('master_bpm_title');
@@ -2317,8 +2319,8 @@ function buildMixer() {
   masterMeterFill = mMeter.querySelector('#master-meter-fill');
   masterMeterClip = mMeter.querySelector('#master-meter-clip');
 
-  // Corps du mixer : les 4 tranches + le RACK FX à droite des knobs
-  // (déplacé depuis le haut de l'écran, intégré à la matrice manette)
+  // Mixer body: the 4 channels + the FX RACK to the right of the knobs
+  // (moved from the top of the screen, integrated into the gamepad matrix)
   const mixBody = document.createElement('div');
   mixBody.id = 'mix-body';
   mixer.appendChild(mixBody);
@@ -2332,7 +2334,7 @@ function buildMixer() {
     const strip = document.createElement('div');
     strip.className = 'strip';
     strip.dataset.deck = i;
-    // Ordre CLUB des tranches du mixer : 3 1 2 4 de gauche à droite
+    // CLUB order of the mixer channels: 3 1 2 4 from left to right
     strip.style.order = [1, 2, 0, 3][i];
     strip.style.setProperty('--deck-color', DECK_COLORS[i]);
 
@@ -2341,7 +2343,7 @@ function buildMixer() {
     label.textContent = i + 1;
     strip.appendChild(label);
 
-    // Ligne SELECT : sélectionne la track (cut Triangle, ⚡ FX R3, ↺ Rond)
+    // SELECT row: selects the track (cut Triangle, ⚡ FX R3, ↺ Circle)
     const selBtn = document.createElement('button');
     selBtn.className = 'strip-sel';
     selBtn.textContent = 'SEL';
@@ -2355,8 +2357,8 @@ function buildMixer() {
     const kLow  = makeKnob('LOW', () => deck.eq.low, v => deck.setEq('low', v));
     const kFilt = makeKnob('FILTER', () => deck.filterVal, v => engine.setDeckColor(i, v));
 
-    // VU-mètre vertical LE LONG des knobs (comme Serato) :
-    // il monte dans le vert/jaune et vire au rouge si ça sature
+    // Vertical VU meter ALONG the knobs (like Serato):
+    // it rises through green/yellow and turns red when clipping
     const body = document.createElement('div');
     body.className = 'strip-body';
     const knobCol = document.createElement('div');
@@ -2390,8 +2392,8 @@ function buildMixer() {
   const xfWrap = document.createElement('div');
   xfWrap.id = 'xf-wrap';
   xfWrap.innerHTML = `<span>A</span><div id="crossfader"></div><span>B</span>`;
-  // Le crossfader RÉPARTIT LE SON entre les 4 tranches : il vit SOUS les
-  // tranches, pas sous le rack FX (demande David)
+  // The crossfader DISTRIBUTES THE SOUND across the 4 channels: it lives UNDER
+  // the channels, not under the FX rack (David's request)
   const stripsEl = document.getElementById('strips');
   (stripsEl || mixer).appendChild(xfWrap);
   xfFader = makeHFader(
@@ -2401,7 +2403,7 @@ function buildMixer() {
   );
 }
 
-// Barre FX : 4 unités, une par deck (joueur), chacune avec son effet.
+// FX bar: 4 units, one per deck (player), each with its own effect.
 const FX_TYPE_OPTIONS = `
   <option value="delay">Delay</option>
   <option value="echo" selected>Echo</option>
@@ -2422,7 +2424,7 @@ const FX_TYPE_OPTIONS = `
   <option value="helix">Helix</option>
   <option value="crush">Crush</option>
 `;
-// Plage CONVENTIONNELLE (demande David) : de 1/4 à 32 temps
+// CONVENTIONAL range (David's request): from 1/4 to 32 beats
 const FX_BEATS_OPTIONS = `
   <option value="0.25">1/4</option>
   <option value="0.5" selected>1/2</option>
@@ -2437,8 +2439,8 @@ const FX_BEATS_OPTIONS = `
 
 function buildFxBar() {
   const bar = document.getElementById('fxbar');
-  // UN SEUL panneau FX partagé par les 4 joueurs : des onglets 1 2 3 4
-  // choisissent quelle unité est affichée dans le panneau (le reste est caché)
+  // A SINGLE FX panel shared by the 4 players: tabs 1 2 3 4
+  // choose which unit is shown in the panel (the rest is hidden)
   const tabs = document.createElement('div');
   tabs.className = 'fx-tabs';
   uiRefs.fxTabs = [];
@@ -2446,17 +2448,17 @@ function buildFxBar() {
     const t = document.createElement('button');
     t.className = 'fx-tab';
     t.textContent = i + 1;
-    // (le % et la durée ne sont plus doublés ici : le knob NIVEAU montre
-    // les 4 jauges et la cellule DURÉE les 4 valeurs — l'onglet reste
-    // un simple bouton joueur avec sa barre de niveau)
+    // (the % and the duration are no longer duplicated here: the LEVEL knob shows
+    // the 4 gauges and the DURATION cell the 4 values — the tab stays
+    // a simple player button with its level bar)
     t.style.setProperty('--deck-color', PLAYER_COLORS[i]);
     t.addEventListener('click', () => gpShowFxUnit(i));
     tabs.appendChild(t);
     uiRefs.fxTabs.push(t);
   }
   bar.appendChild(tabs);
-  // Les 4 unités FX restent en DOM (selects, knob, ON, assign) comme
-  // "cerveau" mais sont CACHÉES : la vue est la matrice de cellules
+  // The 4 FX units stay in the DOM (selects, knob, ON, assign) as the
+  // "brain" but are HIDDEN: the view is the cell matrix
   const stack = document.createElement('div');
   stack.className = 'fx-logic';
   bar.appendChild(stack);
@@ -2470,13 +2472,13 @@ function buildFxBar() {
       <span class="fx-num">${i + 1}</span>
       <select class="fxu-type" title="${t('fx_controller_effect_title', { n: i + 1 })}">${FX_TYPE_OPTIONS}</select>
       <select class="fxu-beats" title="${t('fx_duration_beats_title')}">${FX_BEATS_OPTIONS}</select>
-      <span class="fxu-assign" title="Sur quels decks cet effet s'applique"></span>
+      <span class="fxu-assign" title="${t('fx_unit_assign_title')}"></span>
       <button class="fxu-on">OFF</button>
     `;
     const knob = makeKnob('', () => fx.level * 2 - 1, (v) => fx.setLevel((v + 1) / 2));
     unit.insertBefore(knob.el, unit.querySelector('.fxu-on'));
 
-    // Assignation : ce contrôleur peut traiter le(s) deck(s) 1-4 au choix
+    // Assignment: this controller can process any of decks 1-4
     const assignEl = unit.querySelector('.fxu-assign');
     for (let d = 0; d < 4; d++) {
       const b = document.createElement('button');
@@ -2512,7 +2514,7 @@ function buildFxBar() {
     };
     stack.appendChild(unit);
   }
-  // Vue MATRICE : une cellule-bouton par rangée (alignée sur les knobs)
+  // MATRIX view: one button cell per row (aligned with the knobs)
   const cellsWrap = document.createElement('div');
   cellsWrap.className = 'fx-cells';
   const cells = {};
@@ -2522,8 +2524,8 @@ function buildFxBar() {
     c.dataset.fx = row.key;
     c.innerHTML = `<b class="fx-cell-lbl">${row.label}</b><span class="fx-cell-val"></span>`;
     if (row.key === 'level') {
-      // NIVEAU = un vrai knob (canvas ×2 pour la netteté) avec les jauges
-      // des 4 joueurs — plus une simple case de texte
+      // LEVEL = a real knob (canvas ×2 for sharpness) with the gauges
+      // of the 4 players — no longer a plain text box
       const cv = document.createElement('canvas');
       cv.width = 96;
       cv.height = 96;
@@ -2531,8 +2533,8 @@ function buildFxBar() {
       c.querySelector('.fx-cell-val').appendChild(cv);
       uiRefs.fxLvlCv = cv;
     }
-    // Souris : type = effet suivant, on/off = bascule, durée = ×2,
-    // niveau = +25 % (et reboucle à 0)
+    // Mouse: type = next effect, on/off = toggle, duration = ×2,
+    // level = +25 % (and wraps back to 0)
     c.addEventListener('click', () => {
       const u = gpFxShown;
       if (row.key === 'type') gpFxTypeStep(u, 1);
@@ -2550,19 +2552,19 @@ function buildFxBar() {
   bar.appendChild(cellsWrap);
   uiRefs.fxPanel = { cells };
 
-  // --- FX MASTER : bandeau dédié sous la matrice — le FX du MIX ENTIER
-  // (position MASTER du channel select des platines). Indépendant des 4
-  // unités joueurs : il vit sur le bus master.
+  // --- FX MASTER: dedicated strip under the matrix — the FX of the WHOLE MIX
+  // (MASTER position of the controllers' channel select). Independent of the 4
+  // player units: it lives on the master bus.
   const MFX_TYPES = [...FX_TYPE_OPTIONS.matchAll(/value="([^"]+)"[^>]*>([^<]+)/g)]
     .map((mm) => [mm[1], mm[2].trim()]);
   const mWrap = document.createElement('div');
   mWrap.className = 'fx-master';
   mWrap.innerHTML = `
     <b class="fx-master-title">MASTER</b>
-    <div class="fx-cell fxm-type" title="Effet du mix"><b class="fx-cell-lbl">EFFET</b><select class="fx-cell-val fxm-type-sel">${FX_TYPE_OPTIONS}</select></div>
+    <div class="fx-cell fxm-type" title="${t('fx_master_type_title')}"><b class="fx-cell-lbl">${t('fx_row_effect')}</b><select class="fx-cell-val fxm-type-sel">${FX_TYPE_OPTIONS}</select></div>
     <div class="fx-cell fxm-beats" title="${t('fx_duration_dbl_title')}"><b class="fx-cell-lbl">${t('duree_label')}</b><span class="fx-cell-val">1/2</span></div>
-    <div class="fx-cell fxm-level" title="Niveau — clic : +25 %"><b class="fx-cell-lbl">NIVEAU</b><span class="fx-cell-val">0%</span></div>
-    <div class="fx-cell fx-cell-onoff fxm-on" title="FX du MIX ENTIER on/off"><b class="fx-cell-lbl">MIX</b><span class="fx-cell-val fx-badge">OFF</span></div>
+    <div class="fx-cell fxm-level" title="${t('fx_master_level_title')}"><b class="fx-cell-lbl">${t('fx_row_level')}</b><span class="fx-cell-val">0%</span></div>
+    <div class="fx-cell fx-cell-onoff fxm-on" title="${t('fx_master_onoff_title')}"><b class="fx-cell-lbl">MIX</b><span class="fx-cell-val fx-badge">OFF</span></div>
   `;
   const mfxEls = {
     type: mWrap.querySelector('.fxm-type .fx-cell-val'),
@@ -2571,15 +2573,15 @@ function buildFxBar() {
     on: mWrap.querySelector('.fxm-on .fx-cell-val')
   };
   uiRefs.masterFxEls = mfxEls;
-  // MENU DÉROULANT (demande David : « voir où on va ») — remplace l'ancien
-  // « clic = effet suivant » à l'aveugle
+  // DROPDOWN MENU (David's request: "see where we're going") — replaces the old
+  // blind "click = next effect"
   mWrap.querySelector('.fxm-type-sel').addEventListener('change', (e) => {
     engine.ensureMasterFx().setType(e.target.value);
     updateMasterFxRow();
   });
   mWrap.querySelector('.fxm-beats').addEventListener('click', () => {
     if (!masterFxBeatsStep(1)) {
-      engine.ensureMasterFx().setBeatsMult(MASTER_FX_BEATS[0]); // reboucle à 1/4
+      engine.ensureMasterFx().setBeatsMult(MASTER_FX_BEATS[0]); // wraps back to 1/4
     }
     updateMasterFxRow();
   });
@@ -2592,19 +2594,19 @@ function buildFxBar() {
     engine.resume();
     const u = engine.ensureMasterFx();
     u.setEnabled(!u.enabled);
-    // Pas de niveau par défaut : c'est TOI qui joues la jauge (David)
+    // No default level: YOU play the level control (David)
     updateMasterFxRow();
     flashStatus(t('fx_master_status', { state: u.enabled ? (u.level === 0 ? t('fx_master_on_raise') : t('fx_master_on')) : t('fx_master_off') }));
   });
   bar.appendChild(mWrap);
   uiRefs.masterFxTypes = MFX_TYPES;
 
-  gpShowFxUnit(0); // au départ, le panneau montre l'unité 1
+  gpShowFxUnit(0); // at startup, the panel shows unit 1
   updateFxPanel();
   updateMasterFxRow();
 }
 
-// Rafraîchit le bandeau FX MASTER (appelé à chaque frame, garde par signature)
+// Refreshes the FX MASTER strip (called every frame, guarded by a signature)
 let _mfxSig = '';
 function updateMasterFxRow() {
   const els = uiRefs.masterFxEls;
@@ -2620,7 +2622,7 @@ function updateMasterFxRow() {
     els.on.classList.remove('live');
     return;
   }
-  // La cellule EFFET est un <select> : on synchronise sa VALEUR
+  // The EFFECT cell is a <select>: sync its VALUE
   if (els.type.tagName === 'SELECT') els.type.value = u.type;
   else {
     const tt = (uiRefs.masterFxTypes || []).find(([v]) => v === u.type);
@@ -2632,16 +2634,16 @@ function updateMasterFxRow() {
   els.on.classList.toggle('live', u.enabled);
 }
 
-// KNOB de niveau du rack FX : 4 jauges concentriques (une par joueur, sa
-// couleur, pleine = 100 %) + le % de l'unité affichée au centre — on voit
-// les niveaux des 4 joueurs d'un seul coup d'œil, comme sur un vrai knob
+// Level KNOB of the FX rack: 4 concentric gauges (one per player, in their
+// color, full = 100 %) + the % of the displayed unit in the center — you see
+// the levels of all 4 players at a glance, like on a real knob
 function drawFxLevelKnob() {
   const cv = uiRefs.fxLvlCv;
   if (!cv) return;
   const g = cv.getContext('2d');
   const W = cv.width, H = cv.height, cx = W / 2, cy = H / 2;
   g.clearRect(0, 0, W, H);
-  const a0 = Math.PI * 0.75, a1 = Math.PI * 2.25; // ouverture de knob classique
+  const a0 = Math.PI * 0.75, a1 = Math.PI * 2.25; // classic knob sweep
   for (let i = 0; i < 4; i++) {
     const r = W / 2 - 6 - i * 9;
     if (r <= 5) break;
@@ -2655,7 +2657,7 @@ function drawFxLevelKnob() {
     if (lv > 0.004) {
       g.beginPath();
       g.arc(cx, cy, r, a0, a0 + (a1 - a0) * Math.min(1, lv));
-      g.strokeStyle = gpUnitColor(i); // une jauge PAR JOUEUR, sa couleur
+      g.strokeStyle = gpUnitColor(i); // one gauge PER PLAYER, in their color
       g.globalAlpha = engine.fx[i].enabled ? 1 : 0.35;
       g.stroke();
       g.globalAlpha = 1;
@@ -2668,9 +2670,9 @@ function drawFxLevelKnob() {
   g.fillText(`${Math.round(engine.fx[gpFxShown].level * 100)}%`, cx, cy);
 }
 
-// Remplit les cellules FX depuis l'unité actuellement affichée (gpFxShown)
-// Codes COURTS des effets pour les vignettes de la matrice FX — jamais
-// d'espace (« MT Delay » passait sur deux lignes et cassait l'affichage)
+// Fills the FX cells from the currently displayed unit (gpFxShown)
+// SHORT effect codes for the FX matrix badges — never a
+// space ("MT Delay" wrapped onto two lines and broke the display)
 const FX_SHORT = {
   delay: 'DLY', echo: 'ECHO', spiral: 'SPIR', mtdelay: 'MTDL',
   upecho: 'ECH↑', downecho: 'ECH↓', lowcut: 'LCUT', pingpong: 'PONG',
@@ -2683,8 +2685,8 @@ function updateFxPanel() {
   const p = uiRefs.fxPanel;
   if (!p) return;
   const u = gpFxShown;
-  // FLUIDITÉ MANETTE : appelé chaque frame, mais si RIEN n'a changé on ne
-  // touche pas au DOM — signature d'état, zéro écriture inutile
+  // GAMEPAD SMOOTHNESS: called every frame, but if NOTHING changed we don't
+  // touch the DOM — state signature, zero useless writes
   let sig = `${u}`;
   for (let i = 0; i < 4; i++) {
     const r = uiRefs.fxUnits[i];
@@ -2693,30 +2695,30 @@ function updateFxPanel() {
   if (p._sig === sig) return;
   p._sig = sig;
   const col = gpUnitColor(u);
-  // Bandeau « couleur des SONS » par joueur : dégradé des pistes que CE
-  // joueur a sélectionnées (segments égaux, comme les boutons multi)
-  const sonsGrad = [0, 1, 2, 3].map((i) => {
-    const sons = gpSonsOf(i);
-    return sons.length
-      ? `linear-gradient(90deg, ${sons.map((t, k) =>
-          `${DECK_COLORS[t]} ${(k / sons.length) * 100}% ${((k + 1) / sons.length) * 100}%`).join(', ')})`
+  // Per-player "TRACKS color" strip: gradient of the tracks THIS
+  // player has selected (equal segments, like the multi buttons)
+  const soundsGrad = [0, 1, 2, 3].map((i) => {
+    const sounds = gpSonsOf(i);
+    return sounds.length
+      ? `linear-gradient(90deg, ${sounds.map((t, k) =>
+          `${DECK_COLORS[t]} ${(k / sounds.length) * 100}% ${((k + 1) / sounds.length) * 100}%`).join(', ')})`
       : 'transparent';
   });
-  // Onglets = LES 4 JOUEURS (chacun sa couleur) : glow FX allumé, barre de
-  // niveau, et le bandeau des sons qu'il a pris
+  // Tabs = THE 4 PLAYERS (each in their color): FX glow when on, level
+  // bar, and the strip of the tracks they took
   (uiRefs.fxTabs || []).forEach((b, i) => {
     b.classList.toggle('on', i === u);
     b.classList.toggle('fx-live', engine.fx[i].enabled);
-    b.classList.toggle('mine', sonsGrad[i] !== 'transparent');
+    b.classList.toggle('mine', soundsGrad[i] !== 'transparent');
     b.style.setProperty('--lvl', `${Math.round(engine.fx[i].level * 100)}%`);
     b.style.setProperty('--deck-color', gpUnitColor(i));
     b.style.setProperty('--pc', gpUnitColor(i));
-    b.style.setProperty('--sons', sonsGrad[i]);
+    b.style.setProperty('--sons', soundsGrad[i]);
   });
-  // TABLEAU PAR JOUEUR : chaque rangée (EFFET / DURÉE / ON-OFF) montre les
-  // 4 colonnes côte à côte — une PAR JOUEUR (sa couleur), avec en bandeau
-  // la couleur des SONS qu'il a sélectionnés. Rien n'est partagé : chacun
-  // voit SON réglage et ceux des autres, séparés.
+  // PER-PLAYER TABLE: each row (EFFECT / DURATION / ON-OFF) shows the
+  // 4 columns side by side — one PER PLAYER (their color), with a strip in
+  // the color of the TRACKS they selected. Nothing is shared: everyone
+  // sees THEIR setting and the others', separately.
   const badges = (key, textOf, clickStep) => {
     const wrap = p.cells[key].querySelector('.fx-cell-val');
     if (wrap.children.length !== 4) {
@@ -2731,12 +2733,12 @@ function updateFxPanel() {
     [...wrap.children].forEach((s, i) => {
       const txt = textOf(i);
       if (s.textContent !== txt) s.textContent = txt;
-      s.style.setProperty('--dc', gpUnitColor(i)); // gris au repos, couleur en jeu
+      s.style.setProperty('--dc', gpUnitColor(i)); // gray at rest, color when active
       s.style.setProperty('--pc', gpUnitColor(i));
-      s.style.setProperty('--sons', sonsGrad[i]);    // couleur de SES sons
+      s.style.setProperty('--sons', soundsGrad[i]);    // color of THEIR tracks
       s.classList.toggle('sel', i === u);
       s.classList.toggle('live', engine.fx[i].enabled);
-      s.classList.toggle('mine', sonsGrad[i] !== 'transparent');
+      s.classList.toggle('mine', soundsGrad[i] !== 'transparent');
     });
   };
   badges('type', (i) => FX_SHORT[engine.fx[i].type] || engine.fx[i].type.slice(0, 4).toUpperCase(),
@@ -2748,7 +2750,7 @@ function updateFxPanel() {
   badges('onoff', (i) => (engine.fx[i].enabled ? 'ON' : 'OFF'),
     (i) => uiRefs.fxUnits[i].onBtn.click());
   drawFxLevelKnob();
-  // toutes les cellules prennent la couleur du deck de l'unité affichée
+  // all cells take the deck color of the displayed unit
   for (const key of Object.keys(p.cells)) {
     p.cells[key].style.setProperty('--deck-color', col);
   }
@@ -2765,29 +2767,29 @@ function refreshStrip(i) {
 }
 
 // ---------------------------------------------------------------------------
-// Bibliothèque
+// Library
 // ---------------------------------------------------------------------------
 
 const libBody = document.getElementById('lib-body');
 const libStatus = document.getElementById('lib-status');
 let statusTimer = null;
-let libLastMsg = ''; // dernier message DURABLE de la bibliothèque (analyse…)
+let libLastMsg = ''; // last DURABLE library message (analysis…)
 const rowByTrack = new Map();
 
 function flashStatus(msg) {
   libStatus.textContent = msg;
   clearTimeout(statusTimer);
-  // au bout de 4 s on RESTAURE le dernier état bibliothèque (une analyse
-  // en cours ne doit pas être effacée par un flash passager)
+  // after 4 s we RESTORE the last library status (an analysis in
+  // progress must not be wiped out by a passing flash)
   statusTimer = setTimeout(() => {
-    libStatus.textContent = libLastMsg || (library ? `${library.tracks.length} morceaux` : '');
+    libStatus.textContent = libLastMsg || (library ? t('lib_tracks_count', { n: library.tracks.length }) : '');
   }, 4000);
 }
 
 const library = new Library(engine.ctx, {
   onListChanged: renderLibrary,
   onSelectionChanged: () => updateSelectionUI(),
-  // L'analyse BPM n'a le droit de tourner QUE si aucun deck ne joue
+  // BPM analysis is only allowed to run when NO deck is playing
   canAnalyze: () => !engine.decks.some((d) => d.playing),
   onTrackUpdated: (t) => {
     const row = rowByTrack.get(t);
@@ -2797,7 +2799,7 @@ const library = new Library(engine.ctx, {
       fillKeyCell(row.children[5], t);
       row.children[6].textContent = t.duration ? formatTime(t.duration) : '';
     }
-    // Un deck qui joue ce morceau apprend sa tonalité dès qu'elle est connue
+    // A deck playing this track learns its key as soon as it is known
     engine.decks.forEach((d, i) => {
       if (d.track === t && t.musicKey != null && d.musicKey !== t.musicKey) {
         d.musicKey = t.musicKey;
@@ -2808,10 +2810,10 @@ const library = new Library(engine.ctx, {
   onStatus: (msg) => { libLastMsg = msg; libStatus.textContent = msg; }
 });
 
-// Cellule APERÇU : pochette (petit carré) + forme d'onde. La vague apparaît
-// SANS charger le morceau : aperçu rapide pour les fichiers du PC, forme
-// d'onde publiée par SoundCloud pour ses pistes — puis le vrai aperçu en
-// couleurs dès que le morceau est passé sur un deck.
+// PREVIEW cell: artwork (small square) + waveform. The waveform appears
+// WITHOUT loading the track: quick preview for local files, waveform
+// published by SoundCloud for its tracks — then the real colored preview
+// as soon as the track has been on a deck.
 function fillPreviewCell(td, t) {
   const row = td.parentElement;
   if (row) row._prev = t.preview;
@@ -2833,13 +2835,13 @@ function fillPreviewCell(td, t) {
     w.src = t.preview;
     box.appendChild(w);
   } else if (!t.artwork) {
-    return; // ni vague ni pochette (dossier, playlist…) : cellule vide
+    return; // neither waveform nor artwork (folder, playlist…): empty cell
   }
   td.appendChild(box);
 }
 
-// Cellule KEY : notation Camelot (roue du mix harmonique) + nom classique
-// en infobulle ; colorée en VERT si compatible avec le master qui joue
+// KEY cell: Camelot notation (harmonic mixing wheel) + classic name
+// as tooltip; colored GREEN if compatible with the playing master
 function fillKeyCell(td, t) {
   if (!td) return;
   if (t.musicKey == null) {
@@ -2855,20 +2857,20 @@ function fillKeyCell(td, t) {
   td.className = `col-key${dist != null && dist <= 1 ? ' key-ok' : ''}`;
 }
 
-// Tonalité ENTENDUE du master (deck qui dirige), ou null
+// HEARD key of the master (the leading deck), or null
 function masterHeardKey() {
   const mi = engine.masterIdx !== null ? engine.masterIdx : engine.autoMasterIdx;
   const m = mi != null ? engine.decks[mi] : null;
   return m && m.buffer ? heardKey(m) : null;
 }
 
-// Remet à jour le vert « déjà pris » sur les lignes affichées (le même
-// morceau peut apparaître sous plusieurs objets : dossier, historique…)
+// Refreshes the "already taken" green on the displayed rows (the same
+// track can appear under several objects: folder, history…)
 function markTakenRows() {
   rowByTrack.forEach((row, t) => row.classList.toggle('taken', !!t.name && library.isTaken(t)));
 }
 
-// En-têtes triables : clic = croissant → décroissant → ordre d'origine
+// Sortable headers: click = ascending → descending → original order
 function updateSortHeaders() {
   document.querySelectorAll('#lib-table th[data-sort]').forEach((th) => {
     const on = library.sort.col === th.dataset.sort;
@@ -2887,16 +2889,16 @@ document.querySelectorAll('#lib-table th[data-sort]').forEach((th) => {
   });
 });
 
-let libRenderStamp = 0; // bump à chaque rendu : les marques joueurs suivent
+let libRenderStamp = 0; // bumped on every render: the player marks follow
 function renderLibrary() {
   libRenderStamp++;
   updateSortHeaders();
   libBody.textContent = '';
   rowByTrack.clear();
   lastSelIdx = library.selection;
-  // Bouton retour : visible quand on est dans une playlist SoundCloud — et,
-  // en b2b (≥ 2 comptes), partout sauf sur la liste des comptes (il y a
-  // toujours un niveau au-dessus : playlists du compte → liste des comptes)
+  // Back button: visible inside a SoundCloud playlist — and, in b2b
+  // (≥ 2 accounts), everywhere except on the account list (there is
+  // always a level above: the account's playlists → account list)
   const backBtn = document.getElementById('btn-sc-back');
   if (backBtn) {
     const canScBack = library.mode === 'sc' && !library.scAccountsView &&
@@ -2904,7 +2906,7 @@ function renderLibrary() {
        (library.scAccountCount || 0) >= 2);
     backBtn.classList.toggle('hidden', !canScBack);
   }
-  // Boutons playlists : retour + jouer visibles quand une playlist est ouverte
+  // Playlist buttons: back + play visible when a playlist is open
   const plBackBtn = document.getElementById('btn-pl-back');
   const plPlayBtn = document.getElementById('btn-pl-play');
   if (plBackBtn) {
@@ -2915,22 +2917,22 @@ function renderLibrary() {
   updateNewDirBtn();
   const list = library.filtered.slice(0, 3000);
   const inPlaylist = library.mode === 'pl' && library.plOpen;
-  list.forEach((t, idx) => {
+  list.forEach((track, idx) => {
     const tr = document.createElement('tr');
     if (idx === library.selection) tr.className = 'selected';
-    // « Artiste - Titre » découpé sur le premier tiret
-    const sep = t.name.indexOf(' - ');
-    const artist = sep > 0 ? t.name.slice(0, sep) : '';
-    const title = sep > 0 ? t.name.slice(sep + 3) : t.name;
-    const bpmCell = (t.scRootRow || t.plRootRow || t.scLikes || t.fsUpRow || t.scAccountRow)
+    // "Artist - Title" split on the first dash
+    const sep = track.name.indexOf(' - ');
+    const artist = sep > 0 ? track.name.slice(0, sep) : '';
+    const title = sep > 0 ? track.name.slice(sep + 3) : track.name;
+    const bpmCell = (track.scRootRow || track.plRootRow || track.scLikes || track.fsUpRow || track.scAccountRow)
       ? ''
-      : t.fsRow
-      ? 'dossier'
-      : t.plRow
-        ? `${t.count} titres`
-        : t.scPlaylist
-          ? `${t.trackCount} titres`
-          : (t.bpm ? t.bpm.toFixed(1) : (t.analyzed ? '?' : '…'));
+      : track.fsRow
+      ? t('lib_bpm_cell_folder')
+      : track.plRow
+        ? t('lib_bpm_cell_tracks', { n: track.count })
+        : track.scPlaylist
+          ? t('lib_bpm_cell_tracks', { n: track.trackCount })
+          : (track.bpm ? track.bpm.toFixed(1) : (track.analyzed ? '?' : '…'));
     tr.innerHTML = `
       <td class="col-num">${idx + 1}</td>
       <td class="col-prev"></td>
@@ -2938,18 +2940,18 @@ function renderLibrary() {
       <td class="col-artist"></td>
       <td class="col-bpm">${bpmCell}</td>
       <td class="col-key"></td>
-      <td class="col-dur">${t.duration ? formatTime(t.duration) : ''}</td>
+      <td class="col-dur">${track.duration ? formatTime(track.duration) : ''}</td>
     `;
-    fillPreviewCell(tr.children[1], t);
-    fillKeyCell(tr.children[5], t);
-    const isNavRow = t.plRow || t.fsRow || t.scRootRow || t.plRootRow || t.scLikes || t.fsUpRow || t.scAccountRow;
-    // DÉJÀ PRIS ce soir (chargé sur un deck) : titre écrit en VERT
-    if (!isNavRow && !t.scPlaylist && library.isTaken(t)) tr.classList.add('taken');
-    tr.children[2].textContent = isNavRow ? t.name : title;
-    // MORCEAU PROTÉGÉ (DRM) : repéré DÈS LA LISTE — jamais de mauvaise
-    // surprise en pleine soirée. SoundCloud ne le déverrouille que pour ses
-    // logiciels partenaires sous licence.
-    if (t.drm) {
+    fillPreviewCell(tr.children[1], track);
+    fillKeyCell(tr.children[5], track);
+    const isNavRow = track.plRow || track.fsRow || track.scRootRow || track.plRootRow || track.scLikes || track.fsUpRow || track.scAccountRow;
+    // ALREADY TAKEN tonight (loaded on a deck): title written in GREEN
+    if (!isNavRow && !track.scPlaylist && library.isTaken(track)) tr.classList.add('taken');
+    tr.children[2].textContent = isNavRow ? track.name : title;
+    // PROTECTED TRACK (DRM): flagged RIGHT IN THE LIST — never a nasty
+    // surprise in the middle of a party. SoundCloud only unlocks it for its
+    // licensed partner software.
+    if (track.drm) {
       tr.classList.add('drm');
       tr.title = t('drm_protected_title');
       const lock = document.createElement('span');
@@ -2962,67 +2964,67 @@ function renderLibrary() {
       library.selection = idx;
       updateSelectionUI();
     });
-    if (t.fsUpRow) {
+    if (track.fsUpRow) {
       tr.addEventListener('dblclick', () => folderUp());
-      // déposer sur « .. » = ranger dans le dossier parent
+      // dropping on ".." = move into the parent folder
       makeFolderDropTarget(tr, () => (library.fsDir ? parentDir(library.fsDir) : null));
-    } else if (t.scRootRow) {
+    } else if (track.scRootRow) {
       tr.addEventListener('dblclick', () => openSoundCloud());
-    } else if (t.scLikes) {
-      tr.addEventListener('dblclick', () => openScLikes(t.acctIdx));
-    } else if (t.scAccountRow) {
-      // Ligne compte SoundCloud (b2b) : entrer = SES playlists, clic droit =
-      // retirer le compte de la liste
-      tr.addEventListener('dblclick', () => openScAccount(t.acctIdx));
+    } else if (track.scLikes) {
+      tr.addEventListener('dblclick', () => openScLikes(track.acctIdx));
+    } else if (track.scAccountRow) {
+      // SoundCloud account row (b2b): enter = ITS playlists, right-click =
+      // remove the account from the list
+      tr.addEventListener('dblclick', () => openScAccount(track.acctIdx));
       tr.addEventListener('contextmenu', (e) => {
         e.preventDefault();
-        showScAccountMenu(e, t);
+        showScAccountMenu(e, track);
       });
-    } else if (t.plRootRow) {
+    } else if (track.plRootRow) {
       tr.addEventListener('dblclick', () => openPlaylistsRoot());
-    } else if (t.fsRow) {
-      // Ligne de dossier : double-clic pour y ENTRER (l'encodeur aussi)
-      tr.addEventListener('dblclick', () => enterFolder(t.path));
-      // Musique OpenMix : on y RANGE par glisser-déposer, on le déplace
-      makeFolderDropTarget(tr, () => t.path);
-      if (inNative(t.path)) {
-        if (!isNativeRoot(t.path)) {
+    } else if (track.fsRow) {
+      // Folder row: double-click to ENTER it (the encoder too)
+      tr.addEventListener('dblclick', () => enterFolder(track.path));
+      // OpenMix music: files are FILED into it by drag and drop, and it can be moved
+      makeFolderDropTarget(tr, () => track.path);
+      if (inNative(track.path)) {
+        if (!isNativeRoot(track.path)) {
           tr.draggable = true;
-          tr.addEventListener('dragstart', (e) => startDirDrag(e, t.path));
+          tr.addEventListener('dragstart', (e) => startDirDrag(e, track.path));
           tr.addEventListener('dragend', () => { dragDir = null; });
         }
         tr.addEventListener('contextmenu', (e) => {
           e.preventDefault();
-          showNativeFolderMenu(e, t.path);
+          showNativeFolderMenu(e, track.path);
         });
       }
-    } else if (t.plRow) {
-      // Ligne de playlist : double-clic pour l'ouvrir, clic droit pour gérer
-      tr.addEventListener('dblclick', () => openLocalPlaylist(t.pl));
+    } else if (track.plRow) {
+      // Playlist row: double-click to open it, right-click to manage it
+      tr.addEventListener('dblclick', () => openLocalPlaylist(track.pl));
       tr.addEventListener('contextmenu', (e) => {
         e.preventDefault();
-        showPlaylistMenu(e, t.pl);
+        showPlaylistMenu(e, track.pl);
       });
-    } else if (t.scPlaylist) {
-      // Playlist SoundCloud : double-clic pour l'ouvrir (avec SON compte)
-      tr.addEventListener('dblclick', () => openScPlaylist(t.permalink, t.acctIdx));
+    } else if (track.scPlaylist) {
+      // SoundCloud playlist: double-click to open it (with ITS account)
+      tr.addEventListener('dblclick', () => openScPlaylist(track.permalink, track.acctIdx));
     } else {
       tr.draggable = true;
       tr.addEventListener('dragstart', (e) => {
-        dragTrack = t;
+        dragTrack = track;
         library.selection = idx;
         updateSelectionUI();
-        e.dataTransfer.setData('text/plain', t.name);
-        // copy (deck, playlist) ou move (rangement dans la musique OpenMix)
+        e.dataTransfer.setData('text/plain', track.name);
+        // copy (deck, playlist) or move (filing into the OpenMix music folder)
         e.dataTransfer.effectAllowed = 'copyMove';
       });
       tr.addEventListener('dragend', () => { dragTrack = null; });
       tr.addEventListener('dblclick', () => loadSelectedToDeck(activeDeck));
       tr.addEventListener('contextmenu', (e) => {
         e.preventDefault();
-        showTrackMenu(e, t, idx);
+        showTrackMenu(e, track, idx);
       });
-      // Dans une playlist ouverte : on peut RÉORDONNER en déposant sur une ligne
+      // Inside an open playlist: rows can be REORDERED by dropping onto a row
       if (inPlaylist) {
         tr.addEventListener('dragover', (e) => {
           if (!dragTrack || !library.plOpen.tracks.includes(dragTrack)) return;
@@ -3037,19 +3039,19 @@ function renderLibrary() {
           if (!dragTrack || !p.tracks.includes(dragTrack)) return;
           e.preventDefault();
           e.stopPropagation();
-          // index RÉELS dans la playlist (la liste affichée peut être
-          // triée ou filtrée : sa position n'est pas celle de la playlist)
+          // REAL indexes in the playlist (the displayed list may be
+          // sorted or filtered: its position is not the playlist's)
           const from = p.tracks.indexOf(dragTrack);
-          library.moveInPlaylist(p, from, p.tracks.indexOf(t));
+          library.moveInPlaylist(p, from, p.tracks.indexOf(track));
           dragTrack = null;
         });
       }
     }
     libBody.appendChild(tr);
-    rowByTrack.set(t, tr);
+    rowByTrack.set(track, tr);
   });
-  // La console téléphone reçoit la liste courante (noms + BPM) — elle peut
-  // charger n'importe quel morceau sur n'importe quel deck à distance
+  // The phone console receives the current list (names + BPM) — it can
+  // load any track onto any deck remotely
   if (window.api.remoteLib) {
     window.api.remoteLib({
       stamp: libRenderStamp,
@@ -3057,8 +3059,8 @@ function renderLibrary() {
       items: library.filtered.slice(0, 400).map((t) => ({
         name: t.name,
         bpm: t.bpm ? Number(t.bpm.toFixed(1)) : null,
-        // TOUTES les lignes de navigation sont marquées : le téléphone ne
-        // doit jamais pouvoir « charger » un compte ou un dossier sur un deck
+        // ALL navigation rows are flagged: the phone must never be able
+        // to "load" an account or a folder onto a deck
         pl: !!(t.scPlaylist || t.plRow || t.scAccountRow || t.scLikes ||
                t.scRootRow || t.plRootRow || t.fsRow || t.fsUpRow)
       }))
@@ -3066,7 +3068,7 @@ function renderLibrary() {
   }
 }
 
-// Menu clic droit sur une PLAYLIST (renommer / supprimer)
+// Right-click menu on a PLAYLIST (rename / delete)
 function showPlaylistMenu(e, p) {
   ctxMenu.textContent = '';
   const addItem = (label, fn) => {
@@ -3089,7 +3091,7 @@ function showPlaylistMenu(e, p) {
       return;
     }
     flashStatus(t('export_preparing', { name: p.name }));
-    // Les pistes SoundCloud sans copie locale sont téléchargées d'abord
+    // SoundCloud tracks without a local copy are downloaded first
     for (const ref of p.tracks) {
       if (ref.sc && !ref.path) {
         flashStatus(t('downloading_track', { name: ref.name }));
@@ -3101,45 +3103,45 @@ function showPlaylistMenu(e, p) {
     if (res.ok) {
       flashStatus(t('export_done', { name: p.name, count: res.count, skipped: res.skipped ? t('export_done_skipped', { n: res.skipped }) : '', dir: res.dir }));
     } else if (!res.canceled) {
-      flashStatus(`Export : ${res.error}`);
+      flashStatus(t('playlist_export_error', { error: res.error }));
     }
   });
-  addItem('Renommer…', async () => {
-    const name = await askText('Nouveau nom de la playlist', p.name);
+  addItem(t('dl_menu_rename'), async () => {
+    const name = await askText(t('playlist_rename_prompt'), p.name);
     if (name) {
       p.name = name;
       library.savePlaylists();
       renderLibrary();
     }
   });
-  addItem('Supprimer la playlist', () => library.deletePlaylist(p));
+  addItem(t('playlist_delete_label'), () => library.deletePlaylist(p));
   ctxMenu.style.left = `${Math.min(e.clientX, window.innerWidth - 260)}px`;
   ctxMenu.style.top = `${Math.min(e.clientY, window.innerHeight - 110)}px`;
   ctxMenu.classList.remove('hidden');
 }
 
-// Menu clic droit sur une ligne 👤 compte SoundCloud : retirer le compte
-// (fin du b2b — les jetons du pote ne restent pas sur le PC)
-function showScAccountMenu(e, t) {
+// Right-click menu on a 👤 SoundCloud account row: remove the account
+// (end of the b2b — the friend's tokens don't stay on the PC)
+function showScAccountMenu(e, acctRow) {
   ctxMenu.textContent = '';
   const d = document.createElement('div');
   d.className = 'ctx-item';
-  d.textContent = t('remove_account_label', { name: String(t.name || '').replace(/^👤 /, '') });
+  d.textContent = t('remove_account_label', { name: String(acctRow.name || '').replace(/^👤 /, '') });
   d.addEventListener('click', async () => {
     hideCtxMenu();
-    const r = await window.api.scRemoveAccount(t.acctIdx);
+    const r = await window.api.scRemoveAccount(acctRow.acctIdx);
     if (!r.ok) {
-      flashStatus(`SoundCloud : ${r.error}`);
+      flashStatus(t('sc_error', { error: r.error }));
       return;
     }
     flashStatus(t('sc_account_removed'));
-    // Les index de comptes ont bougé (splice) : les caches par compte de la
-    // vue ne valent plus rien, et l'arbre doit repartir de zéro
+    // The account indexes have shifted (splice): the view's per-account
+    // caches are worthless now, and the tree must start from scratch
     library.scPlaylistsByAcct = {};
     library.scPlaylists = null;
     await refreshScStatus();
     buildTree();
-    openSoundCloud(); // re-dispatch : invite / playlists / liste des comptes
+    openSoundCloud(); // re-dispatch: prompt / playlists / account list
   });
   ctxMenu.appendChild(d);
   ctxMenu.style.left = `${Math.min(e.clientX, window.innerWidth - 260)}px`;
@@ -3156,8 +3158,8 @@ function updateSelectionUI() {
     sel.classList.add('selected');
     const wrap = document.getElementById('lib-list-wrap');
     if (library.selection === 0) {
-      // Tout en haut : scroll à zéro, sinon l'EN-TÊTE COLLANT recouvre la
-      // première ligne (« je ne vois pas la première playlist »)
+      // At the very top: scroll to zero, otherwise the STICKY HEADER covers
+      // the first row ("I can't see the first playlist")
       wrap.scrollTop = 0;
     } else {
       sel.scrollIntoView({ block: 'nearest' });
@@ -3170,8 +3172,8 @@ function updateSelectionUI() {
   lastSelIdx = library.selection;
 }
 
-// Entrer dans un dossier du disque (explorateur, encodeur, double-clic) —
-// l'ARBRE de gauche se déplie et se surligne pour montrer OÙ on est
+// Enter a disk folder (explorer, encoder, double-click) — the TREE on
+// the left expands and highlights itself to show WHERE we are
 function enterFolder(p) {
   setLibTab('local');
   library.cache.__folder = p;
@@ -3179,24 +3181,24 @@ function enterFolder(p) {
   treeReveal(p);
 }
 
-// Clé d'arbre d'une entrée SoundCloud : préfixée par le compte quand il y en
-// a plusieurs — en mono-compte l'arbre garde ses clés historiques
+// Tree key of a SoundCloud entry: prefixed with the account when there are
+// several — with a single account the tree keeps its historical keys
 function scTreeKey(idx, leaf) {
   return (library.scAccountCount || 0) >= 2 ? `sc:${idx}:${leaf}` : `sc:${leaf}`;
 }
 
-// Entrer dans SoundCloud — selon le nombre de comptes connectés : 0 = invite
-// à se connecter ; 1 = direct SES playlists (comme avant) ; ≥ 2 (b2b) = la
-// liste des comptes, chacun va chercher ses sons chez lui.
-// Chaque destination surligne AUSSI sa ligne dans l'arbre de gauche — le
-// « micro menu » dit toujours où on est, comme la barre latérale de VS Code
+// Enter SoundCloud — depending on the number of connected accounts: 0 = prompt
+// to log in; 1 = straight to ITS playlists (as before); ≥ 2 (b2b) = the
+// account list, each one fetches its tracks from its own account.
+// Each destination ALSO highlights its row in the left tree — the
+// "micro menu" always tells where you are, like the VS Code sidebar
 async function openSoundCloud() {
   setLibTab('sc');
   const s = await window.api.scStatus();
   const accounts = (s && s.accounts) || [];
   library.scAccountCount = accounts.length;
   if (!accounts.length) {
-    flashStatus('Aucun compte SoundCloud — clique « Se connecter » dans la barre SoundCloud');
+    flashStatus(t('sc_no_account_status'));
   } else if (accounts.length === 1) {
     library.loadScMine(0);
   } else {
@@ -3204,7 +3206,7 @@ async function openSoundCloud() {
   }
   treeRevealKey('sc:');
 }
-// Playlists d'UN compte précis (ligne 👤 double-cliquée, nœud d'arbre…)
+// Playlists of ONE specific account (double-clicked 👤 row, tree node…)
 function openScAccount(idx = 0) {
   setLibTab('sc');
   library.loadScMine(idx);
@@ -3231,11 +3233,11 @@ function openLocalPlaylist(p) {
   treeRevealKey('pl:', `pl:${p.id}`);
 }
 
-// Remonter au dossier PARENT — arrivé tout en haut (racine de disque), on
-// retombe sur la VUE RACINES (SoundCloud, Playlists, disques) : le point
-// de départ de la balade
+// Go up to the PARENT folder — once at the very top (drive root), we
+// land on the ROOTS VIEW (SoundCloud, Playlists, drives): the starting
+// point of the walk
 function folderUp() {
-  if (library.rootsView) return false; // déjà tout en haut
+  if (library.rootsView) return false; // already at the very top
   const cur = library.fsDir || library.cache.__folder;
   if (!cur) {
     library.showRoots();
@@ -3255,22 +3257,22 @@ async function loadSelectedToDeck(i) {
   const track = library.selectedTrack();
   if (!track) return;
 
-  // Ligne « dossier » : on y entre au lieu de charger
+  // "Folder" row: enter it instead of loading
   if (track.fsRow) {
     enterFolder(track.path);
     return;
   }
-  // Ligne « playlist SoundCloud » : on ouvre la playlist au lieu de charger un deck
+  // "SoundCloud playlist" row: open the playlist instead of loading a deck
   if (track.scPlaylist) {
     library.loadScUrl(track.permalink, track.acctIdx);
     return;
   }
-  // Ligne « compte SoundCloud » (b2b) : on entre dans SES playlists
+  // "SoundCloud account" row (b2b): enter ITS playlists
   if (track.scAccountRow) {
     openScAccount(track.acctIdx);
     return;
   }
-  // Ligne « playlist locale » : on l'ouvre
+  // "Local playlist" row: open it
   if (track.plRow) {
     library.openPlaylist(track.pl);
     return;
@@ -3278,7 +3280,7 @@ async function loadSelectedToDeck(i) {
   loadTrackToDeck(i, track);
 }
 
-// Un son DÉJÀ EN LECTURE ailleurs est refusé : petite animation + message
+// A track ALREADY PLAYING elsewhere is refused: small animation + message
 function refuseLoad(i, dup) {
   flashStatus(t('track_already_playing', { n: dup + 1 }));
   [deckUI[i].el, deckUI[dup].el].forEach((el2) => {
@@ -3290,9 +3292,9 @@ function refuseLoad(i, dup) {
   });
 }
 
-// Envoie au serveur téléphone une version COMPACTE de la vague du deck
-// (24 pts/s, 3 bandes quantifiées 0..255) — le téléphone la dessine comme
-// le PC : couleurs par bande, traits de mesure, playhead qui défile
+// Sends the phone server a COMPACT version of the deck's waveform
+// (24 pts/s, 3 bands quantized to 0..255) — the phone draws it like
+// the PC: colors per band, bar lines, scrolling playhead
 const remoteWaveStamp = [0, 0, 0, 0];
 function remotePushWave(i) {
   const p = engine.decks[i].peaks;
@@ -3324,15 +3326,15 @@ function remotePushWave(i) {
 async function loadTrackToDeck(i, track, autoplay = false) {
   const ui = deckUI[i];
   if (!track || track.scPlaylist) return;
-  // une ligne de NAVIGATION (dossier, playlist, compte…) ne se charge pas
+  // a NAVIGATION row (folder, playlist, account…) cannot be loaded
   if (track.fsRow || track.fsUpRow || track.plRow || track.scRootRow || track.plRootRow
     || track.scAccountRow || track.scLikes) return;
-  // Protégé (DRM) : refus IMMÉDIAT, sans attendre un aller-retour réseau
+  // Protected (DRM): IMMEDIATE refusal, without waiting for a network round trip
   if (track.drm) {
     flashStatus(t('track_drm_protected_status', { name: track.name }));
     return;
   }
-  // Refus si le MÊME son joue déjà sur un autre deck
+  // Refuse if the SAME track is already playing on another deck
   const dup = engine.decks.findIndex((dk, j) => j !== i && dk.playing && dk.track &&
     ((dk.track.path && track.path && dk.track.path === track.path) ||
      (dk.track.scId && track.scId && dk.track.scId === track.scId)));
@@ -3342,9 +3344,9 @@ async function loadTrackToDeck(i, track, autoplay = false) {
   }
 
   engine.resume();
-  // UN AUTRE SON ARRIVE PENDANT UN CHARGEMENT (le set de 3 h posé par
-  // erreur…) : le premier est ANNULÉ — téléchargement SoundCloud coupé, son
-  // décodage et son analyse abandonnés — et le nouveau part tout de suite
+  // ANOTHER TRACK ARRIVES DURING A LOAD (the 3-hour set dropped by
+  // mistake…): the first one is CANCELLED — SoundCloud download stopped, its
+  // decoding and analysis abandoned — and the new one starts right away
   if (ui.loading) {
     const prev = ui.loading;
     prev.cancelled = true;
@@ -3361,10 +3363,10 @@ async function loadTrackToDeck(i, track, autoplay = false) {
     if (job.cancelled) return;
     const peaks = await computeBandPeaks(buffer);
     if (job.cancelled) return;
-    // vrai aperçu en couleurs dans la liste (gratuit : pics déjà calculés)
+    // real colored preview in the list (free: peaks already computed)
     library.setPreviewFromPeaks(track, peaks);
-    // Les hot cues SAUVEGARDÉS reviennent à chaque chargement (comme
-    // Rekordbox — demande David, revirement du « chargement vierge »)
+    // SAVED hot cues come back on every load (like
+    // Rekordbox — David's request, reversing the "blank load" choice)
     engine.decks[i].loadTrack({ buffer, bpm, peaks, track, beatOffset, hotCues: (hotCues || []).slice(), beats, gridShift, barAnchor });
     ui.cueOwner = Array(10).fill(null);
     ui.loopOwner = null;
@@ -3376,13 +3378,13 @@ async function loadTrackToDeck(i, track, autoplay = false) {
     updateKeyUI(i);
     resetStemsCol(i);
     updateTempoLabel(i);
-    remotePushWave(i); // la console téléphone reçoit la nouvelle vague
-    // POCHETTE : tags du fichier (ou jaquette SoundCloud), en cache après
-    // la première lecture — affichée dans l'en-tête du deck
+    remotePushWave(i); // the phone console receives the new waveform
+    // ARTWORK: file tags (or SoundCloud cover), cached after the
+    // first read — shown in the deck header
     ui.cover.classList.add('hidden');
     ui._coverTrack = track;
     library.coverFor(track).then((url) => {
-      if (ui._coverTrack !== track) return; // un autre son a été chargé depuis
+      if (ui._coverTrack !== track) return; // another track has been loaded since
       if (url) {
         ui.cover.src = url;
         ui.cover.classList.remove('hidden');
@@ -3390,14 +3392,14 @@ async function loadTrackToDeck(i, track, autoplay = false) {
     });
     flashStatus(t('track_loaded', { name: track.name, n: i + 1 }));
     library.addHistory(track);
-    markTakenRows(); // le son passe en VERT dans l'explorateur, tout de suite
+    markTakenRows(); // the track turns GREEN in the explorer, right away
     if (autoplay) engine.decks[i].play();
-    autoPrepareStems(i); // les stems se préparent en arrière-plan
+    autoPrepareStems(i); // stems are prepared in the background
   } catch (err) {
-    // annulé au profit d'un autre son : ce n'est pas une erreur
+    // cancelled in favor of another track: not an error
     if (job.cancelled || err.cancelled) return;
     ui.title.textContent = t('load_error_title');
-    flashStatus(`Impossible de lire « ${track.name} » : ${err.message || err}`);
+    flashStatus(t('track_load_failed', { name: track.name, error: err.message || err }));
     console.error(err);
   } finally {
     if (ui.loading === job) ui.loading = null;
@@ -3405,21 +3407,21 @@ async function loadTrackToDeck(i, track, autoplay = false) {
 }
 
 // ---------------------------------------------------------------------------
-// Manette
+// Gamepad
 // ---------------------------------------------------------------------------
 
 const padStatus = document.getElementById('pad-status');
 
-// --- MATRICE DES KNOBS pour le curseur manette (spec David) ---
-// Le curseur ne se déplace QUE sur cette matrice :
-//   Rangée 0 (tout en haut) : MASTER — FILTER MASTER et VOL MASTER
-//   Rangées 1-5 : TRIM / HI / MID / LOW / FILTER — une COLONNE PAR DECK
-// Croix/A  = couper / réactiver le knob survolé. Les BASSES sont EXCLUSIVES :
-//            réactiver la basse d'un deck coupe automatiquement celle des
-//            autres (jamais deux basses en même temps, comme le mix manette).
-// Triangle/Y = CUT : coupe d'un coup le volume des decks sélectionnés (L3),
-//              ré-appuyer fait tout revenir d'un coup.
-// L1/R1 = monter/descendre petit à petit ; stick gauche = jouer avec le knob.
+// --- KNOB MATRIX for the gamepad cursor (David's spec) ---
+// The cursor moves ONLY on this matrix:
+//   Row 0 (very top): MASTER — FILTER MASTER and VOL MASTER
+//   Rows 1-5: TRIM / HI / MID / LOW / FILTER — one COLUMN PER DECK
+// Cross/A  = cut / restore the hovered knob. The BASSES are EXCLUSIVE:
+//            restoring one deck's bass automatically cuts the others'
+//            (never two basses at the same time, like the gamepad mix).
+// Triangle/Y = CUT: cuts the volume of the selected decks (L3) at once,
+//              pressing again brings everything back at once.
+// L1/R1 = raise/lower little by little; left stick = play with the knob.
 
 const GP_MASTER = [
   { key: 'mfilter', label: 'FILTER MASTER', killVal: 0, speed: 1.2,
@@ -3454,12 +3456,12 @@ const GP_KNOBS = [
     get: (d) => engine.decks[d].filterVal,
     set: (d, v) => { engine.setDeckColor(d, Math.max(-1, Math.min(1, v))); stripUI[d].kFilt.update(); } }
 ];
-const GP_ROWS = 1 + GP_KNOBS.length; // 1 rangée master + 5 rangées de knobs
-// Colonne FX (à droite des knobs) : UN SEUL panneau partagé par les 4
-// joueurs max — il affiche l'unité FX du joueur qui s'en sert (gpFxShown)
+const GP_ROWS = 1 + GP_KNOBS.length; // 1 master row + 5 knob rows
+// FX column (right of the knobs): ONE SINGLE panel shared by up to 4
+// players — it shows the FX unit of the player using it (gpFxShown)
 const GP_FX_COL = 4;
-let gpFxShown = 0; // unité FX actuellement affichée dans le panneau partagé
-let gpFxFlashAt = 0; // throttle du % de niveau dans la barre de statut
+let gpFxShown = 0; // FX unit currently shown in the shared panel
+let gpFxFlashAt = 0; // throttle for the level % in the status bar
 function gpShowFxUnit(u) {
   gpFxShown = Math.max(0, Math.min(3, u));
   (uiRefs.fxTabs || []).forEach((b, i) => b.classList.toggle('on', i === gpFxShown));
@@ -3468,28 +3470,28 @@ function gpShowFxUnit(u) {
 const gpFxUnitOf = (cur) => (cur.c === GP_FX_COL
   ? gpFxShown
   : Math.min(cur.c, deckCount - 1));
-// La colonne FX est une MATRICE de cellules « solo » alignées sur les
-// rangées de knobs (une par rangée) — L2 ou R2 déclenchent la cellule
-// (la rangée DECK a disparu : la sélection montre déjà où va l'effet)
+// The FX column is a MATRIX of "solo" cells aligned with the knob
+// rows (one per row) — L2 or R2 trigger the cell
+// (the DECK row is gone: the selection already shows where the effect goes)
 const GP_FX_ROWS = [
-  { key: 'type', label: t('fx_row_effect') },   // rangée TRIM
-  { key: 'beats', label: t('fx_row_duration') },  // rangée HI
-  { key: 'level', label: t('fx_row_level') }, // rangée MID
-  { key: 'onoff', label: 'ON/OFF' }  // rangées LOW + FILTER
+  { key: 'type', label: t('fx_row_effect') },   // TRIM row
+  { key: 'beats', label: t('fx_row_duration') },  // HI row
+  { key: 'level', label: t('fx_row_level') }, // MID row
+  { key: 'onoff', label: 'ON/OFF' }  // LOW + FILTER rows
 ];
 const gpFxRowKey = (r) => GP_FX_ROWS[Math.min(Math.max(r - 1, 0), GP_FX_ROWS.length - 1)].key;
 
-// Cellule survolée par un curseur (r, c) — normalise master/knob/FX
+// Cell hovered by a cursor (r, c) — normalizes master/knob/FX
 function gpCellAt(cur) {
   if (cur.r > 0 && cur.c === GP_FX_COL) {
-    // Colonne FX : une CELLULE par rangée (EFFET / DURÉE / NIVEAU / ON-OFF).
-    // Seule la rangée NIVEAU est un réglage continu (stick, L1/R1).
+    // FX column: one CELL per row (EFFECT / LENGTH / LEVEL / ON-OFF).
+    // Only the LEVEL row is a continuous setting (stick, L1/R1).
     const u = gpFxShown;
     const key = gpFxRowKey(cur.r);
     const el = () => (uiRefs.fxPanel ? uiRefs.fxPanel.cells[key] : null);
     if (key === 'level') {
       return {
-        key: `fxlvl${u}`, deck: null, label: 'FX NIVEAU', killVal: 0, speed: 1.1,
+        key: `fxlvl${u}`, deck: null, label: t('gp_cell_fx_level_label'), killVal: 0, speed: 1.1,
         el, get: () => engine.fx[u].level,
         set: (v) => {
           engine.fx[u].setLevel(Math.max(0, Math.min(1, v)));
@@ -3504,9 +3506,9 @@ function gpCellAt(cur) {
     };
   }
   if (cur.r === 0) {
-    // Rangée du haut PAR COLONNE : SELECT au-dessus de chaque tranche,
-    // COLOR (le filtre à effets) sur la colonne FX. Partout sur cette
-    // rangée : stick = FILTER MASTER, L1/R1 = VOL MASTER.
+    // Top row PER COLUMN: SELECT above each channel strip,
+    // COLOR (the effects filter) on the FX column. Everywhere on this
+    // row: stick = FILTER MASTER, L1/R1 = VOL MASTER.
     const mfSet = (v) => {
       engine.setMasterFilter(Math.max(-1, Math.min(1, v)));
       uiRefs.master.filterKnob.update();
@@ -3533,17 +3535,17 @@ function gpCellAt(cur) {
   };
 }
 
-// Pitch bend jog en cours par deck (tempo/synced à restaurer au relâcher)
+// Jog pitch bend in progress per deck (tempo/synced to restore on release)
 const gpBend = [null, null, null, null];
-// Tempo de référence pour le jog : si le verrou sync avait une correction
-// transitoire en cours, on repart du tempo de base PROPRE (pas du corrigé)
+// Reference tempo for the jog: if the sync lock had a transient correction
+// in progress, start again from the CLEAN base tempo (not the corrected one)
 function gpBaseTempo(deck) {
   return deck.synced && deck._syncBase ? deck._syncBase : deck.tempo;
 }
 
-// ♩ BPM MASTER : pousse le tempo du deck master de ±0,5 BPM — et TOUS les
-// decks synchronisés suivent instantanément (leur ratio _syncBase est mis
-// à l'échelle, le verrou de phase garde les traits rouges collés)
+// ♩ MASTER BPM: pushes the master deck's tempo by ±0.5 BPM — and ALL the
+// synced decks follow instantly (their _syncBase ratio is scaled,
+// the phase lock keeps the red lines stuck together)
 function masterBpmNudge(dir) {
   engine.resume();
   const mi = engine.masterIdx !== null ? engine.masterIdx : engine.autoMasterIdx;
@@ -3559,9 +3561,9 @@ function masterBpmNudge(dir) {
   m.setTempo(nt);
   if (m._syncBase) m._syncBase = nt;
   const followers = [];
-  // (les decks syncés suivent tout seuls : le verrou du moteur détecte que
-  // le tempo du master a bougé et les met à l'échelle à l'image suivante —
-  // les remettre à l'échelle ICI aussi doublait le changement)
+  // (synced decks follow on their own: the engine lock detects that
+  // the master's tempo moved and scales them on the next frame —
+  // scaling them HERE as well doubled the change)
   engine.decks.forEach((d, i) => {
     if (i === mi || !d.synced || !d.playing || !d._syncBase) return;
     followers.push(i + 1);
@@ -3579,8 +3581,8 @@ function updateMasterBpmVal() {
   if (el.textContent !== txt) el.textContent = txt;
 }
 
-// --- Liste des effets FX affichée quand Carré est maintenu : on voit où on
-// en est et l'effet défile petit à petit ---
+// --- FX list shown while Square is held: you see where you are
+// and the effect scrolls little by little ---
 let gpFxListEl = null;
 function gpFxTypeList(d, op) {
   const sel = uiRefs.fxUnits[d].typeSel;
@@ -3609,12 +3611,12 @@ function gpFxTypeList(d, op) {
   if (on) on.scrollIntoView({ block: 'nearest' });
 }
 
-// --- Bouton logo : couper / réactiver le knob (avec basses exclusives) ---
-const gpKillStore = new Map(); // "key:deck" -> valeur avant coupure
+// --- Logo button: cut / restore the knob (with exclusive basses) ---
+const gpKillStore = new Map(); // "key:deck" -> value before the cut
 
 function gpKillKnob(cur, gi) {
   engine.resume();
-  // Sur la ligne SELECT : le logo = même geste que X (sélection / COLOR on-off)
+  // On the SELECT row: the logo = same gesture as X (selection / COLOR on-off)
   if (cur.r === 0) {
     if (cur.c === GP_FX_COL) document.getElementById('color-on').click();
     else gpSelectToggle(Math.min(cur.c, deckCount - 1), gi);
@@ -3623,9 +3625,9 @@ function gpKillKnob(cur, gi) {
   const cell = gpCellAt(cur);
   const kkey = `${cell.key}:${cell.deck}`;
   if (cell.exclusive) {
-    // LA règle des basses : une seule basse active à la fois
+    // THE bass rule: only one active bass at a time
     if (gpKillStore.has(kkey)) {
-      // réactiver ICI... et couper toutes les autres
+      // restore HERE... and cut all the others
       cell.set(gpKillStore.get(kkey));
       gpKillStore.delete(kkey);
       for (let o = 0; o < deckCount; o++) {
@@ -3656,14 +3658,14 @@ function gpKillKnob(cur, gi) {
   }
 }
 
-// --- L3 : sélectionner des decks · Triangle/Y : CUT groupé ---
-// CO-SÉLECTION : chaque joueur a SON ensemble de decks — plusieurs joueurs
-// peuvent prendre LA MÊME track, leurs effets s'y COMBINENT (une unité FX
-// par joueur, les sends du moteur s'additionnent).
-const gpSelection = new Set(); // UNION de toutes les sélections (dérivée)
-const gpSelOwners = [new Set(), new Set(), new Set(), new Set()]; // par joueur
-const gpSelNeutral = new Set(); // sélection à la souris (sans joueur)
-const gpCutStore = new Map();  // deck -> volume avant le cut
+// --- L3: select decks · Triangle/Y: grouped CUT ---
+// CO-SELECTION: each player has THEIR OWN set of decks — several players
+// can take THE SAME track, their effects COMBINE on it (one FX unit
+// per player, the engine's sends add up).
+const gpSelection = new Set(); // UNION of all the selections (derived)
+const gpSelOwners = [new Set(), new Set(), new Set(), new Set()]; // per player
+const gpSelNeutral = new Set(); // mouse selection (no player)
+const gpCutStore = new Map();  // deck -> volume before the cut
 
 function gpSelSync() {
   gpSelection.clear();
@@ -3671,16 +3673,16 @@ function gpSelSync() {
   gpSelOwners.forEach((s) => s.forEach((t) => gpSelection.add(t)));
 }
 
-// Les joueurs qui ont sélectionné CE deck (pour les dégradés multi)
+// The players who selected THIS deck (for the multi-player gradients)
 function gpSelOwnersOf(d) {
   const out = [];
   gpSelOwners.forEach((s, gi) => { if (s.has(d)) out.push(gi); });
   return out;
 }
 
-// Repeint les boutons SEL et le liseré des tranches : une couleur par
-// joueur propriétaire — plusieurs joueurs = dégradé en segments (comme les
-// pads partagés) ; souris = couleur du deck
+// Repaints the SEL buttons and the channel strip borders: one color per
+// owning player — several players = segmented gradient (like the
+// shared pads); mouse = deck color
 function gpPaintSelection() {
   stripUI.forEach((s, i) => {
     const on = gpSelection.has(i);
@@ -3688,8 +3690,8 @@ function gpPaintSelection() {
     const solid = owners.length ? PLAYER_COLORS[owners[0]] : DECK_COLORS[i];
     s.el.classList.toggle('gp-sel', on);
     s.el.style.setProperty('--psel', solid);
-    // TOUTE la tranche se teinte de la couleur du joueur (deux joueurs =
-    // deux bandes) : on voit de loin QUI a pris QUOI, pas un petit cadre
+    // The WHOLE strip is tinted with the player's color (two players =
+    // two bands): you see from afar WHO took WHAT, not a small frame
     s.el.style.background = on
       ? (owners.length > 1
           ? `linear-gradient(180deg, ${owners.map((g, k) =>
@@ -3701,45 +3703,45 @@ function gpPaintSelection() {
       s.selBtn.style.setProperty('--psel', solid);
       s.selBtn.style.background = on ? gpOwnersBg(owners, DECK_COLORS[i]) : '';
       const txt = on && owners.length
-        ? `SEL·J${owners.map((g) => g + 1).join('+')}`
+        ? t('gp_sel_btn_players', { players: owners.map((g) => g + 1).join('+') })
         : 'SEL';
       if (s.selBtn.textContent !== txt) s.selBtn.textContent = txt;
     }
   });
 }
 
-// Les tracks sélectionnées QUE CE JOUEUR contrôle : celles qu'il a
-// sélectionnées lui-même + celles sans propriétaire (souris). VIDE si le
-// joueur n'a aucune piste dans la sélection : ses boutons et sticks
-// restent alors en mode NORMAL (pads JUMP/LOOP/CUE/KEY, knob survolé…)
-// → sélectionner = mode FX, désélectionner = retour immédiat aux pads.
+// The selected tracks that ONLY THIS PLAYER controls: the ones they
+// selected themselves + those with no owner (mouse). EMPTY if the
+// player has no track in the selection: their buttons and sticks
+// then stay in NORMAL mode (JUMP/LOOP/CUE/KEY pads, hovered knob…)
+// → select = FX mode, deselect = immediate return to the pads.
 function gpSelFor(gi) {
   if (gi == null) return [...gpSelection];
   return [...new Set([...gpSelOwners[Math.min(gi, 3)], ...gpSelNeutral])];
 }
 
-// Les unités FX appartiennent aux JOUEURS : unité 1 = J1 … unité 4 = J4.
-// SOBRE AU REPOS : gris neutre tant que le joueur n'a rien sélectionné —
-// sa couleur n'apparaît que quand il est EN JEU (esthétique Rekordbox :
-// la couleur n'existe que quand elle informe)
+// FX units belong to the PLAYERS: unit 1 = P1 … unit 4 = P4.
+// SOBER AT REST: neutral gray as long as the player has selected nothing —
+// their color only appears when they are IN PLAY (Rekordbox aesthetics:
+// color only exists when it carries information)
 function gpUnitColor(u) {
   return gpSonsOf(u).length ? (PLAYER_COLORS[u] || '#5a6272') : '#5a6272';
 }
 
-// Les SONS que le joueur gi a sélectionnés lui-même (pour les bandeaux
-// « couleur des sons » du rack — on voit qui a pris quelles pistes)
+// The TRACKS player gi selected themselves (for the rack's "track
+// color" bands — you see who took which tracks)
 function gpSonsOf(gi) {
   return [...gpSelOwners[Math.min(gi, 3)]].sort();
 }
 
 function gpSelectToggle(d, gi) {
-  // Chaque joueur ne touche qu'à SA sélection : prendre une track déjà
-  // prise par un autre = CO-SÉLECTION (les deux effets se combinent),
-  // jamais un vol de sélection.
+  // Each player only touches THEIR selection: taking a track already
+  // taken by another = CO-SELECTION (both effects combine),
+  // never stealing a selection.
   const set = gi != null ? gpSelOwners[Math.min(gi, 3)] : gpSelNeutral;
   const selecting = !set.has(d);
-  // Les unités FX sont PAR JOUEUR (unité 1 = J1 … unité 4 = J4) : chacun a
-  // SON effet, SA durée, SON niveau — appliqués aux sons QU'IL sélectionne.
+  // FX units are PER PLAYER (unit 1 = P1 … unit 4 = P4): each one has
+  // THEIR effect, THEIR length, THEIR level — applied to the tracks THEY select.
   const u = gi != null ? Math.min(gi, 3) : Math.min(d, 3);
   if (selecting) {
     set.add(d);
@@ -3748,8 +3750,8 @@ function gpSelectToggle(d, gi) {
     if (!engine.fx[u].enabled) uiRefs.fxUnits[u].onBtn.click();
     const colorOn = document.getElementById('color-on');
     if (colorOn && !colorOn.classList.contains('on')) colorOn.click();
-    // armer le filtre = COLOR ON **sur Filter** (le stick gauche doit
-    // filtrer, pas envoyer un écho — le FX c'est le stick droit)
+    // arming the filter = COLOR ON **on Filter** (the left stick must
+    // filter, not send an echo — the FX is the right stick)
     const csel = uiRefs.master.colorSel;
     if (csel && csel.value !== 'filter') {
       csel.value = 'filter';
@@ -3757,10 +3759,10 @@ function gpSelectToggle(d, gi) {
     }
   } else {
     set.delete(d);
-    // la piste ne quitte que l'unité DE CE JOUEUR — si un autre joueur
-    // l'a aussi sélectionnée, SON effet continue tranquillement.
-    // (désélection SOURIS : l'unité min(d,3) appartient au joueur min(d,3)+1
-    // — s'il a lui-même pris cette track, on ne touche pas à son routage)
+    // the track only leaves THIS PLAYER's unit — if another player
+    // also selected it, THEIR effect carries on undisturbed.
+    // (MOUSE deselection: unit min(d,3) belongs to player min(d,3)+1
+    // — if they took this track themselves, their routing is left alone)
     if (!(gi == null && gpSelOwners[u].has(d))) {
       gpFxAssignSet(u, d, false);
       if (engine.fx[u].enabled && !engine.fxAssign[u].some(Boolean)) {
@@ -3780,7 +3782,7 @@ function gpSelectToggle(d, gi) {
 function gpCutToggle(fallbackDeck) {
   engine.resume();
   if (gpCutStore.size) {
-    // tout revient d'un coup — l'effet « cut » du mix manette
+    // everything comes back at once — the "cut" effect of the gamepad mix
     for (const [d, v] of gpCutStore) {
       engine.decks[d].setVolume(v);
       stripUI[d].fader.update();
@@ -3798,11 +3800,11 @@ function gpCutToggle(fallbackDeck) {
   flashStatus(t('cut_status', { decks: targets.sort().map(x => x + 1).join(' + '), s: targets.length > 1 ? 's' : '' }));
 }
 
-// Curseurs visibles (un par joueur, couleur du deck contrôlé) avec les
-// étiquettes L/R qui montrent ce que L2/R2 vont faire sur cette rangée
+// Visible cursors (one per player, color of the controlled deck) with the
+// L/R tags showing what L2/R2 will do on this row
 const gpCursorEls = [];
-const gpSideCursorEls = []; // cadres L2/R2 posés sur les VRAIS pads visés
-const gpPrevEls = [];       // prévisualisation jump/loop sur la vague
+const gpSideCursorEls = []; // L2/R2 frames placed on the REAL targeted pads
+const gpPrevEls = [];       // jump/loop preview on the waveform
 function ensureGpCursors() {
   for (let i = 0; i < 4; i++) {
     const c = document.createElement('div');
@@ -3818,8 +3820,8 @@ function ensureGpCursors() {
       return s;
     };
     gpSideCursorEls.push({ l: mk('L2'), r: mk('R2') });
-    // Prévisualisation sur la forme d'onde : 2 traits (destinations du
-    // jump arrière/avant) + 1 bande (étendue de la boucle qui serait posée)
+    // Preview on the waveform: 2 lines (backward/forward jump
+    // destinations) + 1 band (span of the loop that would be set)
     const mkPrev = (cls) => {
       const s = document.createElement('div');
       s.className = `gp-preview ${cls} hidden`;
@@ -3831,17 +3833,17 @@ function ensureGpCursors() {
 }
 ensureGpCursors();
 
-// Repères sur les KNOBS de la matrice : chaque rangée correspond à sa paire
-// de cues (L2 = gauche, R2 = droite). La LETTRE du cue s'affiche du bon
-// côté du knob, colorée à la couleur du joueur qui l'a posé (sinon deck).
-// Et quand une BOUCLE de la taille de la rangée tourne : anneau animé
-// autour du knob, couleur du joueur qui tient la boucle.
-const gpKnobMarks = new Map(); // "deck:rangée" -> { l, r, ring }
-let gpKnobMarkSig = ''; // garde : 3600 écritures de style/s pour rien
+// Markers on the matrix KNOBS: each row matches its pair of
+// cues (L2 = left, R2 = right). The cue LETTER is shown on the correct
+// side of the knob, in the color of the player who set it (otherwise deck).
+// And when a LOOP of the row's size is running: animated ring
+// around the knob, in the color of the player holding the loop.
+const gpKnobMarks = new Map(); // "deck:row" -> { l, r, ring }
+let gpKnobMarkSig = ''; // guard: 3600 style writes/s for nothing
 function gpUpdateKnobMarks() {
-  // FLUIDITÉ : appelée 60×/s même sans manette et decks vides, elle
-  // réécrivait 60 styles par image (3600/s) pour un affichage qui ne bouge
-  // qu'en posant un cue ou une boucle. Signature d'abord, travail ensuite.
+  // SMOOTHNESS: called 60×/s even with no gamepad and empty decks, it
+  // rewrote 60 styles per frame (3600/s) for a display that only changes
+  // when a cue or a loop is set. Signature first, work afterwards.
   let sig = '';
   for (let d = 0; d < 4; d++) {
     const dk = engine.decks[d];
@@ -3853,7 +3855,7 @@ function gpUpdateKnobMarks() {
     sig += `${bits}:${u.cueOwner ? u.cueOwner.map((o) => (o ? o.join('.') : '-')).join(',') : ''}`
       + `:${dk.looping ? dk._loopBeats : 0}:${u.jumpScale}:${u.loopOwner}:${dk.playing ? 1 : 0}|`;
   }
-  // la garde sur la taille laisse la 1re passe CRÉER les étiquettes
+  // the size guard lets the 1st pass CREATE the tags
   if (sig === gpKnobMarkSig && gpKnobMarks.size >= 4 * GP_KNOBS.length) return;
   gpKnobMarkSig = sig;
   for (let d = 0; d < 4; d++) {
@@ -3865,7 +3867,7 @@ function gpUpdateKnobMarks() {
       if (!mk) {
         const host = GP_KNOBS[r2 - 1].el(d);
         if (!host) continue;
-        // ancrage garanti : le wrapper du knob devient le référentiel
+        // guaranteed anchoring: the knob wrapper becomes the reference frame
         host.style.position = 'relative';
         const el2 = (cls, tag) => {
           const s2 = document.createElement(tag || 'span');
@@ -3886,17 +3888,17 @@ function gpUpdateKnobMarks() {
         if (set) {
           const owners = gpOwnersOf(ui.cueOwner ? ui.cueOwner[idx] : null);
           el2.textContent = String.fromCharCode(65 + idx);
-          // deux joueurs sur le même cue = étiquette moitié/moitié ;
-          // cue sans propriétaire (cache/souris) = NEUTRE gris
+          // two players on the same cue = half/half tag;
+          // cue with no owner (cache/mouse) = NEUTRAL gray
           el2.style.background = gpOwnersBg(owners, '#8a94ae');
           const glow = owners.length === 1 ? PLAYER_COLORS[owners[0]]
             : owners.length ? '#ffffff' : '#8a94ae';
           el2.style.boxShadow = `0 0 7px ${glow}`;
         }
       };
-      letter(mk.l, r2 - 1);   // cue de L2 sur cette rangée
-      letter(mk.r, 10 - r2);  // cue de R2
-      // Animation de LOOP sur le knob de la rangée dont la boucle tourne
+      letter(mk.l, r2 - 1);   // L2 cue on this row
+      letter(mk.r, 10 - r2);  // R2 cue
+      // LOOP animation on the knob of the row whose loop is running
       const loopOn = deck.looping &&
         deck._loopBeats === LOOP_ROW_BEATS[r2 - 1] * (ui.jumpScale || 1);
       mk.ring.style.display = loopOn ? '' : 'none';
@@ -3904,24 +3906,24 @@ function gpUpdateKnobMarks() {
         const c = ui.loopOwner != null ? PLAYER_COLORS[gpOwnersOf(ui.loopOwner)[0]] : '#5fe08a';
         mk.ring.style.color = c;
         mk.ring.style.borderColor = c;
-        // deck en lecture = l'anneau TOURNE · en pause = statique (préparée)
+        // deck playing = the ring SPINS · paused = static (prepared)
         mk.ring.classList.toggle('prepared', !deck.playing);
       }
     }
   }
 }
 
-// Sélections bibliothèque de TOUS les joueurs affichées EN MÊME TEMPS :
-// - barre pleine = la ligne où le joueur navigue en ce moment
-// - barre + badge J1/J2 = le son que ce joueur a CHARGÉ (marqueur PERMANENT,
-//   il reste même quand on quitte la navigation — « qui a affiché quoi »)
-const gpLoadedTrack = [null, null, null, null]; // dernier son chargé par joueur
+// Library selections of ALL players shown AT THE SAME TIME:
+// - solid bar = the row the player is currently navigating
+// - bar + P1/P2 badge = the track that player LOADED (PERMANENT marker,
+//   it stays even after leaving navigation — "who displayed what")
+const gpLoadedTrack = [null, null, null, null]; // last track loaded per player
 let gpNavMarkedRows = [];
-let gpModeBtnSig = ''; // garde : onglets de mode repeints au changement seul
+let gpModeBtnSig = ''; // guard: mode tabs repainted only on change
 let gpNavMarkSig = '';
 function gpUpdateNavMarks() {
-  // FLUIDITÉ : ne refait le marquage (retrait/ajout de badges DOM) que si
-  // quelque chose a bougé — pas 60 fois par seconde pour rien
+  // SMOOTHNESS: only redo the marking (removing/adding DOM badges) if
+  // something moved — not 60 times per second for nothing
   const sig = gpLoadedTrack.map((t) => (t ? library.filtered.indexOf(t) : -1)).join(',')
     + '#' + [...gamepad.pads.entries()].map(([gi, st]) => `${gi}:${st.navSel}`).join('|')
     + '#' + libRenderStamp;
@@ -3937,40 +3939,40 @@ function gpUpdateNavMarks() {
   const mark = (row, c, badge) => {
     if (!row) return;
     row.style.boxShadow = row.style.boxShadow
-      ? `${row.style.boxShadow}, inset -4px 0 0 ${c}` // 2e joueur : barre droite
+      ? `${row.style.boxShadow}, inset -4px 0 0 ${c}` // 2nd player: right bar
       : `inset 4px 0 0 ${c}, inset 0 0 16px ${c}2e`;
     row.classList.add('psel');
     if (badge && !row.querySelector(`.psel-badge[data-gi="${badge.gi}"]`)) {
       const s2 = document.createElement('span');
       s2.className = 'psel-badge';
       s2.dataset.gi = badge.gi;
-      s2.textContent = `J${badge.gi + 1}`;
+      s2.textContent = t('gp_player_tag', { n: badge.gi + 1 });
       s2.style.background = c;
       const cell = row.children[2] || row;
       cell.appendChild(s2);
     }
     gpNavMarkedRows.push(row);
   };
-  // Sons CHARGÉS (permanent, suit le morceau même si la liste bouge)
+  // LOADED tracks (permanent, follows the track even if the list moves)
   gpLoadedTrack.forEach((t, gi) => {
     if (!t) return;
     const idx = library.filtered.indexOf(t);
     if (idx < 0) return;
     mark(libBody.children[idx], PLAYER_COLORS[gi], { gi });
   });
-  // Curseurs de navigation (pendant qu'on se balade)
+  // Navigation cursors (while browsing)
   for (const [gi, st] of gamepad.pads.entries()) {
     if (st.navSel == null) continue;
     mark(libBody.children[st.navSel], PLAYER_COLORS[gi] || '#fff', null);
   }
 }
 
-// Étiquette de l'action que fera L2/R2 pour CE joueur (selon SON mode)
+// Tag of the action L2/R2 will perform for THIS player (according to THEIR mode)
 function gpSideLabel(st, side) {
   const idx = padForSide(st.cur.r, side);
   const p = side > 0 ? 'R2' : 'L2';
   if (st.cur.r === 0 && st.cur.c !== GP_FX_COL) {
-    return side > 0 ? `${p} ♩+` : `${p} ♩−`; // BPM master sur la rangée haute
+    return side > 0 ? `${p} ♩+` : `${p} ♩−`; // master BPM on the top row
   }
   if (st.cur.c === GP_FX_COL) {
     const k = gpFxRowKey(st.cur.r);
@@ -3992,14 +3994,14 @@ function gpSideLabel(st, side) {
     const s = samplerBank[idx];
     return `${p} ${s ? s.name.slice(0, 7) : '+'}`;
   }
-  const li = st.cur.r - 1; // pad gauche de la rangée : IN / OUT / ✕
+  const li = st.cur.r - 1; // left pad of the row: IN / OUT / ✕
   return side > 0
     ? `${p} ↻${LOOP_ROW_BEATS[st.cur.r - 1]}`
     : `${p} ${li === 0 ? 'IN' : li === 1 ? 'OUT' : '✕'}`;
 }
 
-// Prévisualisation sur la vague zoomée : où atterrit le jump / quelle zone
-// couvrira la boucle, dessiné dans la couleur du joueur
+// Preview on the zoomed waveform: where the jump lands / which area
+// the loop will cover, drawn in the player's color
 function gpUpdatePreview(gi, st) {
   const prev = gpPrevEls[gi];
   const hideAll = () => {
@@ -4031,7 +4033,7 @@ function gpUpdatePreview(gi, st) {
   const win = waveWindowSec * (deck.tempo || 1);
   const xOf = (t) => r.left + r.width / 2 + ((t - tNow) / win) * r.width;
   const size = st.mode === 'jump'
-    ? JUMP_ROW_MEASURES[st.cur.r - 1] * 4 // mesures → temps
+    ? JUMP_ROW_MEASURES[st.cur.r - 1] * 4 // bars → beats
     : LOOP_ROW_BEATS[st.cur.r - 1];
   const f = deck.beats ? gridIndexFracAt(deck, tNow) : null;
   const gridT = (beatsAway) => {
@@ -4055,13 +4057,13 @@ function gpUpdatePreview(gi, st) {
     el.style.boxShadow = `0 0 6px ${col}`;
   };
   if (st.mode === 'jump') {
-    // destinations du saut (size déjà converti en temps)
+    // jump destinations (size already converted to beats)
     placeLine(prev.l, gridT(-size));
     placeLine(prev.r, gridT(size));
     prev.band.classList.add('hidden');
     return;
   }
-  // LOOP : zone que couvrirait la boucle posée maintenant (départ calé)
+  // LOOP: area the loop would cover if set now (snapped start)
   prev.l.classList.add('hidden');
   prev.r.classList.add('hidden');
   let s;
@@ -4091,8 +4093,8 @@ function gpUpdatePreview(gi, st) {
   prev.band.style.borderColor = col;
 }
 
-// Quels PADS du deck L2 et R2 vont-ils « cliquer » depuis cette rangée ?
-// Simple maintenant : la rangée donne la paire, L = gauche, R = droite.
+// Which deck PADS will L2 and R2 "click" from this row?
+// Simple now: the row gives the pair, L = left, R = right.
 function gpSideTargets(st) {
   if (st.cur.r < 1 || st.cur.r > GP_KNOBS.length || st.cur.c === GP_FX_COL) {
     return { l: null, r: null };
@@ -4104,9 +4106,9 @@ function gpSideTargets(st) {
   };
 }
 
-// nth : quand DEUX joueurs visent le même élément, le 2e cadre s'emboîte
-// autour du 1er (sinon seul le dernier serait visible) et son étiquette
-// passe de l'autre côté
+// nth: when TWO players target the same element, the 2nd frame nests
+// around the 1st (otherwise only the last one would be visible) and its tag
+// moves to the other side
 function placeGpFrame(el, target, color, label, nth) {
   if (!target) {
     el.classList.add('hidden');
@@ -4124,7 +4126,7 @@ function placeGpFrame(el, target, color, label, nth) {
   el.style.width = `${r.width + off * 2}px`;
   el.style.height = `${r.height + off * 2}px`;
   el.style.borderColor = color;
-  // Le pad visé est REMPLI de la couleur du joueur (sélection visible)
+  // The targeted pad is FILLED with the player's color (visible selection)
   el.style.background = `${color}30`;
   el.style.boxShadow = `0 0 9px ${color}, 0 0 18px ${color}66`;
   const tag = el.querySelector('.gp-cursor-tag');
@@ -4139,10 +4141,10 @@ function placeGpFrame(el, target, color, label, nth) {
   if (label) tag.textContent = label;
 }
 
-// --- PADS INTELLIGENTS : chaque pad montre ce que fera CHAQUE joueur
-// présent sur le deck, dans SA couleur. Deux joueurs avec deux modes
-// différents → le bouton est DIVISÉ (segment J1 loop / segment J2 jump).
-// Les autres voient ta config, mais chacun garde la sienne. ---
+// --- SMART PADS: each pad shows what EACH player present on the deck
+// will do, in THEIR color. Two players with two different modes
+// → the button is SPLIT (P1 loop segment / P2 jump segment).
+// The others see your config, but each one keeps their own. ---
 function gpPadLabel(mode, idx, scale) {
   if (mode === 'hotcue') return String.fromCharCode(65 + idx);
   if (mode === 'jump') return formatMeasures(JUMP_VALS[idx] * (scale || 1));
@@ -4174,21 +4176,21 @@ function gpUpdatePadViews() {
       : 'plain';
     if (ui._padViewSig === sig) return;
     if (sig === 'plain') {
-      renderPads(d); // plus de joueur ici : retour à l'affichage de l'onglet
+      renderPads(d); // no player here anymore: back to the tab display
       ui._padViewSig = 'plain';
       return;
     }
     ui._padViewSig = sig;
-    // Même mode pour tous les joueurs présents ? Pas de schéma répétitif :
-    // UN seul label et le bouton entier rempli des couleurs des joueurs.
+    // Same mode for all the players present? No repetitive pattern:
+    // ONE single label and the whole button filled with the players' colors.
     const uniq = [...new Set(players.map((p) => p.mode))];
     ui._mergedMode = uniq.length === 1 ? uniq[0] : null;
     ui.pads.forEach((p, idx) => {
       if (uniq.length === 1) {
-        // Même mode : UN label, et le bouton ENTIER rempli.
-        // Un joueur → tout le pad à sa couleur. Plusieurs → de VRAIES
-        // bandes par joueur (le cadre L2/R2 et l'activation ne ciblent
-        // ainsi QUE la partie du joueur concerné).
+        // Same mode: ONE label, and the WHOLE button filled.
+        // One player → the whole pad in their color. Several → REAL
+        // bands per player (the L2/R2 frame and the activation then only
+        // target the part of the player concerned).
         if (players.length === 1) {
           p.innerHTML = '<div class="pad-single"></div>';
           p.querySelector('.pad-single').textContent = gpPadLabel(uniq[0], idx, ui.jumpScale);
@@ -4212,13 +4214,13 @@ function gpUpdatePadViews() {
           seg.textContent = gpPadLabel(players[k].mode, idx, ui.jumpScale);
         });
       }
-      p.title = players.map(({ gi, mode }) => `J${gi + 1} : ${GP_MODE_NAMES[mode]}`).join(' · ');
+      p.title = players.map(({ gi, mode }) => t('gp_pad_player_mode_title', { n: gi + 1, mode: GP_MODE_NAMES[mode] })).join(' · ');
     });
   });
 }
 
-// ANIMATION à l'endroit où L2/R2 frappe : flash néon de la couleur du joueur
-// (destination du saut, zone de la boucle, pad appuyé)
+// ANIMATION where L2/R2 strikes: neon flash in the player's color
+// (jump destination, loop area, pressed pad)
 function gpBurst(x, y, w, h, color) {
   const el = document.createElement('div');
   el.className = 'gp-burst';
@@ -4231,7 +4233,7 @@ function gpBurst(x, y, w, h, color) {
   setTimeout(() => el.remove(), 520);
 }
 
-// Flash au point d'impact de l'action L2/R2 sur la vague du deck
+// Flash at the impact point of the L2/R2 action on the deck's waveform
 function gpBurstAction(st, side) {
   const gi = st.player - 1;
   const col = PLAYER_COLORS[gi] || '#fff';
@@ -4245,7 +4247,7 @@ function gpBurstAction(st, side) {
   const win = waveWindowSec * (deck.tempo || 1);
   const xOf = (t) => r.left + r.width / 2 + ((t - tNow) / win) * r.width;
   const size = st.mode === 'jump'
-    ? JUMP_ROW_MEASURES[st.cur.r - 1] * 4 // mesures → temps
+    ? JUMP_ROW_MEASURES[st.cur.r - 1] * 4 // bars → beats
     : LOOP_ROW_BEATS[st.cur.r - 1];
   const f = deck.beats && deck.bpm ? gridIndexFracAt(deck, tNow) : null;
   const gridT = (b) => (f != null
@@ -4262,23 +4264,23 @@ function gpBurstAction(st, side) {
     const x1 = Math.min(r.right, xOf(e != null ? e : tNow));
     if (x1 > x0) gpBurst(x0, r.top, x1 - x0, r.height, col);
   } else {
-    // cue / key : flash au trait de lecture
+    // cue / key: flash at the playhead line
     gpBurst(r.left + r.width / 2 - 12, r.top, 24, r.height, col);
   }
 }
 
 function updateGpCursors() {
   const entries = [...gamepad.pads.entries()];
-  // Panneau FX partagé : s'il y a un joueur sur la colonne FX, le panneau
-  // montre SON unité (celle de son deck) — « l'espace est partagé »
+  // Shared FX panel: if a player is on the FX column, the panel
+  // shows THEIR unit (their deck's) — "the space is shared"
   for (const [, st] of entries) {
     if (st.cur.r >= 1 && st.cur.c === GP_FX_COL) { gpFxShown = Math.min(st.player - 1, 3); break; }
   }
-  updateFxPanel(); // cellules FX à jour (niveau, on/off, effet en direct)
-  updateMasterBpmVal(); // BPM du master en direct dans la rangée MASTER
-  // Onglets CUE/JUMP/LOOP/KEY : REMPLIS de la couleur de chaque joueur
-  // présent sur le deck. FLUIDITÉ : repeints UNIQUEMENT quand un joueur
-  // bouge ou change de mode — pas 80 écritures de style par frame
+  updateFxPanel(); // FX cells up to date (level, on/off, live effect)
+  updateMasterBpmVal(); // live master BPM in the MASTER row
+  // CUE/JUMP/LOOP/KEY tabs: FILLED with the color of each player
+  // present on the deck. SMOOTHNESS: repainted ONLY when a player
+  // moves or changes mode — not 80 style writes per frame
   const modeSig = entries.map(([gi, st]) =>
     (st.cur.r >= 1 && st.cur.r <= GP_KNOBS.length && st.cur.c !== GP_FX_COL)
       ? `${gi}:${Math.min(st.cur.c, deckCount - 1)}:${st.mode}`
@@ -4306,14 +4308,14 @@ function updateGpCursors() {
       btn.style.borderColor = c;
     });
   }
-  gpUpdateNavMarks(); // sélections bibliothèque de TOUS les joueurs
-  gpUpdateKnobMarks(); // lettres de cue + anneau de loop sur les knobs
-  // Prévisualisations jump/loop : indexées par manette (gamepad.index)
+  gpUpdateNavMarks(); // library selections of ALL players
+  gpUpdateKnobMarks(); // cue letters + loop ring on the knobs
+  // Jump/loop previews: indexed by gamepad (gamepad.index)
   for (let g = 0; g < 4; g++) {
     gpUpdatePreview(g, gamepad.pads.get(g) || null);
   }
-  gpUpdatePadViews(); // pads divisés par joueur
-  // Occupation des cibles : 2 joueurs sur le même élément → cadres emboîtés
+  gpUpdatePadViews(); // pads split per player
+  // Target occupancy: 2 players on the same element → nested frames
   const gpOcc = new Map();
   const nthOf = (t) => {
     const n = gpOcc.get(t) || 0;
@@ -4327,11 +4329,11 @@ function updateGpCursors() {
       return;
     }
     const [gi, st] = entry;
-    const isNav = st.cur.r >= GP_ROWS; // zone navigation sous FILTER
+    const isNav = st.cur.r >= GP_ROWS; // navigation zone below FILTER
     let target = null;
     let cell = null;
     if (isNav) {
-      // Chaque joueur voit SA ligne sélectionnée dans l'explorateur
+      // Each player sees THEIR selected row in the explorer
       target = (st.navSel != null && libBody.children[st.navSel]) ||
         document.getElementById('library');
     } else {
@@ -4347,8 +4349,8 @@ function updateGpCursors() {
       el.classList.add('hidden');
       return;
     }
-    // Deux joueurs sur le MÊME élément : cadres emboîtés (sinon seul le
-    // dernier serait visible), étiquette de l'autre côté
+    // Two players on the SAME element: nested frames (otherwise only the
+    // last one would be visible), tag on the other side
     const nth = nthOf(target);
     const off = 3 + nth * 5;
     el.classList.remove('hidden');
@@ -4356,14 +4358,14 @@ function updateGpCursors() {
     el.style.top = `${r.top - off}px`;
     el.style.width = `${r.width + off * 2}px`;
     el.style.height = `${r.height + off * 2}px`;
-    // Chaque JOUEUR a SA couleur néon (jamais celle d'une piste)
+    // Each PLAYER has THEIR OWN neon color (never a track's)
     const col = PLAYER_COLORS[gi] || '#e8e8ec';
     el.style.borderColor = col;
     el.style.boxShadow = `0 0 10px ${col}, 0 0 22px ${col}55`;
     const tag = el.querySelector('.gp-cursor-tag');
-    // Étiquette COMPACTE (le nom complet cachait le titre de la tranche) :
-    // juste J1/J2, en coin, de l'autre côté si superposition
-    tag.textContent = isNav ? `J${gi + 1} 📁` : `J${gi + 1}`;
+    // COMPACT tag (the full name hid the channel strip's title):
+    // just P1/P2, in the corner, on the other side if overlapping
+    tag.textContent = isNav ? `${t('gp_player_tag', { n: gi + 1 })} 📁` : t('gp_player_tag', { n: gi + 1 });
     tag.style.background = col;
     tag.style.left = 'auto';
     tag.style.right = '-2px';
@@ -4374,23 +4376,23 @@ function updateGpCursors() {
       tag.style.top = '-15px';
       tag.style.bottom = 'auto';
     }
-    // Effet GLITCH quand le curseur se déplace
+    // GLITCH effect when the cursor moves
     const moveKey = isNav ? `n${st.navSel}` : `${st.cur.r}:${st.cur.c}`;
     if (st._glitchKey !== moveKey) {
       st._glitchKey = moveKey;
       el.classList.remove('gp-glitch');
-      void el.offsetWidth; // relance l'animation
+      void el.offsetWidth; // restart the animation
       el.classList.add('gp-glitch');
     }
-    // L2 / R2 : on ENCADRE les vrais pads qui vont être « cliqués »,
-    // avec l'ACTION du joueur (« L2 −4 », « R2 🔁8 », « R2·F », « L2 −2♪ »)
+    // L2 / R2: we FRAME the real pads that are about to be "clicked",
+    // with the player's ACTION ("L2 −4", "R2 🔁8", "R2·F", "L2 −2♪")
     const lEl = el.querySelector('.gp-side-l');
     const rEl = el.querySelector('.gp-side-r');
     const frames = gpSideCursorEls[i];
     const inKnobs = !isNav && st.cur.r >= 1 && st.cur.r <= GP_KNOBS.length;
     const targets = inKnobs ? gpSideTargets(st) : { l: null, r: null };
-    // Sur un pad divisé (segments OU bandes), on n'encadre QUE la partie
-    // de CE joueur
+    // On a split pad (segments OR bands), only frame THIS player's
+    // part
     const segFor = (padEl) => (padEl
       ? (padEl.querySelector(`.pad-seg[data-gi="${gi}"], .pad-band[data-gi="${gi}"]`) || padEl)
       : null);
@@ -4401,43 +4403,43 @@ function updateGpCursors() {
     lEl.style.display = 'none';
     rEl.style.display = 'none';
   });
-  // Cache les cadres des joueurs sans manette
+  // Hide the frames of the players without a gamepad
   for (let i = gamepad.pads.size; i < 4; i++) {
     gpSideCursorEls[i].l.classList.add('hidden');
     gpSideCursorEls[i].r.classList.add('hidden');
   }
 }
 
-// Badges 🎮 J1/J2… : montre quel joueur contrôle quel deck
+// 🎮 P1/P2… badges: show which player controls which deck
 function updatePadChips() {
   const infos = gamepad.padsInfo();
   deckUI.forEach((ui, d) => {
-    const players = infos.filter(p => p.deck === d).map(p => `J${p.player}`);
+    const players = infos.filter(p => p.deck === d).map(p => t('gp_player_tag', { n: p.player }));
     ui.padChip.textContent = players.length ? players.join('+') : '';
     ui.padChip.classList.toggle('hidden', !players.length);
   });
   padStatus.textContent = infos.length
-    ? `${infos.length} manette${infos.length > 1 ? 's' : ''}`
-    : 'Aucune manette';
+    ? t(infos.length > 1 ? 'gamepad_count_many' : 'gamepad_count_one', { n: infos.length })
+    : t('no_gamepad');
   padStatus.className = infos.length ? 'pad-on' : 'pad-off';
 }
 
 const gamepad = new GamepadManager({
   deckCount: () => deckCount,
   gridRows: () => GP_ROWS,
-  // Ordre VISUEL des colonnes du mixer (club : 3 1 2 4 puis le rack FX à
-  // droite) — la croix se déplace de case en case À L'ÉCRAN
+  // VISUAL order of the mixer columns (club: 3 1 2 4 then the FX rack on
+  // the right) — the D-pad moves from cell to cell ON SCREEN
   visualOrder: () => (deckCount === 2 ? [0, 1, GP_FX_COL] : [2, 0, 1, 3, GP_FX_COL]),
   onConnection: () => {
     updatePadChips();
     renderHelp();
   },
   playToggle: (d) => playDeck(d),
-  // Croix/A : Play/Pause — SUR LA CELLULE DECK du FX = active/coupe à la
-  // MAIN le deck surligné (sélectionner où va l'effet)
+  // Cross/A: Play/Pause — ON THE DECK CELL of the FX = turns the highlighted
+  // deck on/off BY HAND (select where the effect goes)
   padPrimary: (st, d) => {
     if (st.cur.r === 0) {
-      // Ligne SELECT : X sélectionne la track · sur COLOR : change l'effet
+      // SELECT row: X selects the track · on COLOR: changes the effect
       if (st.cur.c === GP_FX_COL) {
         const sel = uiRefs.master.colorSel;
         sel.selectedIndex = (sel.selectedIndex + 1) % sel.options.length;
@@ -4449,18 +4451,18 @@ const gamepad = new GamepadManager({
       return;
     }
     if (st.cur.r >= 1 && st.cur.c === GP_FX_COL) {
-      // X = LE bouton d'action sur chaque cellule FX
+      // X = THE action button on each FX cell
       const u = gpFxShown;
       const key = gpFxRowKey(st.cur.r);
       engine.resume();
       if (key === 'type') {
         gpFxTypeStep(u, 1);
       } else if (key === 'beats') {
-        gpFxBeatsStep(u, 1); // X = doubler la durée
+        gpFxBeatsStep(u, 1); // X = double the length
       } else if (key === 'onoff') {
         uiRefs.fxUnits[u].onBtn.click();
       } else if (key === 'level') {
-        // X sur NIVEAU : +25 % et reboucle à 0
+        // X on LEVEL: +25 % and wraps around to 0
         const nv = engine.fx[u].level >= 0.99 ? 0 : Math.min(1, engine.fx[u].level + 0.25);
         engine.fx[u].setLevel(nv);
         uiRefs.fxUnits[u].levelKnob.update();
@@ -4471,7 +4473,7 @@ const gamepad = new GamepadManager({
   },
   loadSelected: (d) => loadSelectedToDeck(d),
   toggleHelp: () => toggleHelp(),
-  // Bouton à droite du logo (Menu/Options) : BEAT SYNC ON/OFF du deck
+  // Button right of the logo (Menu/Options): the deck's BEAT SYNC ON/OFF
   syncToggle: (d) => {
     const deck = engine.decks[d];
     if (deck.synced) {
@@ -4481,57 +4483,57 @@ const gamepad = new GamepadManager({
       syncDeck(d);
     }
   },
-  // L1/R1 maintenus : VOLUME du deck de la colonne — sur la rangée master,
-  // ils manient le knob master survolé (FILTER MASTER ou VOL MASTER)
+  // L1/R1 held: VOLUME of the column's deck — on the master row,
+  // they drive the hovered master knob (FILTER MASTER or VOL MASTER)
   volumeHold: (cur, dir, dt) => {
     engine.resume();
     if (cur.r === 0) {
-      // ligne SELECT/COLOR : L1/R1 = VOLUME MASTER
+      // SELECT/COLOR row: L1/R1 = MASTER VOLUME
       engine.setMasterVolume(engine.masterVolume + dir * 0.7 * dt);
       uiRefs.master.volKnob.update();
       return;
     }
     if (cur.c === GP_FX_COL) {
-      // colonne FX : L1/R1 manient la cellule survolée (niveau)
+      // FX column: L1/R1 drive the hovered cell (level)
       const cell = gpCellAt(cur);
       cell.set(cell.get() + dir * cell.speed * dt);
       return;
     }
     const d = Math.min(cur.c, deckCount - 1);
-    // volume GROUPÉ : toutes les tracks sélectionnées montent/descendent ensemble
+    // GROUPED volume: all the selected tracks go up/down together
     gpGroupTargets(d).forEach((t) => {
       engine.decks[t].setVolume(engine.decks[t].volume + dir * 0.7 * dt);
       stripUI[t].fader.update();
     });
   },
-  // L2/R2 : appuient sur les pads selon le MODE DU JOUEUR (chaque manette
-  // garde sa config : J1 peut être en JUMP pendant que J2 est en LOOP sur
-  // le même deck). La rangée choisit la paire, L2 = gauche, R2 = droite.
+  // L2/R2: press the pads according to the PLAYER'S MODE (each gamepad
+  // keeps its config: P1 can be in JUMP while P2 is in LOOP on
+  // the same deck). The row picks the pair, L2 = left, R2 = right.
   sideAction: (st, side) => {
     const cur = st.cur;
     if (cur.r === 0 && cur.c !== GP_FX_COL) {
-      // Rangée MASTER : L2 / R2 = BPM du master − / + (±0,5 — tous les
-      // sons en SYNC suivent). Le poste de pilotage est complet ici :
+      // MASTER row: L2 / R2 = master BPM − / + (±0.5 — all the
+      // tracks in SYNC follow). The cockpit is complete here:
       // stick = FILTER MASTER, L1/R1 = VOL MASTER, L2/R2 = BPM.
       masterBpmNudge(side);
       return;
     }
-    // L2/R2 ne passent en « temps du FX » QUE si CE joueur a des pistes
-    // dans la sélection — dès qu'il désélectionne (ou si la sélection est
-    // à un autre joueur), ils redeviennent AUSSITÔT ses pads
-    // JUMP/LOOP/CUE/KEY : interactions simples
+    // L2/R2 only switch to "FX length" if THIS player has tracks
+    // in the selection — as soon as they deselect (or if the selection
+    // belongs to another player), they IMMEDIATELY become their pads again
+    // JUMP/LOOP/CUE/KEY: simple interactions
     const mine = gpSelFor(st.player - 1);
-    // En mode LOOP sur les rangées de pads, L2/R2 restent les PADS de
-    // boucle (IN/OUT/tailles/✕) MÊME en sélection : la boucle prime sur le
-    // raccourci « temps du FX » — sinon le OUT devenait inaccessible et on
-    // tapait dans la durée FX (plafonnée 16) sans le savoir
+    // In LOOP mode on the pad rows, L2/R2 remain the loop PADS
+    // (IN/OUT/sizes/✕) EVEN with a selection: the loop takes priority over the
+    // "FX length" shortcut — otherwise OUT became unreachable and you
+    // ended up hitting the FX length (capped at 16) without knowing it
     const loopPads = st.mode === 'loop' &&
       cur.r >= 1 && cur.r <= GP_KNOBS.length && cur.c !== GP_FX_COL;
     const selNow = mine.length > 0 && !loopPads;
     if (side > 0) st.r2WasSel = selNow; else st.l2WasSel = selNow;
     if (selNow) {
-      // l'unité DU JOUEUR : SA durée, appliquée à TOUS les sons qu'il a
-      // sélectionnés (une seule unité, routée vers chacun de ses decks)
+      // THE PLAYER's unit: THEIR length, applied to ALL the tracks they
+      // selected (a single unit, routed to each of their decks)
       const u = Math.min(st.player - 1, 3);
       if (!gpFxBeatsX2(u, side)) {
         flashStatus(t('fx_at_limit', { n: st.player, limit: side > 0 ? t('fx_limit_max') : t('fx_limit_min') }));
@@ -4543,7 +4545,7 @@ const gamepad = new GamepadManager({
       return;
     }
     if (cur.r === 0 && cur.c === GP_FX_COL) {
-      // COLOR : L2/R2 = effet de filtre précédent / suivant
+      // COLOR: L2/R2 = previous / next filter effect
       const sel = uiRefs.master.colorSel;
       const n = sel.options.length;
       sel.selectedIndex = (sel.selectedIndex + side + n) % n;
@@ -4553,7 +4555,7 @@ const gamepad = new GamepadManager({
     }
     if (cur.r < 1 || cur.r > GP_KNOBS.length) return;
     if (cur.c === GP_FX_COL) {
-      // Chaque cellule FX est « solo » : L2 comme R2 la déclenchent
+      // Each FX cell is "solo": L2 and R2 both trigger it
       const u = gpFxShown;
       const key = gpFxRowKey(cur.r);
       if (key === 'type') gpFxTypeStep(u, side);
@@ -4567,11 +4569,11 @@ const gamepad = new GamepadManager({
       return;
     }
     const d = Math.min(cur.c, deckCount - 1);
-    gpBurstAction(st, side); // flash néon à l'endroit de l'impact (AVANT le saut)
+    gpBurstAction(st, side); // neon flash at the point of impact (BEFORE the jump)
     const padIdx = padForSide(cur.r, side);
     if (st.mode === 'fx') {
-      // PAD FX à la manette : l'effet TIENT tant que la gâchette est
-      // enfoncée — coupé par sideRelease au relâcher (pas de rafale)
+      // PAD FX on the gamepad: the effect HOLDS as long as the trigger is
+      // pressed — cut by sideRelease on release (no burst)
       padFxPress(d, padIdx, true);
       if (side > 0) st._fxPadR = { d, idx: padIdx };
       else st._fxPadL = { d, idx: padIdx };
@@ -4579,17 +4581,17 @@ const gamepad = new GamepadManager({
     }
     padPress(d, padIdx, st.mode, st.player - 1);
   },
-  // Relâcher de L2/R2 : coupe le PAD FX que cette gâchette tenait
+  // L2/R2 release: cuts the PAD FX this trigger was holding
   sideRelease: (st, side) => {
     const held = side > 0 ? st._fxPadR : st._fxPadL;
     if (!held) return;
     if (side > 0) st._fxPadR = null; else st._fxPadL = null;
     padFxPress(held.d, held.idx, false);
   },
-  // L2/R2 MAINTENU 1 seconde sur un cue posé : l'efface
+  // L2/R2 HELD for 1 second on a set cue: clears it
   sideHold: (st, side) => {
-    // décision FIGÉE à l'appui : si la pression a été consommée par la
-    // branche sélection (temps du FX), le maintien n'efface JAMAIS un cue
+    // decision FROZEN at press time: if the press was consumed by the
+    // selection branch (FX length), holding NEVER clears a cue
     if (side > 0 ? st.r2WasSel : st.l2WasSel) return;
     if (st.mode !== 'hotcue' || st.cur.r < 1 || st.cur.r > GP_KNOBS.length) return;
     const d = Math.min(st.cur.c, deckCount - 1);
@@ -4599,14 +4601,14 @@ const gamepad = new GamepadManager({
     padFlash(d, idx, PLAYER_COLORS[st.player - 1]);
     flashStatus(t('hotcue_cleared', { n: st.player, letter: String.fromCharCode(65 + idx), d: d + 1 }));
   },
-  // Share/View (appui court) : changer le mode DU JOUEUR (CUE→JUMP→LOOP→KEY)
+  // Share/View (short press): change THE PLAYER's mode (CUE→JUMP→LOOP→KEY)
   cycleMode: (st) => {
     st.mode = GP_MODES[(GP_MODES.indexOf(st.mode) + 1) % GP_MODES.length];
-    flashStatus(`J${st.player} — L2/R2 en mode ${GP_MODE_NAMES[st.mode]}`);
+    flashStatus(t('gp_mode_changed', { n: st.player, mode: GP_MODE_NAMES[st.mode] }));
   },
-  // --- Mode NAVIGATION (sous la rangée FILTER) — sélection PAR JOUEUR :
-  // chaque manette a son propre surlignage dans l'explorateur, on voit qui
-  // est où et qui sélectionne quoi ---
+  // --- NAVIGATION mode (below the FILTER row) — selection PER PLAYER:
+  // each gamepad has its own highlight in the explorer, you see who
+  // is where and who selects what ---
   navSelIndex: () => library.selection,
   navMove: (st, d) => {
     const n = library.filtered.length;
@@ -4631,30 +4633,30 @@ const gamepad = new GamepadManager({
       library.loadScUrl(t.permalink, t.acctIdx);
       st.navSel = 0;
     } else if (t.scAccountRow) {
-      // Ligne 👤 compte SoundCloud (b2b) : Rond/B entre dans SES playlists
+      // 👤 SoundCloud account row (b2b): Circle/B enters ITS playlists
       openScAccount(t.acctIdx);
       st.navSel = 0;
     } else if (t.scRootRow) {
-      // Bug historique corrigé : ces lignes de navigation tombaient dans le
-      // chargement de deck et échouaient en silence (ni path ni scId)
+      // Historical bug fixed: these navigation rows fell through to
+      // deck loading and failed silently (neither path nor scId)
       openSoundCloud();
       st.navSel = 0;
     } else if (t.scLikes) {
       openScLikes(t.acctIdx);
       st.navSel = 0;
     } else {
-      gpLoadedTrack[st.player - 1] = t; // marqueur PERMANENT « J.. a chargé ça »
+      gpLoadedTrack[st.player - 1] = t; // PERMANENT marker "P.. loaded this"
       const deck = engine.decks[d];
       const same = deck.track && (deck.track === t ||
         (deck.track.path && t.path && deck.track.path === t.path));
       if (same) {
-        playDeck(d); // déjà chargé sur son deck : Croix lance / met en pause
+        playDeck(d); // already loaded on its deck: Cross plays / pauses
       } else {
-        loadTrackToDeck(d, t, true); // charge ET LANCE le son
+        loadTrackToDeck(d, t, true); // loads AND STARTS the track
       }
-      // On REND la sélection globale : chaque joueur garde SA barre de
-      // couleur sur SA ligne — celui qui charge n'efface plus l'affichage
-      // de l'autre (« il faut laisser qui a affiché quoi »)
+      // We GIVE BACK the global selection: each player keeps THEIR color
+      // bar on THEIR row — whoever loads no longer erases the other's
+      // display ("you have to leave who displayed what")
       library.selection = prevSel;
       updateSelectionUI();
     }
@@ -4674,11 +4676,11 @@ const gamepad = new GamepadManager({
     if (btn) btn.click();
     if (st) st.navSel = 0;
   },
-  // Stick gauche ◀▶ (maintenu 0,5 s) : DÉCALER le son en avant/arrière,
-  // comme le haut du disque d'un CDJ — les traits rouges de ce deck glissent
-  // par rapport à l'autre pour régler le calage à l'oreille. Au relâcher,
-  // le tempo revient exactement et le CALAGE AUTOMATIQUE se ré-ancre sur
-  // l'alignement choisi (il ne défait plus la correction manuelle).
+  // Left stick ◀▶ (held 0.5 s): NUDGE the track forward/backward,
+  // like the top of a CDJ platter — this deck's red lines slide
+  // relative to the other one to adjust the alignment by ear. On release,
+  // the tempo goes back exactly and the AUTOMATIC ALIGNMENT re-anchors on
+  // the chosen alignment (it no longer undoes the manual correction).
   jogNudge: (cur, v, dt) => {
     if (cur.r < 1 || cur.c === GP_FX_COL) return;
     const d = Math.min(cur.c, deckCount - 1);
@@ -4686,28 +4688,28 @@ const gamepad = new GamepadManager({
     if (!deck.buffer) return;
     engine.resume();
     if (deck.looping && deck.bpm) {
-      // BOUCLE ACTIVE = le stick gauche règle la boucle, TOUJOURS et
-      // IMMÉDIATEMENT (▶ +1 segment · ◀ réduction fine) — plus de mode à
-      // activer qui se perdait. Sortir de la boucle rend le jog au stick.
+      // ACTIVE LOOP = the left stick adjusts the loop, ALWAYS and
+      // IMMEDIATELY (▶ +1 segment · ◀ fine reduction) — no more mode to
+      // enable that got lost. Leaving the loop gives the jog back to the stick.
       gpLoopEditAdjust(d, v, dt);
       return;
     }
     if (!deck.playing) {
-      // à l'arrêt : on se déplace finement dans le son
+      // when stopped: move finely through the track
       deck.seek(Math.max(-3600, deck.currentTime() + v * 0.25 * dt));
       return;
     }
     if (!gpBend[d]) {
-      // Pendant le geste : verrou sync suspendu PARTOUT (aucun deck ne
-      // poursuit celui qu'on décale) et tous les autres restent à leur
-      // tempo de base — le décalage relatif est doux et exact
+      // During the gesture: sync lock suspended EVERYWHERE (no deck
+      // chases the one being nudged) and all the others stay at their
+      // base tempo — the relative shift is smooth and exact
       gpBend[d] = { tempo: gpBaseTempo(deck), synced: deck.synced };
       engine.jogHold = true;
     }
     deck.synced = false;
-    // Courbe progressive jusqu'à ±6 % : doux et précis près du centre,
-    // à fond le son glisse de ~60 ms par seconde de maintien — on avance
-    // le son deux fois plus vite qu'avant sans perdre la finesse
+    // Progressive curve up to ±6 %: smooth and precise near the center,
+    // at full tilt the track slides by ~60 ms per second of holding — the
+    // track moves twice as fast as before without losing finesse
     deck.setTempo(gpBend[d].tempo * (1 + v * Math.abs(v) * 0.06));
   },
   jogRelease: () => {
@@ -4719,24 +4721,24 @@ const gamepad = new GamepadManager({
       gpBend[d] = null;
     });
     engine.jogHold = false;
-    // TOUS les decks synchronisés adoptent le nouvel alignement : le
-    // calage automatique garde exactement ce que le DJ vient de régler
+    // ALL the synced decks adopt the new alignment: the automatic
+    // alignment keeps exactly what the DJ just set
     for (let d = 0; d < 4; d++) engine.reanchorSync(d);
   },
-  // Stick droit ▲▼ : zoomer / dézoomer les formes d'onde
+  // Right stick ▲▼: zoom the waveforms in / out
   zoomWaves: (v, dt) => {
     waveZoom(Math.pow(0.45, v * dt));
   },
-  // L3 (clic stick gauche) : le FILTRE en général ON/OFF (COLOR ON/OFF)
+  // L3 (left stick click): the general FILTER ON/OFF (COLOR ON/OFF)
   colorToggle: () => document.getElementById('color-on').click(),
-  // R3 (clic stick droit) : le FX de la track ON/OFF (rangée master = tous)
+  // R3 (right stick click): the track's FX ON/OFF (master row = all)
   fxToggle: (st) => {
     const cur = st.cur;
     if (cur.r === 0) {
       if (cur.c === GP_FX_COL) {
         document.getElementById('color-on').click(); // COLOR ON/OFF
       } else {
-        // ⚡ ENGAGER : les tracks sélectionnées rejoignent MON FX qui s'allume
+        // ⚡ ENGAGE: the selected tracks join MY FX, which turns on
         gpFxEngage(st);
       }
       return;
@@ -4745,12 +4747,12 @@ const gamepad = new GamepadManager({
       uiRefs.fxUnits[gpFxShown].onBtn.click();
       return;
     }
-    // Appuyer sur le stick FX sur un disque = le SÉLECTIONNER aussi :
-    // la sélection arme le FX + le filtre d'un coup (re-appui = retire)
+    // Pressing the FX stick on a deck = SELECT it as well:
+    // the selection arms the FX + the filter at once (press again = remove)
     gpSelectToggle(Math.min(cur.c, deckCount - 1), st.player - 1);
   },
-  // Stick droit ▲▼ : NIVEAU du FX — monte/descend le FX de TOUS les sons
-  // SÉLECTIONNÉS en même temps (rangée master = les 4 sans condition)
+  // Right stick ▲▼: FX LEVEL — raises/lowers the FX of ALL the
+  // SELECTED tracks at once (master row = all 4 unconditionally)
   fxLevel: (st, v, dt) => {
     engine.resume();
     const cur = st.cur;
@@ -4758,8 +4760,8 @@ const gamepad = new GamepadManager({
       engine.fx[u].setLevel(engine.fx[u].level + v * 1.1 * dt);
       uiRefs.fxUnits[u].levelKnob.update();
     };
-    // le % s'affiche EN DIRECT pendant qu'on monte/descend le stick —
-    // throttlé pour ne pas monopoliser la barre de statut à 60 Hz
+    // the % is shown LIVE while the stick goes up/down —
+    // throttled so it doesn't hog the status bar at 60 Hz
     const pct = (u) => `${Math.round(engine.fx[u].level * 100)}%`;
     const flash = (msg) => {
       const t = performance.now();
@@ -4769,12 +4771,12 @@ const gamepad = new GamepadManager({
     };
     const mine = gpSelFor(st.player - 1);
     if (mine.length) {
-      // SÉLECTION : le niveau de L'UNITÉ DU JOUEUR bouge (ses sons),
-      // peu importe où on est sur la matrice — sans sélection à lui,
-      // le stick garde son comportement normal
+      // SELECTION: the level of THE PLAYER's UNIT moves (their tracks),
+      // wherever you are on the matrix — without a selection of their own,
+      // the stick keeps its normal behavior
       const u = Math.min(st.player - 1, 3);
       one(u);
-      flash(`J${st.player} — FX niveau ${pct(u)} (deck ${mine.map((t) => t + 1).join('+')})`);
+      flash(t('gp_fx_level_player_decks', { n: st.player, pct: pct(u), decks: mine.map((t) => t + 1).join('+') }));
       return;
     }
     if (cur.r === 0) {
@@ -4784,15 +4786,15 @@ const gamepad = new GamepadManager({
     }
     if (cur.c === GP_FX_COL) {
       one(gpFxShown);
-      flash(`FX ${gpFxShown + 1} — niveau ${pct(gpFxShown)}`);
+      flash(t('gp_fx_unit_level', { n: gpFxShown + 1, pct: pct(gpFxShown) }));
       return;
     }
     const u = Math.min(st.player - 1, 3);
     one(u);
-    flash(`J${st.player} — FX niveau ${pct(u)}`);
+    flash(t('gp_fx_level_player', { n: st.player, pct: pct(u) }));
   },
-  // Carré court : durée du FX parmi 1/2 · 3/4 · 1 · 2 (sur la colonne FX :
-  // l'unité affichée, sinon l'unité PERSONNELLE du joueur)
+  // Short Square press: FX length among 1/2 · 3/4 · 1 · 2 (on the FX column:
+  // the displayed unit, otherwise the player's PERSONAL unit)
   fxBeatsCycle: (st) => {
     const d = st.cur.c === GP_FX_COL ? gpFxUnitOf(st.cur) : Math.min(st.player - 1, 3);
     const wanted = ['1/2', '3/4', '1', '2'];
@@ -4806,31 +4808,31 @@ const gamepad = new GamepadManager({
       flashStatus(t('fx_duration_pos', { n: d + 1, val: wanted[(pos + 1) % wanted.length] }));
     }
   },
-  // Carré ENFONCÉ : la liste des effets s'affiche à l'écran et l'effet
-  // défile petit à petit tant que le bouton est tenu
+  // Square HELD: the effect list is shown on screen and the effect
+  // scrolls little by little while the button is held
   fxTypeList: (st, op) => {
     const d = st.cur.c === GP_FX_COL ? gpFxUnitOf(st.cur) : Math.min(st.player - 1, 3);
     gpFxTypeList(d, op);
   },
-  // Stick gauche ▲▼ : dès qu'une SÉLECTION existe, il manie les FILTRES de
-  // TOUTES les tracks sélectionnées, PEU IMPORTE où on est. Sans sélection :
-  // le knob survolé (groupé si la colonne est sélectionnée).
+  // Left stick ▲▼: as soon as a SELECTION exists, it drives the FILTERS of
+  // ALL the selected tracks, WHEREVER you are. Without a selection:
+  // the hovered knob (grouped if the column is selected).
   stickAdjust: (st, v, dt) => {
     engine.resume();
     const cur = st.cur;
     const mine = gpSelFor(st.player - 1);
     if (mine.length) {
-      // RÈGLE : stick GAUCHE = FILTRE, le FX c'est le stick DROIT. Si le
-      // COLOR était parti sur un écho (cellule COLOR + L2/R2), on le
-      // ramène sur Filter — sinon ce stick « met du FX » au lieu de filtrer
+      // RULE: LEFT stick = FILTER, the FX is the RIGHT stick. If
+      // COLOR had switched to an echo (COLOR cell + L2/R2), bring it
+      // back to Filter — otherwise this stick "adds FX" instead of filtering
       const csel = uiRefs.master.colorSel;
       if (csel && csel.value !== 'filter') {
         csel.value = 'filter';
         csel.dispatchEvent(new Event('change'));
-        flashStatus('COLOR → Filter (stick gauche = FILTRE · le FX = stick droit)');
+        flashStatus(t('gp_color_back_to_filter'));
       }
-      // chaque joueur manie les FILTRES de SES pistes sélectionnées —
-      // sans sélection à lui, le stick garde le knob survolé
+      // each player drives the FILTERS of THEIR selected tracks —
+      // without a selection of their own, the stick keeps the hovered knob
       mine.forEach((t) => {
         engine.setDeckColor(t, Math.max(-1, Math.min(1,
           engine.decks[t].filterVal + v * 1.2 * 1.8 * dt)));
@@ -4848,12 +4850,12 @@ const gamepad = new GamepadManager({
   killKnob: (cur, gi) => gpKillKnob(cur, gi),
   cutToggle: (d) => gpCutToggle(d),
   selectToggle: (d, gi) => gpSelectToggle(d, gi),
-  // Rond/B : remet le knob survolé à sa valeur PAR DÉFAUT (neutre) —
-  // parfait pour un effet de filtre puis retour à zéro instantané
+  // Circle/B: resets the hovered knob to its DEFAULT (neutral) value —
+  // perfect for a filter effect followed by an instant return to zero
   resetKnob: (cur, d, gi) => {
     engine.resume();
     if (cur.r >= 1 && cur.r <= GP_KNOBS.length && cur.c !== GP_FX_COL) {
-      // knob remis au neutre pour TOUT le groupe sélectionné
+      // knob reset to neutral for the WHOLE selected group
       const dd = Math.min(cur.c, deckCount - 1);
       const k = GP_KNOBS[cur.r - 1];
       gpGroupTargets(dd).forEach((t) => {
@@ -4862,12 +4864,12 @@ const gamepad = new GamepadManager({
       });
     } else if (cur.r !== 0) {
       const cell = gpCellAt(cur);
-      gpKillStore.delete(`${cell.key}:${cell.deck}`); // annule un kill en cours
+      gpKillStore.delete(`${cell.key}:${cell.deck}`); // cancels a kill in progress
       cell.set(0);
     }
-    // ◯ = FX **et** FILTRE à 0 des tracks sélectionnées (ou de la track
-    // courante) — la SÉLECTION et l'armement RESTENT : on peut relancer
-    // un effet aussitôt. R1 fait le même reset + désélectionne tout.
+    // ◯ = FX **and** FILTER to 0 on the selected tracks (or the current
+    // track) — the SELECTION and the arming REMAIN: an effect can be
+    // restarted right away. R1 does the same reset + deselects everything.
     const targets = gpSelection.size
       ? [...gpSelection]
       : [Math.min(
@@ -4877,8 +4879,8 @@ const gamepad = new GamepadManager({
       engine.setDeckColor(t, 0);
       stripUI[t].kFilt.update();
     });
-    // zéro sur l'unité PERSONNELLE du joueur + toute unité qui TRAITE une
-    // des cibles (les unités sont par joueur)
+    // zero on the player's PERSONAL unit + any unit PROCESSING one
+    // of the targets (the units are per player)
     const units = new Set(gi != null ? [Math.min(gi, 3)] : []);
     targets.forEach((t) => {
       for (let u = 0; u < 4; u++) if (engine.fxAssign[u][t]) units.add(u);
@@ -4891,13 +4893,13 @@ const gamepad = new GamepadManager({
       ? t('fx_reset_selection', { sel: [...targets].sort().map((x) => x + 1).join('+') })
       : t('fx_reset_deck', { n: targets[0] + 1 }));
   },
-  // R1 ne déclenche le reset que si CE joueur a des pistes sélectionnées
+  // R1 only triggers the reset if THIS player has selected tracks
   hasSelection: (gi) => gpSelFor(gi).length > 0,
   selReset: (d, cur) => gpSelReset(d, cur)
 });
 
 // ---------------------------------------------------------------------------
-// Aide manette
+// Gamepad help
 // ---------------------------------------------------------------------------
 
 function renderHelp() {
@@ -4933,34 +4935,34 @@ function toggleHelp() {
 }
 
 // ---------------------------------------------------------------------------
-// Boucle de rendu
+// Render loop
 // ---------------------------------------------------------------------------
 
 let lastFrame = performance.now();
 const wavesEl = document.getElementById('waves');
 const wavePlayhead = document.getElementById('wave-playhead');
 
-// --- RETOUR LUMINEUX vers la platine : vumètres par tranche, LED play/cue/
-// sync, boucle, FX qui CLIGNOTE, channel select — « la magie de la platine »,
-// c'est le logiciel qui la pilote. N'émet que les CHANGEMENTS (cache midi).
-const MIDI_SEL_NOTES = [29, 31, 28, 20]; // channel select : decks 1-4 (canal 5)
+// --- LIGHT FEEDBACK to the controller: per-channel VU meters, play/cue/
+// sync LEDs, loop, BLINKING FX, channel select — "the magic of the controller"
+// is the software driving it. Only emits CHANGES (midi cache).
+const MIDI_SEL_NOTES = [29, 31, 28, 20]; // channel select: decks 1-4 (channel 5)
 function midiFeedback(now) {
   if (!midi.output) return;
-  // UNIQUEMENT vumètres + channel select : les LED des BOUTONS sont pilotées
-  // par ledTick (tables de notes VALIDÉES en direct). Avant la fusion, les
-  // deux systèmes se battaient sur les mêmes LED — valeurs alternées à
-  // chaque frame = scintillement + tempête de re-déclarations de la platine
+  // ONLY VU meters + channel select: the BUTTON LEDs are driven
+  // by ledTick (note tables VALIDATED live). Before the merge, the
+  // two systems fought over the same LEDs — values alternating on
+  // every frame = flicker + a storm of re-declarations from the controller
   for (let i = 0; i < 4; i++) {
     midi.setVu(i, Math.min(1, stripUI[i].meterVal || 0));
   }
-  // Channel select : la position du deck ACTIF reste allumée
+  // Channel select: the ACTIVE deck's position stays lit
   MIDI_SEL_NOTES.forEach((n, i) => midi.setLed(5, n, i === activeDeck));
 }
 
 function frame(now) {
-  // Une exception ici tuait le requestAnimationFrame → app entièrement
-  // figée (c'était le « crash » du passage 4 → 2 decks pendant la lecture).
-  // La boucle de rendu ne doit JAMAIS mourir.
+  // An exception here killed requestAnimationFrame → app completely
+  // frozen (that was the "crash" when switching 4 → 2 decks during playback).
+  // The render loop must NEVER die.
   try {
     frameBody(now);
   } catch (e) {
@@ -4969,10 +4971,10 @@ function frame(now) {
   requestAnimationFrame(frame);
 }
 
-// Tonalités : l'étiquette de chaque deck suit le tempo (keylock coupé) et
-// le master ; la colonne KEY de la liste se recolore quand le master change
-// de tonalité. 4 fois par seconde suffit — et rien n'est écrit si rien ne
-// change (signatures).
+// Keys: each deck's label follows the tempo (keylock off) and
+// the master; the list's KEY column is recolored when the master changes
+// key. 4 times per second is enough — and nothing is written if nothing
+// changes (signatures).
 let keyTickAt = 0;
 let keyListSig = '';
 function keyTick(now) {
@@ -4992,52 +4994,52 @@ function frameBody(now) {
   lastFrame = now;
 
   gamepad.poll(dt, now);
-  updateGpCursors(); // curseurs des joueurs sur la grille de contrôles
-  engine.syncLock(); // maintient les decks synchronisés collés au master
-  keyTick(now);      // tonalités entendues (tempo, master) — 4×/s
+  updateGpCursors(); // player cursors on the control grid
+  engine.syncLock(); // keeps the synced decks locked to the master
+  keyTick(now);      // heard keys (tempo, master) — 4×/s
 
   for (let i = 0; i < 4; i++) {
     const deck = engine.decks[i];
     const ui = deckUI[i];
-    // Pendant un V.BRAKE / BACKSPIN, le son « continue » virtuellement en
-    // dessous : l'AFFICHAGE suit cette vraie avancée, pas le rembobinage
-    // sonore — on voit où on en est et où la lecture va reprendre, donc on
-    // peut DOSER l'effet au temps près (David)
+    // During a V.BRAKE / BACKSPIN, the track virtually "keeps going"
+    // underneath: the DISPLAY follows that real progress, not the audible
+    // rewind — you see where you are and where playback will resume, so you
+    // can DOSE the effect down to the beat (David)
     const sfx = ui._spinFx;
     const t = (sfx && sfx.wasPlaying)
       ? Math.min(deck.duration || 0, sfx.pos0 + ((now - sfx.start) / 1000) * (deck.tempo || 1))
       : deck.currentTime();
 
-    // Optimisation : ne redessine que si quelque chose a bougé
+    // Optimization: only redraw if something moved
     const cueSig = (deck.hotCues ? deck.hotCues.map(c => (c == null ? '' : Math.round(c * 20))).join(',') : '')
       + '|' + Math.round((deck.cuePoint || 0) * 50);
-    // La fenêtre visible est en TEMPS RÉEL : on la convertit en temps du fichier
-    // selon le tempo du deck. Ainsi, deux decks au même BPM effectif affichent
-    // des mesures de la même largeur, quelle que soit leur vitesse de lecture.
-    // PENDANT UN JOG : on fige l'affichage sur le tempo de BASE — sinon le
-    // bend faisait « respirer » (grossir/rétrécir) la vague de la track.
+    // The visible window is in REAL TIME: convert it to file time
+    // according to the deck's tempo. That way, two decks at the same effective BPM show
+    // bars of the same width, whatever their playback speed.
+    // DURING A JOG: freeze the display on the BASE tempo — otherwise the
+    // bend made the track's waveform "breathe" (grow/shrink).
     const dispTempo = gpBend[i] ? gpBend[i].tempo : (deck.tempo || 1);
     const deckWindow = waveWindowSec * dispTempo;
     const zoomSig = `${t.toFixed(3)}|${deckWindow.toFixed(3)}|${deck.looping ? deck.loopStart + '-' + deck.loopEnd : ''}|${deck._loopInPoint ?? ''}|${deck.peaks ? deck.peaks.duration : 0}|${deck.beatOffset}|${deck.bpm}|${deck.gridShift}|${deck.barAnchor}|${deck.beats ? deck.beats.length : 0}|${getGlobalGridOffset()}|${cueSig}`;
-    // PLEIN 60 IMAGES/SECONDE : le bridage à 30 n'a plus lieu d'être depuis
-    // que la vague est une bande pré-rendue (une simple recopie GPU par
-    // image). Il se voyait au défilement — « pas la fluidité pro ».
+    // FULL 60 FRAMES/SECOND: the cap at 30 no longer makes sense since
+    // the waveform became a pre-rendered strip (a simple GPU copy per
+    // frame). It showed while scrolling — "not pro smoothness".
     if (ui._zoomSig !== zoomSig) {
       ui._zoomSig = zoomSig;
-      // FENÊTRE FIXE, délibérément : l'échelle × tempo (tentée puis
-      // RETIRÉE) faisait BOUGER tout le tracé à chaque mise à jour interne
-      // de vitesse — « tu l'as rendu mobile, encore pire ». L'alignement
-      // visuel des beats est garanti par l'aimant à zéro du calage +
-      // le servo, PAS par l'échelle. Ne pas re-tenter.
-      // t = position affichée (virtuelle pendant un V.BRAKE/BACKSPIN)
+      // FIXED WINDOW, deliberately: the scale × tempo (tried, then
+      // REMOVED) made the whole trace MOVE on every internal speed
+      // update — "you made it move, even worse". The visual alignment
+      // of the beats is guaranteed by the alignment's zero magnet +
+      // the servo, NOT by the scale. Do not try it again.
+      // t = displayed position (virtual during a V.BRAKE/BACKSPIN)
       drawZoom(ui.wave.canvas, deck, deckWindow, t);
     }
     const overSig = deck.peaks
-      // ui.over.width (attribut du canvas) et NON clientWidth : lire une
-      // dimension CSS force le navigateur à recalculer la mise en page au
-      // milieu de la boucle de rendu — l'attribut ne coûte rien
+      // ui.over.width (canvas attribute) and NOT clientWidth: reading a
+      // CSS dimension forces the browser to recompute the layout in the
+      // middle of the render loop — the attribute costs nothing
       ? `${Math.round((t / deck.peaks.duration) * ui.over.width)}|${deck.looping ? deck.loopStart : ''}|${deck.peaks.duration}|${cueSig}`
-      : 'vide';
+      : 'empty';
     if (ui._overSig !== overSig) {
       ui._overSig = overSig;
       drawOverview(ui.over, deck);
@@ -5047,17 +5049,17 @@ function frameBody(now) {
     if (ui.play.textContent !== playTxt) ui.play.textContent = playTxt;
     ui.play.classList.toggle('on', deck.playing);
     ui.sync.classList.toggle('on', deck.synced);
-    // Badge MASTER : le choix manuel prime, sinon le master AUTOMATIQUE
-    // (premier son lancé, conservé tant qu'il joue, puis basses actives)
+    // MASTER badge: the manual choice wins, otherwise the AUTOMATIC master
+    // (first track started, kept as long as it plays, then active basses)
     const isMaster = engine.masterIdx === i ||
       (engine.masterIdx === null && engine.autoMasterIdx === i);
     ui.master.classList.toggle('hidden', !isMaster);
     ui.masterBtn.classList.toggle('on', isMaster);
 
-    // État des pads — DÉCOUPÉ PAR JOUEUR : sur un pad divisé, SEULE la
-    // partie du joueur qui a posé le cue / tient la boucle s'allume, et
-    // chaque segment s'évalue selon le mode de SON joueur.
-    // (posé à la souris = liseré discret couleur du deck)
+    // Pad state — SPLIT PER PLAYER: on a split pad, ONLY the
+    // part of the player who set the cue / holds the loop lights up, and
+    // each segment is evaluated according to ITS player's mode.
+    // (set with the mouse = discreet border in the deck's color)
     const stateFor = (mode, idx) => {
       if (mode === 'hotcue') {
         return { active: deck.hotCues[idx] != null, owners: gpOwnersOf(ui.cueOwner ? ui.cueOwner[idx] : null) };
@@ -5077,9 +5079,9 @@ function frameBody(now) {
       gpModes.set(String(g), s2.mode);
       gpModesSig += `${g}:${s2.mode},`;
     }
-    // SIGNATURE DU BLOC PADS : c'était le seul morceau de la boucle sans
-    // garde — 40 interrogations du DOM + ~120 écritures de classes par
-    // image, pour un état qui ne bouge qu'à l'action de l'utilisateur.
+    // PADS BLOCK SIGNATURE: it was the only part of the loop without a
+    // guard — 40 DOM queries + ~120 class writes per
+    // frame, for a state that only changes on user action.
     const padSig = `${ui.padMode}|${ui._mergedMode || ''}|${ui._padViewSig}|${ui.jumpScale}`
       + `|${deck.keyShift}|${deck.looping ? deck._loopBeats : ''}|${ui.loopOwner}`
       + `|${ui.cueOwner ? ui.cueOwner.map((o) => (o ? o.join('.') : '-')).join(',') : ''}`
@@ -5089,7 +5091,7 @@ function frameBody(now) {
       ui.pads.forEach((p, idx) => {
       const segs = p.querySelectorAll('.pad-seg, .pad-band');
       if (segs.length) {
-        // Pad divisé (segments ou bandes) : seule la PARTIE du propriétaire
+        // Split pad (segments or bands): only the owner's PART
         p.classList.remove('set', 'on');
         segs.forEach((s2) => {
           const m = gpModes.get(s2.dataset.gi);
@@ -5100,8 +5102,8 @@ function frameBody(now) {
         p.classList.toggle('set-any', tabState.active && !tabState.owners.length);
         return;
       }
-      // Vue pleine (onglet du deck ou vue fusionnée) : le pad entier se
-      // remplit — couleur(s) du/des propriétaires, sinon celle du deck.
+      // Full view (deck tab or merged view): the whole pad
+      // fills up — color(s) of the owner(s), otherwise the deck's.
       p.classList.remove('set-any');
       const mode = p.querySelector('.pad-single') && ui._mergedMode ? ui._mergedMode : ui.padMode;
       const stt = stateFor(mode, idx);
@@ -5110,23 +5112,23 @@ function frameBody(now) {
       else p.style.removeProperty('--own-color');
       p.classList.remove('set', 'on');
       if (stt.active) p.classList.add(mode === 'hotcue' ? 'set' : 'on');
-      // Cue d'un JOUEUR = rempli de sa couleur · cue souris/ancien = repère discret
+      // A PLAYER's cue = filled with their color · mouse/old cue = discreet marker
       p.classList.toggle('set-owned', !!own);
       });
     }
 
-    drawDeckWheel(ui, deck, t); // la platine tourne pendant la lecture
+    drawDeckWheel(ui, deck, t); // the platter spins during playback
     if (deck.buffer) {
       const tTxt = t < 0 ? `−${formatTime(-t)}` : formatTime(t);
       const timeTxt = `${tTxt} · -${formatTime(deck.duration - t)}`;
-      // Ne réécrit le texte QUE quand la seconde change (une écriture DOM
-      // par frame = invalidation de mise en page inutile)
+      // Only rewrite the text WHEN the second changes (one DOM write
+      // per frame = needless layout invalidation)
       if (ui._timeTxt !== timeTxt) {
         ui._timeTxt = timeTxt;
         ui.time.textContent = timeTxt;
       }
-      // Compteur de temps 1·2·3·4 : le point du temps courant s'allume —
-      // le détail pro qui montre où on est dans la mesure d'un coup d'œil
+      // 1·2·3·4 beat counter: the current beat's dot lights up —
+      // the pro detail that shows where you are in the bar at a glance
       const bp = deck.playing ? engine._barPhase(deck) : null;
       const bi = bp != null ? Math.floor(bp * 4) % 4 : -1;
       if (ui._beatIdx !== bi) {
@@ -5134,18 +5136,18 @@ function frameBody(now) {
         ui.beatDots.forEach((dot, k) => dot.classList.toggle('on', k === bi));
       }
       let ebpm = deck.effectiveBpm;
-      // Deck SYNCÉ verrouillé : on AFFICHE le BPM du master — le verrou
-      // garantit la même vitesse réelle ; l'ancien affichage montrait la
-      // petite erreur de détection du morceau (143.6 face à 144.0) alors
-      // que les temps sont collés — « il faut le MÊME BPM » : le voilà
+      // Locked SYNCED deck: we DISPLAY the master's BPM — the lock
+      // guarantees the same real speed; the old display showed the
+      // track's small detection error (143.6 against 144.0) even though
+      // the beats are locked — "it has to be the SAME BPM": there it is
       if (deck.synced && deck.playing && deck._syncBase) {
         const mstr = engine.getMasterDeck(i);
         if (mstr && mstr.bpm && mstr.playing) ebpm = mstr.bpm * mstr.tempo;
       }
       const bpmText = ebpm ? ebpm.toFixed(1) : '--.-';
-      // % du tempo = la POSITION DE JAUGE correspondante (toujours visible :
-      // sur un deck syncé c'est là qu'il faut amener le fader physique
-      // pour reprendre la main sans saut)
+      // tempo % = the matching GAUGE POSITION (always visible:
+      // on a synced deck that's where the physical fader must be brought
+      // to take back control without a jump)
       const pctT = ((deck.tempo || 1) - 1) * 100;
       const pctText = deck.bpm ? `${pctT >= 0 ? '+' : ''}${pctT.toFixed(1)}%` : '';
       if (ui._bpmText !== bpmText + pctText) {
@@ -5156,7 +5158,7 @@ function frameBody(now) {
       }
     }
 
-    // Marqueurs : où sont les BPM des autres decks sur MON échelle de tempo
+    // Markers: where the other decks' BPMs sit on MY tempo scale
     for (let j = 0; j < 4; j++) {
       const mark = ui.tempoMarks[j];
       if (!mark) continue;
@@ -5166,7 +5168,7 @@ function frameBody(now) {
         continue;
       }
       const rg = deck.tempoRange || 0.16;
-      const pos = ((other / deck.bpm - 1) / rg + 1) / 2; // plage de la jauge
+      const pos = ((other / deck.bpm - 1) / rg + 1) / 2; // gauge range
       if (pos < 0 || pos > 1) {
         if (mark.style.display !== 'none') mark.style.display = 'none';
         continue;
@@ -5181,11 +5183,11 @@ function frameBody(now) {
     recTime.textContent = formatTime((performance.now() - recStart) / 1000);
   }
 
-  // Chaque unité FX suit le BPM du premier deck qui lui est assigné
-  // (sinon celui du master)
-  // Durée RÉELLE d'un temps d'un deck, à la vitesse où il joue (tempo
-  // compris, micro-corrections du sync retirées : sinon les délais des
-  // échos « respiraient » en permanence) et d'après la grille LOCALE
+  // Each FX unit follows the BPM of the first deck assigned to it
+  // (otherwise the master's)
+  // REAL duration of one beat of a deck, at the speed it is playing (tempo
+  // included, sync micro-corrections removed: otherwise the echo delays
+  // kept "breathing") and based on the LOCAL grid
   const beatOf = (dk) => {
     if (!dk || !dk.bpm) return null;
     const per = engine._localPeriod(dk) || 60 / dk.bpm;
@@ -5198,18 +5200,18 @@ function frameBody(now) {
     const ref = engine.fxRefDeck(uIdx);
     u.setBeatDur(beatOf(ref) || masterBeat);
   });
-  // Les unités PAD FX suivent le tempo de LEUR deck (sinon celui du master)
+  // PAD FX units follow THEIR deck's tempo (otherwise the master's)
   engine.padFx.forEach((u, d) => {
     if (!u || !u.enabled) return;
     u.setBeatDur(beatOf(engine.decks[d]) || masterBeat);
   });
-  // Le FX MASTER se cale sur le BPM du deck master + bandeau à jour
+  // The FX MASTER locks to the master deck's BPM + its banner is kept up to date
   if (engine.masterFx && engine.masterFx.enabled) engine.masterFx.setBeatDur(masterBeat);
   updateMasterFxRow();
 
-  // VU-mètres : niveau crête par tranche + LED rouge si saturation.
-  // Animés par TRANSFORM : changer height/width à chaque frame invalidait la
-  // mise en page → reflow 60×/s → vagues saccadées (« pas uniformes »)
+  // VU meters: peak level per channel + red LED on clipping.
+  // Animated via TRANSFORM: changing height/width every frame invalidated the
+  // layout → reflow 60×/s → choppy waveforms ("not uniform")
   for (let i = 0; i < 4; i++) {
     const s = stripUI[i];
     const deck = engine.decks[i];
@@ -5220,7 +5222,7 @@ function frameBody(now) {
     s.meterClip.classList.toggle('on', now < s.clipUntil);
   }
 
-  // VU-mètre MASTER (le mix assemblé)
+  // MASTER VU meter (the assembled mix)
   if (masterMeterFill) {
     const mPeak = engine.masterPeak();
     masterMeterVal = Math.max(mPeak, masterMeterVal * 0.9);
@@ -5229,11 +5231,11 @@ function frameBody(now) {
     masterMeterClip.classList.toggle('on', now < masterClipUntil);
   }
 
-  midiFeedback(now); // LED et vumètres de la platine (n'émet que les changements)
+  midiFeedback(now); // controller LEDs and VU meters (only emits changes)
 
-  // Trait de lecture global : getBoundingClientRect FORCE une mise en page
-  // synchrone — on ne le mesure plus qu'à ~2 Hz (et au redimensionnement),
-  // sa position ne bouge de toute façon qu'avec la fenêtre
+  // Global playhead line: getBoundingClientRect FORCES a synchronous
+  // layout — we now only measure it at ~2 Hz (and on resize);
+  // its position only moves with the window anyway
   if (now - _playheadMeasured > 500) {
     _playheadMeasured = now;
     const c0 = deckUI[0].wave.canvas;
@@ -5245,8 +5247,8 @@ function frameBody(now) {
 }
 let _playheadMeasured = 0;
 
-// --- Zoom de la vue empilée : molette, boutons, touches + / - ---
-// De 0,5 s (très zoomé, forme exacte du son) à 60 s visibles.
+// --- Zoom of the stacked view: mouse wheel, buttons, + / - keys ---
+// From 0.5 s (very zoomed in, exact shape of the sound) to 60 s visible.
 function waveZoom(factor) {
   waveWindowSec = Math.min(60, Math.max(0.5, waveWindowSec * factor));
 }
@@ -5255,20 +5257,20 @@ wavesEl.addEventListener('wheel', (e) => {
   waveZoom(e.deltaY > 0 ? 1.18 : 1 / 1.18);
 }, { passive: false });
 
-// Bloque le zoom de page (Ctrl+molette / pincement) qui déformait l'interface
+// Blocks page zoom (Ctrl+wheel / pinch), which distorted the interface
 window.addEventListener('wheel', (e) => {
   if (e.ctrlKey) e.preventDefault();
 }, { passive: false });
 document.getElementById('wz-in').addEventListener('click', () => waveZoom(1 / 1.35));
 document.getElementById('wz-out').addEventListener('click', () => waveZoom(1.35));
 
-// --- Contrôleur MIDI (DDJ et toute platine USB-MIDI) ---
+// --- MIDI controller (DDJ and any USB-MIDI controller) ---
 const midiCueHold = [false, false, false, false];
 
 function midiCue(i, on) {
   const deck = engine.decks[i];
   if (!deck.buffer) {
-    // deck vide : le DIRE (l'ancien silence ressemblait à un bouton mort)
+    // empty deck: SAY so (the old silence looked like a dead button)
     if (on) flashStatus(t('cue_no_track', { n: i + 1 }));
     return;
   }
@@ -5294,25 +5296,25 @@ function midiCue(i, on) {
   }
 }
 
-const midiJogTimer = [null, null, null, null]; // relâcher du nudge MIDI (côté)
-const midiScratchTimer = [null, null, null, null]; // relâcher du scratch (dessus)
-const midiJogTouchTime = [0, 0, 0, 0]; // pose de la main : rafale à ignorer
-let midiShiftHeld = false; // bouton SHIFT (gauche ou droit) tenu enfoncé
-const midiJogState = [null, null, null, null];  // geste de scratch en cours
-const midiJogTouchHeld = [false, false, false, false]; // main posée sur le disque
-const midiJogArmTimer = [null, null, null, null]; // armement différé du toucher
-let midiJogTouchAt = 0; // instant du dernier toucher (filtre anti-parasites)
-let midiXfLastAt = 0;   // continuité du crossfader (filtre anti-rafales)
-// CIBLE du FX platine : la position du CHANNEL SELECT de la FLX6 décide quel
-// deck le bouton FX / knob niveau / BEAT ◄► pilotent (« je suis sur le 2
-// donc c'est le FX du 2 qui doit s'activer »). 'master' = le deck master.
-let midiFxTarget = null; // null = suivre le deck actif · 'master' = FX du MIX
+const midiJogTimer = [null, null, null, null]; // MIDI nudge release (side of the platter)
+const midiScratchTimer = [null, null, null, null]; // scratch release (top of the platter)
+const midiJogTouchTime = [0, 0, 0, 0]; // hand placed: burst to ignore
+let midiShiftHeld = false; // SHIFT button (left or right) held down
+const midiJogState = [null, null, null, null];  // scratch gesture in progress
+const midiJogTouchHeld = [false, false, false, false]; // hand resting on the platter
+const midiJogArmTimer = [null, null, null, null]; // deferred touch arming
+let midiJogTouchAt = 0; // time of the last touch (anti-noise filter)
+let midiXfLastAt = 0;   // crossfader continuity (anti-burst filter)
+// TARGET of the controller FX: the position of the FLX6's CHANNEL SELECT decides which
+// deck the FX button / level knob / BEAT ◄► control ("I'm on 2,
+// so it's 2's FX that should turn on"). 'master' = the master deck.
+let midiFxTarget = null; // null = follow the active deck · 'master' = FX on the MIX
 function midiFxUnit() {
   return Math.min(midiFxTarget != null ? midiFxTarget : activeDeck, 3);
 }
-// --- FX « platine » : UN SEUL effet à la fois, qui SUIT le sélecteur ---
-// (demande David : passer de 1 à 2 déplace l'effet, pas besoin de couper le
-// 1 à la main ; et le niveau vient TOUJOURS de la jauge, jamais d'un défaut)
+// --- "Controller" FX: ONE SINGLE effect at a time, which FOLLOWS the selector ---
+// (David's request: going from 1 to 2 moves the effect, no need to turn off
+// 1 by hand; and the level ALWAYS comes from the gauge, never from a default)
 function platineFxCurrent() {
   if (engine.masterFx && engine.masterFx.enabled) return { kind: 'master', fx: engine.masterFx };
   const u = engine.fx.findIndex((f) => f.enabled);
@@ -5330,8 +5332,8 @@ function platineFxOff() {
   engine.updateFxSends();
   updateMasterFxRow();
 }
-// Allume l'effet sur la cible du sélecteur, en TRANSFÉRANT réglages et
-// niveau de l'effet précédent (src) s'il y en avait un
+// Turns the effect on at the selector's target, TRANSFERRING the settings and
+// level of the previous effect (src) if there was one
 function platineFxOnTarget(src) {
   if (midiFxTarget === 'master') {
     const mu = engine.ensureMasterFx();
@@ -5355,8 +5357,8 @@ function platineFxOnTarget(src) {
     f.setLevel(src.level);
     r.levelKnob.update();
   }
-  // Route AU MOINS vers son propre deck (une vieille assignation vide
-  // rendait le FX muet — « le fx ne marche que sur le master »)
+  // Route AT LEAST to its own deck (an old empty assignment
+  // made the FX silent — "the fx only works on the master")
   engine.fxAssign[u][u] = true;
   f.setEnabled(true);
   const b = uiRefs.fxUnits[u].onBtn;
@@ -5366,7 +5368,7 @@ function platineFxOnTarget(src) {
   return `deck ${u + 1}`;
 }
 
-// Échelle de durées du FX MASTER (même échelle que le panneau : 1/4 → 32)
+// FX MASTER length scale (same scale as the panel: 1/4 → 32)
 const MASTER_FX_BEATS = [0.25, 0.5, 0.75, 1, 2, 4, 8, 16, 32];
 function masterFxBeatsStep(dir) {
   const u = engine.ensureMasterFx();
@@ -5378,8 +5380,8 @@ function masterFxBeatsStep(dir) {
   flashStatus(t('fx_master_duration', { val: b >= 1 ? b : `1/${Math.round(1 / b)}` }));
   return true;
 }
-// Liste canonique des effets (celle des menus déroulants) : sert à la
-// navigation SHIFT+BEAT ◄/► — parcourir les effets depuis la platine
+// Canonical list of effects (the one in the dropdown menus): used for
+// SHIFT+BEAT ◄/► navigation — browsing the effects from the controller
 const FX_TYPES_LIST = [...FX_TYPE_OPTIONS.matchAll(/value="([^"]+)"[^>]*>([^<]+)/g)]
   .map((m2) => [m2[1], m2[2].trim()]);
 function fxCycleType(dir) {
@@ -5392,25 +5394,25 @@ function fxCycleType(dir) {
   if (midiFxTarget === 'master') {
     const nt = step(engine.ensureMasterFx());
     updateMasterFxRow();
-    flashStatus(`FX MASTER — effet : ${nt[1]}`);
+    flashStatus(t('fx_master_effect_status', { name: nt[1] }));
   } else {
     const uI = midiFxUnit();
     const nt = step(engine.fx[uI]);
     if (uiRefs.fxUnits[uI] && uiRefs.fxUnits[uI].typeSel) uiRefs.fxUnits[uI].typeSel.value = nt[0];
-    flashStatus(`FX ${uI + 1} — effet : ${nt[1]}`);
+    flashStatus(t('fx_unit_effect_status', { n: uI + 1, name: nt[1] }));
   }
 }
 
-const tempoHintAt = [0, 0, 0, 0]; // limiteur de l'indicateur de reprise tempo
-// Note de la position COURANTE du sélecteur FX de chaque section (gauche,
-// droite) — apprise au dernier appui du bouton FX : c'est l'adresse de sa lampe
+const tempoHintAt = [0, 0, 0, 0]; // rate limiter for the tempo pickup indicator
+// Note of the CURRENT position of each section's FX selector (left,
+// right) — learned on the last FX button press: it is the address of its lamp
 const midiFxSlotNote = [71, 71];
-// Section FX utilisée en dernier (0 = gauche / canal 0x94, 1 = droite / 0x95) :
-// SEULE sa lampe est pilotée — la platine n'« arme » que la DERNIÈRE adresse
-// reçue, envoyer les deux sections à chaque fois n'allumait jamais la bonne
+// FX section used last (0 = left / channel 0x94, 1 = right / 0x95):
+// ONLY its lamp is driven — the controller only "arms" the LAST address
+// received; sending both sections every time never lit the right one
 let midiFxSide = 0;
-// Bouton FX platine : UN SEUL effet à la fois, sur la cible du channel
-// select. Re-appui = coupé. Le NIVEAU vient de la jauge, jamais d'un défaut.
+// Controller FX button: ONE SINGLE effect at a time, on the channel select
+// target. Press again = off. The LEVEL comes from the gauge, never from a default.
 function midiFxToggle() {
   const targetOn = midiFxTarget === 'master'
     ? !!(engine.masterFx && engine.masterFx.enabled)
@@ -5427,12 +5429,12 @@ function midiFxToggle() {
     flashStatus(t('fx_on_status', { where, hint: lvl === 0 ? t('fx_on_raise_hint') : '' }));
   }
 }
-// Échelle du jog : secondes de son par cran (DDJ-FLX6 : 7200 crans/tour,
-// 1 tour à 33⅓ tr/min = 1,8 s — la sensation d'un vrai vinyle)
+// Jog scale: seconds of audio per tick (DDJ-FLX6: 7200 ticks/turn,
+// 1 turn at 33⅓ rpm = 1.8 s — the feel of a real vinyl)
 const JOG_SEC_PER_TICK = 1.8 / 7200;
 
-// Main levée du disque : le son reprend pile où le disque l'a laissé, et
-// ce placement est ADOPTÉ par le sync (phase gelée sur l'alignement choisi)
+// Hand lifted off the platter: the track resumes exactly where the platter left it, and
+// this placement is ADOPTED by the sync (phase frozen on the chosen alignment)
 function jogRelease(i) {
   const d = engine.decks[i];
   const s2 = midiJogState[i];
@@ -5444,22 +5446,22 @@ function jogRelease(i) {
   if (s2.wasPlaying) d.play();
   engine.jogHold = false;
   for (let k = 0; k < 4; k++) engine.reanchorSync(k);
-  // INERTIE : la roue de la FLX6 est LIBRE — lâchée en mouvement, elle
-  // continue de tourner et la platine envoie des crans de TRANCHE. Ils
-  // étaient pris pour un nudge (le son « avançait » tout seul après le
-  // lâcher, ou sautait loin en pause). Tant que ce flux continue sans
-  // pause, il est ignoré : le disque s'arrête NET là où la main l'a lâché.
+  // INERTIA: the FLX6 wheel spins FREELY — released while moving, it
+  // keeps turning and the controller sends EDGE (side) ticks. They used
+  // to be taken for a nudge (the sound "moved forward" on its own after
+  // release, or jumped far while paused). As long as that stream continues
+  // without a pause, it is ignored: the platter stops DEAD where the hand let go.
   const now = performance.now();
   midiCoast[i] = { last: s2.lastBendAt && now - s2.lastBendAt < 200 ? s2.lastBendAt : now, until: now + 2500, n: 0, sum: 0 };
   const g = s2.diag;
   if (g) {
-    console.log(`[midi] jog deck ${i + 1} : tenue ${g.implicit ? 'SANS note de toucher' : 'avec toucher'} — ${Object.entries(g.cc).map(([k, v]) => `CC${k} ×${v.n} Σ${v.sum > 0 ? '+' : ''}${v.sum}`).join(', ')}`);
+    console.log(`[midi] jog deck ${i + 1}: hold ${g.implicit ? 'WITHOUT touch note' : 'with touch'} — ${Object.entries(g.cc).map(([k, v]) => `CC${k} ×${v.n} Σ${v.sum > 0 ? '+' : ''}${v.sum}`).join(', ')}`);
   }
 }
-// Garde d'inertie par deck (voir jogRelease)
+// Per-deck inertia guard (see jogRelease)
 const midiCoast = [null, null, null, null];
-// Relevé d'un geste au disque (une ligne au relâcher, pour diagnostiquer
-// une platine sans encombrer la console)
+// Log of a platter gesture (one line on release, to diagnose a
+// controller without cluttering the console)
 function jogDiag(st, cc, delta) {
   if (!st.diag) st.diag = { cc: {}, implicit: !!st.implicit };
   const e = st.diag.cc[cc] || (st.diag.cc[cc] = { n: 0, sum: 0 });
@@ -5474,18 +5476,18 @@ const midi = new MidiManager({
     if (!d) return;
     engine.resume();
     switch (action) {
-      // Même chemin que le bouton ▶ de l'écran : un deck SYNC qui démarre
-      // se recale tout de suite (tempo + traits rouges sur ceux du master).
-      // La platine faisait un simple togglePlay : le son repartait avec
-      // l'ancien ratio et un décalage quelconque — d'où les SYNC à répétition
+      // Same path as the on-screen ▶ button: a SYNC deck that starts
+      // re-aligns right away (tempo + red lines on the master's).
+      // The controller used a plain togglePlay: the sound restarted with
+      // the old ratio and an arbitrary offset — hence the repeated SYNCs
       case 'play': if (on) { d.scrubEnd(); playDeck(i); } break;
       case 'jogTouch':
-        // VRAI toucher du disque (capteur note 54) : POSE = le son se coupe
-        // et le disque devient la tête de lecture — RELÂCHE = reprise pile
-        // où la main a laissé le son, placement adopté (phase gelée)
+        // REAL platter touch (sensor note 54): TOUCH = the sound cuts
+        // and the platter becomes the playhead — RELEASE = resumes exactly
+        // where the hand left the sound, placement adopted (phase frozen)
         if (!d.buffer) {
-          // Toucher sur un deck VIDE : le DIRE au lieu d'un silence mystère
-          // (bouton DECK matériel basculé sur un deck sans son chargé)
+          // Touch on an EMPTY deck: SAY so instead of a mysterious silence
+          // (hardware DECK button switched to a deck with no track loaded)
           if (on) flashStatus(t('jog_no_track', { n: i + 1 }));
           break;
         }
@@ -5494,13 +5496,13 @@ const midi = new MidiManager({
           midiJogTouchHeld[i] = true;
           midiJogTouchTime[i] = performance.now();
           clearTimeout(midiScratchTimer[i]);
-          clearTimeout(midiJogArmTimer[i]); // annule une reprise en attente (anti-rebond)
-          // COUPURE INSTANTANÉE à la pose (exigence d'origine de David) —
-          // l'anti-rebond est côté RELÂCHER : un capteur qui « rebondit »
-          // pendant la pose ne relance plus la lecture par à-coups
+          clearTimeout(midiJogArmTimer[i]); // cancels a pending resume (debounce)
+          // INSTANT CUT on touch (David's original requirement) —
+          // the debounce is on the RELEASE side: a sensor that "bounces"
+          // while touching no longer restarts playback in jerks
           if (midiJogState[i]) {
-            // tenue déjà armée par la rotation : c'est désormais le capteur
-            // qui décidera du relâcher (plus de reprise automatique au repos)
+            // hold already armed by rotation: the sensor now decides
+            // the release (no more automatic resume when idle)
             midiJogState[i].implicit = false;
           } else {
             midiJogState[i] = { wasPlaying: d.playing, pos: d.currentTime() };
@@ -5513,23 +5515,23 @@ const midi = new MidiManager({
         } else {
           midiJogTouchHeld[i] = false;
           clearTimeout(midiScratchTimer[i]);
-          // REPRISE DIFFÉRÉE de 60 ms : si le capteur re-presse aussitôt
-          // (rebond), la reprise est annulée — le scratch continue sans à-coup
+          // RESUME DELAYED by 60 ms: if the sensor presses again right away
+          // (bounce), the resume is cancelled — the scratch continues smoothly
           clearTimeout(midiJogArmTimer[i]);
           midiJogArmTimer[i] = setTimeout(() => {
-            if (midiJogTouchHeld[i]) return; // re-pressé entre-temps
+            if (midiJogTouchHeld[i]) return; // pressed again in the meantime
             jogRelease(i);
           }, 60);
         }
         break;
       case 'select':
-        // CHANNEL SELECT : la FLX6 envoie une note par position — le deck
-        // arrive donc directement du contrôleur, rien à compter côté logiciel
+        // CHANNEL SELECT: the FLX6 sends one note per position — so the deck
+        // comes straight from the controller, nothing to count in software
         if (on) {
-          midiFxTarget = i; // le FX de la platine vise CE deck désormais
+          midiFxTarget = i; // the controller FX now targets THIS deck
           setActiveDeck(i);
-          // Un effet déjà actif SUIT le sélecteur : il se déplace tout seul
-          // vers la nouvelle cible (réglages et niveau conservés)
+          // An already active effect FOLLOWS the selector: it moves by itself
+          // to the new target (settings and level kept)
           const cur = platineFxCurrent();
           if (cur && !(cur.kind === 'deck' && cur.u === i)) {
             const src = { type: cur.fx.type, beatsMult: cur.fx.beatsMult, level: cur.fx.level };
@@ -5551,18 +5553,18 @@ const midi = new MidiManager({
             const src = { type: cur.fx.type, beatsMult: cur.fx.beatsMult, level: cur.fx.level };
             platineFxOff();
             platineFxOnTarget(src);
-            flashStatus('CHANNEL SELECT — MASTER (le FX suit sur tout le mix)');
+            flashStatus(t('channel_select_master_fx_follows'));
           } else {
             flashStatus('CHANNEL SELECT — MASTER');
           }
         }
         break;
       case 'shift':
-        // État SHIFT global (un côté ou l'autre) : modifie browse/CUE/SYNC
+        // Global SHIFT state (either side): modifies browse/CUE/SYNC
         midiShiftHeld = on;
         break;
       case 'cueBack':
-        // SHIFT+CUE matériel (note 72) : retour au tout début, à l'arrêt
+        // Hardware SHIFT+CUE (note 72): back to the very start, stopped
         if (on && d.buffer) {
           d.pause();
           d.seek(0);
@@ -5571,7 +5573,7 @@ const midi = new MidiManager({
         break;
       case 'cue':
         if (midiShiftHeld) {
-          // SHIFT+CUE = retour au DÉBUT du morceau, à l'arrêt (rekordbox)
+          // SHIFT+CUE = back to the START of the track, stopped (rekordbox)
           if (on && d.buffer) {
             d.pause();
             d.seek(0);
@@ -5582,12 +5584,12 @@ const midi = new MidiManager({
         midiCue(i, on);
         break;
       case 'sync':
-        // TOGGLE (réglage David) : appui = sync, re-appui = désync — le
-        // tempo reste où il est, pas besoin de SHIFT
+        // TOGGLE (David's setting): press = sync, press again = unsync — the
+        // tempo stays where it is, no SHIFT needed
         if (on) {
           if (d.synced) {
             d.synced = false;
-            flashStatus(`Deck ${i + 1} — SYNC OFF`);
+            flashStatus(t('deck_sync_off_flash', { n: i + 1 }));
           } else {
             syncDeck(i);
           }
@@ -5595,31 +5597,31 @@ const midi = new MidiManager({
         break;
       case 'master': if (on) engine.setMaster(i); break;
       case 'grid':
-        // Même moteur que le bouton GRID écran : gère AUSSI les grilles
-        // dynamiques (l'ancien code n'écrivait que beatOffset = no-op sur
-        // quasi tous les morceaux) et SAUVEGARDE le calage
+        // Same engine as the on-screen GRID button: ALSO handles dynamic
+        // grids (the old code only wrote beatOffset = no-op on almost
+        // every track) and SAVES the alignment
         if (on && deckUI[i]) deckUI[i].recalGrid();
         break;
       case 'load': if (on) loadSelectedToDeck(i); break;
-      // Encodeur bibliothèque : APPUI = ENTRER (dossier, playlist locale ou
-      // SoundCloud) — il ne charge JAMAIS un morceau, les boutons LOAD font ça
+      // Library encoder: PUSH = ENTER (folder, local or SoundCloud
+      // playlist) — it NEVER loads a track, the LOAD buttons do that
       case 'browsePush':
         if (on) {
-          const t = library.selectedTrack();
-          if (!t) break;
-          if (t.fsUpRow) folderUp();
-          else if (t.scRootRow) openSoundCloud();
-          else if (t.scAccountRow) openScAccount(t.acctIdx);
-          else if (t.scLikes) openScLikes(t.acctIdx);
-          else if (t.plRootRow) openPlaylistsRoot();
-          else if (t.fsRow) enterFolder(t.path);
-          else if (t.plRow) openLocalPlaylist(t.pl);
-          else if (t.scPlaylist) openScPlaylist(t.permalink, t.acctIdx);
+          const track = library.selectedTrack();
+          if (!track) break;
+          if (track.fsUpRow) folderUp();
+          else if (track.scRootRow) openSoundCloud();
+          else if (track.scAccountRow) openScAccount(track.acctIdx);
+          else if (track.scLikes) openScLikes(track.acctIdx);
+          else if (track.plRootRow) openPlaylistsRoot();
+          else if (track.fsRow) enterFolder(track.path);
+          else if (track.plRow) openLocalPlaylist(track.pl);
+          else if (track.scPlaylist) openScPlaylist(track.permalink, track.acctIdx);
           else flashStatus(t('track_selected_use_load'));
         }
         break;
-      // RETOUR : sortir de la playlist ouverte, remonter d'un dossier —
-      // et depuis SoundCloud/Playlists/Historique, revenir aux RACINES
+      // BACK: leave the open playlist, go up one folder —
+      // and from SoundCloud/Playlists/History, go back to the ROOTS
       case 'browseBack':
         if (on) {
           const plBack = document.getElementById('btn-pl-back');
@@ -5632,8 +5634,8 @@ const midi = new MidiManager({
           } else if (!folderUp()) flashStatus(t('library_roots'));
         }
         break;
-      // VIEW : masque / réaffiche l'explorateur — les decks prennent alors
-      // TOUT l'espace (la rangée bibliothèque disparaît de la grille)
+      // VIEW: hides / shows the browser — the decks then take ALL
+      // the space (the library row disappears from the grid)
       case 'viewToggle':
         if (on) {
           const lib = document.getElementById('library');
@@ -5646,8 +5648,8 @@ const midi = new MidiManager({
           }
         }
         break;
-      // Boutons de MODE des pads (HOT CUE / BEAT JUMP / LOOP / KEY) : le
-      // changement s'affiche à l'écran — les onglets du deck s'allument
+      // Pad MODE buttons (HOT CUE / BEAT JUMP / LOOP / KEY): the change
+      // shows on screen — the deck's tabs light up
       case 'padHotcue': if (on) { deckUI[i].padMode = 'hotcue'; renderPads(i); setActiveDeck(i); } break;
       case 'padJump': if (on) { deckUI[i].padMode = 'jump'; renderPads(i); setActiveDeck(i); } break;
       case 'padLoop': if (on) { deckUI[i].padMode = 'loop'; renderPads(i); setActiveDeck(i); } break;
@@ -5657,7 +5659,7 @@ const midi = new MidiManager({
       case 'loopIn': if (on) loopIn(i); break;
       case 'loopOut': if (on) loopOut(i); break;
       case 'reloop':
-        // RELOOP/EXIT : sort de la boucle, ou RELANCE la dernière posée
+        // RELOOP/EXIT: exits the loop, or RESTARTS the last one set
         if (on) {
           if (d.looping) {
             d.exitLoop();
@@ -5669,18 +5671,18 @@ const midi = new MidiManager({
       case 'loopHalf': if (on) loopHalve(i); break;
       case 'loopDouble': if (on) loopDouble(i); break;
       case 'cuePfl':
-        // CUE casque de la tranche : envoie/coupe ce deck dans le casque
+        // Channel headphone CUE: sends/removes this deck to/from the headphones
         if (on) {
           const now2 = !engine.decks[i].cueOn;
           engine.setCuePfl(i, now2);
           flashStatus(engine.phonesOk
-            ? `🎧 Deck ${i + 1} — casque ${now2 ? 'ON' : 'OFF'}`
+            ? t('headphone_cue_status', { n: i + 1, state: now2 ? 'ON' : 'OFF' })
             : t('headphone_status', { n: i + 1, state: now2 ? 'ON' : 'OFF' }));
         }
         break;
       case 'fxSlot':
-        // Bouton FX (toutes positions du sélecteur) : mémorise l'adresse
-        // de la LAMPE de cette position, puis toggle l'effet
+        // FX button (every selector position): remembers the address of
+        // this position's LAMP, then toggles the effect
         if (on) {
           midiFxSide = deck >= 3 ? 1 : 0;
           midiFxSlotNote[midiFxSide] = 71 + (deck % 3);
@@ -5688,20 +5690,20 @@ const midi = new MidiManager({
         }
         break;
       case 'fxOn':
-        // (action générique, gardée pour l'apprentissage ⚙)
+        // (generic action, kept for MIDI learn ⚙)
         if (on) midiFxToggle();
         break;
       case 'keyUp': if (on && deckUI[i].applyKey) deckUI[i].applyKey(1); break;
       case 'keyDn': if (on && deckUI[i].applyKey) deckUI[i].applyKey(-1); break;
       case 'bpmUp': if (on) masterBpmNudge(1); break;
       case 'bpmDn': if (on) masterBpmNudge(-1); break;
-      // BEAT ◄ / ► de la section FX : durée de l'effet du deck choisi au
-      // CHANNEL SELECT ÷2 / ×2 (position MASTER = FX du mix)
+      // BEAT ◄ / ► of the FX section: effect duration of the deck chosen with
+      // CHANNEL SELECT ÷2 / ×2 (MASTER position = mix FX)
       case 'fxPrev': if (on) fxCycleType(-1); break;
       case 'fxNext': if (on) fxCycleType(1); break;
       case 'fxBeatsDn':
         if (on) {
-          // SHIFT + BEAT ◄ = effet PRÉCÉDENT dans la liste (parcours rapide)
+          // SHIFT + BEAT ◄ = PREVIOUS effect in the list (quick browsing)
           if (midiShiftHeld) { fxCycleType(-1); break; }
           const ok = midiFxTarget === 'master' ? masterFxBeatsStep(-1) : gpFxBeatsStep(midiFxUnit(), -1) !== false;
           midiBeatFlash(6, ok);
@@ -5709,7 +5711,7 @@ const midi = new MidiManager({
         break;
       case 'fxBeatsUp':
         if (on) {
-          // SHIFT + BEAT ► = effet SUIVANT dans la liste
+          // SHIFT + BEAT ► = NEXT effect in the list
           if (midiShiftHeld) { fxCycleType(1); break; }
           const ok = midiFxTarget === 'master' ? masterFxBeatsStep(1) : gpFxBeatsStep(midiFxUnit(), 1) !== false;
           midiBeatFlash(7, ok);
@@ -5717,7 +5719,7 @@ const midi = new MidiManager({
         break;
       default:
         if (action.startsWith('padDel')) {
-          // SHIFT+pad physique : efface le hot cue / le sample du slot
+          // SHIFT+physical pad: clears the slot's hot cue / sample
           const idx = Number(action.slice(6)) - 1;
           if (on && !Number.isNaN(idx)) padClear(i, idx);
           break;
@@ -5727,8 +5729,8 @@ const midi = new MidiManager({
           if (Number.isNaN(idx)) break;
           const hw = MIDI_HW_PAD_MAP[deckUI[i].padMode];
           if (hw && idx < 8) idx = hw[idx];
-          // Mode PAD FX : le pad physique TIENT l'effet (appui/relâcher),
-          // comme sur Rekordbox — les autres modes déclenchent à l'appui
+          // PAD FX mode: the physical pad HOLDS the effect (press/release),
+          // like in Rekordbox — the other modes trigger on press
           if (deckUI[i].padMode === 'fx') padFxPress(i, idx, on);
           else if (on) padPress(i, idx);
         }
@@ -5738,9 +5740,9 @@ const midi = new MidiManager({
     const i = deck == null ? activeDeck : deck;
     const d = engine.decks[i];
     if (!d) return;
-    // (voir case 'tempo' : indicateur de reprise de la jauge — dans quel
-    // sens la ramener, exprimé en BPM, « monter ou descendre comparé au
-    // master ». Affiché au plus 2×/s par deck.)
+    // (see case 'tempo': slider pickup hint — which way to bring it back,
+    // expressed in BPM, "go up or down compared to the master". Shown
+    // at most 2×/s per deck.)
     function tempoPickupHint(idx, target, cur) {
       const nowH = performance.now();
       if (nowH - (tempoHintAt[idx] || 0) < 500) return;
@@ -5759,33 +5761,32 @@ const midi = new MidiManager({
       case 'eqLow': d.setEq('low', v * 2 - 1); stripUI[i].kLow.update(); break;
       case 'filter': engine.setDeckColor(i, v * 2 - 1); stripUI[i].kFilt.update(); break;
       case 'tempo': {
-        // SOFT TAKEOVER (reprise en douceur, comme rekordbox) : quand le
-        // logiciel a changé le tempo dans le dos du fader (SYNC,
-        // calibration, passation de master), la position PHYSIQUE ne
-        // correspond plus. Sans garde, la PREMIÈRE re-déclaration de la
-        // platine (state refresh au toucher de jog…) écrasait le BPM avec
-        // la position du fader ET cassait le sync — « un nouveau BPM
-        // intempestif selon l'état du bouton ». Le fader est donc IGNORÉ
-        // tant que la jauge n'est pas REVENUE sur la valeur actuelle (ou
-        // ne l'a pas croisée d'un geste) : on remet d'abord la jauge au
-        // bon emplacement, et alors seulement elle reprend la main.
-        // le fader couvre la PLAGE du deck (±6 %, ±16 % ou WIDE)
+        // SOFT TAKEOVER (like rekordbox): when the software changed the
+        // tempo behind the fader's back (SYNC, calibration, master
+        // handover), the PHYSICAL position no longer matches. Without a
+        // guard, the controller's FIRST re-declaration (state refresh on
+        // jog touch…) overwrote the BPM with the fader position AND broke
+        // the sync — "an unwanted new BPM depending on the knob's state".
+        // So the fader is IGNORED until the slider has COME BACK to the
+        // current value (or crossed it in one gesture): first put the
+        // slider back in the right place, and only then does it take over.
+        // the fader covers the deck's RANGE (±6 %, ±16 % or WIDE)
         const rg = d.tempoRange || 0.16;
         const target = 1 + (v - 0.5) * 2 * rg;
         const cur = d.tempo;
         const nowT = performance.now();
         const pr = deckUI[i]._tempoPrev;
         deckUI[i]._tempoPrev = { v: target, t: nowT };
-        // « croisée » = entre DEUX messages d'un MÊME geste (< 200 ms) —
-        // une vieille position d'il y a des minutes ne compte pas
-        // DECK SYNCÉ : le fader ne COUPE JAMAIS le sync. Avant, dès qu'un
-        // message tombait sur le tempo courant (son tout juste chargé à
-        // 0 % + fader au centre, ou tempo passé près du fader après un
-        // changement de master), la re-déclaration suivante de la platine
-        // (toucher de jog…) prenait la main et éteignait SYNC — « je dois
-        // remettre le beat sync à chaque son ». Ici seul un VRAI geste (flux
-        // continu < 200 ms) compte, en RELATIF : il monte / descend le BPM
-        // de tout le groupe syncé, qui reste syncé.
+        // "crossed" = between TWO messages of the SAME gesture (< 200 ms) —
+        // an old position from minutes ago doesn't count
+        // SYNCED DECK: the fader NEVER turns sync off. Before, as soon as a
+        // message landed on the current tempo (track just loaded at
+        // 0 % + fader centered, or tempo passing near the fader after a
+        // master change), the controller's next re-declaration (jog
+        // touch…) took over and turned SYNC off — "I have to turn beat
+        // sync back on for every track". Here only a REAL gesture (continuous
+        // stream < 200 ms) counts, in RELATIVE terms: it raises / lowers the
+        // BPM of the whole synced group, which stays synced.
         if (d.synced) {
           if (!pr || nowT - pr.t > 200 || !pr.v || target === pr.v) break;
           syncGroupTempoScale(i, target / pr.v);
@@ -5803,9 +5804,9 @@ const midi = new MidiManager({
         break;
       }
       case 'crossfader':
-        // AUCUN filtre : le fader physique est la VÉRITÉ. Les valeurs reçues
-        // aux touchers de jog sont la platine qui re-déclare sa position
-        // réelle — les appliquer est CORRECT (l'écran rejoint le matériel).
+        // NO filter: the physical fader is the TRUTH. Values received on
+        // jog touches are the controller re-declaring its real position —
+        // applying them is CORRECT (the screen catches up with the hardware).
         engine.setCrossfader(v);
         xfFader.update();
         break;
@@ -5815,8 +5816,8 @@ const midi = new MidiManager({
         uiRefs.master.filterKnob.update();
         break;
       case 'fxLevel': {
-        // Le knob de niveau FX vise le deck choisi au CHANNEL SELECT —
-        // position MASTER = niveau du FX du mix entier
+        // The FX level knob targets the deck chosen with CHANNEL SELECT —
+        // MASTER position = FX level of the whole mix
         if (midiFxTarget === 'master') {
           engine.ensureMasterFx().setLevel(v);
           break;
@@ -5830,8 +5831,8 @@ const midi = new MidiManager({
   },
   rel(action, deck, delta, cc) {
     if (action === 'browseZoom') {
-      // SHIFT + molette (CC 100 dédié de la platine) = zoom des vagues,
-      // en douceur : 15 % par cran
+      // SHIFT + browse knob (the controller's dedicated CC 100) = waveform
+      // zoom, smoothly: 15 % per tick
       waveZoom(delta > 0 ? 1 / 1.15 : 1.15);
       return;
     }
@@ -5841,22 +5842,22 @@ const midi = new MidiManager({
       return;
     }
     if (action === 'jogBend') {
-      // CÔTÉ du disque : nudge DOUX façon CDJ — mêmes règles que le stick
-      // manette (verrou sync suspendu, le placement est ADOPTÉ au relâcher)
+      // Platter EDGE: GENTLE CDJ-style nudge — same rules as the gamepad
+      // stick (sync lock suspended, the placement is ADOPTED on release)
       const i = deck == null ? activeDeck : deck;
       const d = engine.decks[i];
       if (!d.buffer || delta === 0) return;
       const nowB = performance.now();
-      // Main encore sur le disque (ou relâcher en attente) : la tranche ne
-      // pilote rien, c'est la tenue qui décide
+      // Hand still on the platter (or release pending): the edge controls
+      // nothing, the hold decides
       const hold = midiJogState[i];
       if (hold) {
         hold.lastBendAt = nowB;
         jogDiag(hold, cc, delta);
         return;
       }
-      // Roue qui continue sur sa lancée après le lâcher : ignorée tant que
-      // le flux ne s'interrompt pas (> 150 ms sans cran = roue arrêtée)
+      // Wheel still coasting after release: ignored as long as the stream
+      // doesn't stop (> 150 ms without a tick = wheel stopped)
       const coast = midiCoast[i];
       if (coast) {
         if (nowB < coast.until && nowB - coast.last < 150) {
@@ -5865,13 +5866,13 @@ const midi = new MidiManager({
           coast.sum += delta;
           return;
         }
-        if (coast.n) console.log(`[midi] jog deck ${i + 1} : inertie après lâcher ignorée — CC${cc} ×${coast.n} Σ${coast.sum > 0 ? '+' : ''}${coast.sum}`);
+        if (coast.n) console.log(`[midi] jog deck ${i + 1}: post-release inertia ignored — CC${cc} ×${coast.n} Σ${coast.sum > 0 ? '+' : ''}${coast.sum}`);
         midiCoast[i] = null;
       }
       engine.resume();
       if (!d.playing) {
-        // à l'arrêt : recherche fine à l'échelle du vinyle (l'ancien
-        // 0,005 s par cran faisait 36 s par tour sur une FLX6)
+        // when stopped: fine seeking at vinyl scale (the old 0.005 s
+        // per tick made 36 s per revolution on an FLX6)
         d.seek(Math.max(-3600, d.currentTime() + delta * JOG_SEC_PER_TICK));
         return;
       }
@@ -5879,11 +5880,11 @@ const midi = new MidiManager({
         gpBend[i] = { tempo: gpBaseTempo(d), synced: d.synced };
         engine.jogHold = true;
       }
-      // On ne touche PLUS à d.synced pendant le geste (David : « il faut
-      // pas toucher au sync au déplacement ») — jogHold suspend déjà le
-      // verrou ; couper/remettre le sync relançait la calibration en boucle
-      // Coefficient 0.0044 = le réglage de la TRANCHE validé par David
-      // (« +25 % de plus ») — la tranche route maintenant sur jogBend
+      // d.synced is NO LONGER touched during the gesture (David: "don't
+      // touch the sync while moving") — jogHold already suspends the
+      // lock; turning sync off/on restarted the calibration in a loop
+      // Coefficient 0.0044 = the EDGE setting approved by David
+      // ("+25 % more") — the edge now routes to jogBend
       d.setTempo(gpBend[i].tempo * (1 + Math.max(-8, Math.min(8, delta)) * 0.0044));
       clearTimeout(midiJogTimer[i]);
       midiJogTimer[i] = setTimeout(() => {
@@ -5902,36 +5903,36 @@ const midi = new MidiManager({
       const d = engine.decks[i];
       if (!d.buffer || delta === 0) return;
       engine.resume();
-      // DESSUS DU DISQUE TOURNÉ = MAIN POSÉE. Le dessus ne tourne pas tout
-      // seul : CC34/35 n'arrivent que sous la main. On arme donc la tenue
-      // même si le capteur de toucher (note 54) n'a rien dit — c'était le
-      // cas du disque DROIT (mode vinyle différent) : sans la note, il
-      // tombait dans un mode « petits sauts » et on ne pouvait pas le
-      // TENIR pour avancer/reculer dans le son.
+      // PLATTER TOP TURNED = HAND ON IT. The top doesn't turn by
+      // itself: CC34/35 only arrive under the hand. So the hold is armed
+      // even if the touch sensor (note 54) said nothing — that was the
+      // case of the RIGHT platter (different vinyl mode): without the note,
+      // it fell into a "small jumps" mode and you couldn't HOLD it to
+      // move forward/back in the track.
       let st = midiJogState[i];
       if (!st) {
         clearTimeout(midiJogArmTimer[i]);
         st = midiJogState[i] = {
           wasPlaying: d.playing,
           pos: d.currentTime(),
-          implicit: !midiJogTouchHeld[i] // pas de note de toucher : relâcher au repos
+          implicit: !midiJogTouchHeld[i] // no touch note: release when idle
         };
         st.target = st.pos;
         if (d.playing) d.pause();
         if (scratchSound) d.scrubStart();
         engine.jogHold = true;
       }
-      // VINYLE LINÉAIRE : la position SUIT le disque, cran pour cran.
-      // DDJ-FLX6 = 7200 crans par tour à 33⅓ tr/min (1 tour = 1,8 s de son),
-      // la même échelle pour les deux disques et toutes les surfaces. (L'ancien
-      // modèle « impulsion de vitesse au cube » rendait les petits crans
-      // quasi nuls et les grands démesurés — selon la finesse de l'encodeur,
-      // un disque ne bougeait presque plus.)
+      // LINEAR VINYL: the position FOLLOWS the platter, tick for tick.
+      // DDJ-FLX6 = 7200 ticks per revolution at 33⅓ rpm (1 rev = 1.8 s of audio),
+      // the same scale for both platters and every surface. (The old
+      // "cubed speed impulse" model made small ticks almost nothing and
+      // large ones huge — depending on the encoder resolution, a platter
+      // barely moved anymore.)
       jogDiag(st, cc, delta);
       st.target = Math.max(-3600, Math.min(d.duration, (st.target ?? st.pos) + delta * JOG_SEC_PER_TICK));
       if (st.implicit && !midiJogTouchHeld[i]) {
-        // Pas de capteur : la main est considérée levée 250 ms après le
-        // dernier cran — le son repart là où le disque l'a laissé
+        // No sensor: the hand is considered lifted 250 ms after the last
+        // tick — the sound restarts where the platter left it
         clearTimeout(midiJogArmTimer[i]);
         midiJogArmTimer[i] = setTimeout(() => {
           if (!midiJogTouchHeld[i] && midiJogState[i] === st) jogRelease(i);
@@ -5940,12 +5941,12 @@ const midi = new MidiManager({
       if (!st.raf) {
         st.t = performance.now();
         const step = () => {
-          if (midiJogState[i] !== st) return; // geste terminé
+          if (midiJogState[i] !== st) return; // gesture finished
           const now2 = performance.now();
           const dt2 = Math.min(0.05, (now2 - st.t) / 1000);
           st.t = now2;
-          // lissage très court (15 ms) : les messages MIDI arrivent par
-          // paquets, la tête de lecture glisse au lieu de sautiller
+          // very short smoothing (15 ms): MIDI messages arrive in bursts,
+          // the playhead glides instead of hopping
           const gap = st.target - st.pos;
           if (Math.abs(gap) > 0.00005) {
             st.pos += gap * (1 - Math.exp(-dt2 / 0.015));
@@ -5963,22 +5964,22 @@ const midi = new MidiManager({
 midi.onStatus = (name) => {
   const chip = document.getElementById('midi-status');
   if (!chip) return;
-  // (la pastille verte/grise est en CSS — plus d'emoji dans la barre)
+  // (the green/grey dot is in CSS — no more emoji in the bar)
   chip.textContent = name || t('no_controller');
   chip.className = name ? 'pad-on' : 'pad-off';
   renderMidiTable();
 };
 midi.init();
 
-// --- LED DE LA PLATINE (façon rekordbox — « les boutons qui s'allument ») ---
-// Protocole Pioneer : chaque bouton s'allume en recevant SA note. Rafraîchi
-// 10×/s ; setLed n'émet que les CHANGEMENTS (cache) et l'anti-écho avale
-// les retours — zéro appui fantôme possible.
-// SÉRIGRAPHIE FLX6 : les 8 pads physiques suivent ce qui est IMPRIMÉ sur
-// la platine, pas l'ordre des 10 pads de l'écran. BEAT JUMP en PAIRES
-// ◄1► ◄2► ◄4► ◄8► (en temps) ; PAD FX = ROLL½, SWEEP, FLANGER, V.BRAKE /
-// ECHO¼, ECHO½, REVERB, BACKSPIN ; BEAT LOOP = tailles 1-16 puis IN/OUT/✕ ;
-// KEY = ±4. (partagée entre le dispatch des appuis et les LED)
+// --- CONTROLLER LEDS (rekordbox-style — "the buttons that light up") ---
+// Pioneer protocol: each button lights up when it receives ITS note. Refreshed
+// 10×/s; setLed only sends CHANGES (cache) and the anti-echo swallows
+// the feedback — zero ghost presses possible.
+// FLX6 PRINTED LABELS: the 8 physical pads follow what is PRINTED on
+// the controller, not the order of the 10 on-screen pads. BEAT JUMP in PAIRS
+// ◄1► ◄2► ◄4► ◄8► (in beats); PAD FX = ROLL½, SWEEP, FLANGER, V.BRAKE /
+// ECHO¼, ECHO½, REVERB, BACKSPIN; BEAT LOOP = sizes 1-16 then IN/OUT/✕;
+// KEY = ±4. (shared between press dispatch and LEDs)
 const MIDI_HW_PAD_MAP = {
   jump: [3, 6, 2, 7, 1, 8, 0, 9],
   fx: [0, 1, 2, 4, 5, 6, 8, 9],
@@ -5996,30 +5997,30 @@ function ledTick() {
     const ui = deckUI[i];
     if (!d || !ui) continue;
     const loaded = !!d.buffer;
-    // PLAY (notes 11 + 14) : fixe en lecture, clignote à l'arrêt si un son
-    // est chargé — exactement rekordbox
+    // PLAY (notes 11 + 14): steady while playing, blinks when stopped if a
+    // track is loaded — exactly like rekordbox
     const play = d.playing || (loaded && blink);
-    midi.setLed(i, 11, play);              // PLAY (note 11 — table finale)
-    midi.setLed(i, 14, loaded);            // CUE (note 14 — table finale)
-    midi.setLed(i, 12, loaded);            // CUE (ancienne supposition)
+    midi.setLed(i, 11, play);              // PLAY (note 11 — final table)
+    midi.setLed(i, 14, loaded);            // CUE (note 14 — final table)
+    midi.setLed(i, 12, loaded);            // CUE (old guess)
     midi.setLed(i, 88, !!d.synced);        // BEAT SYNC
-    // BOUTON MASTER (note 92, capturée) : allumé sur le deck qui EST master
+    // MASTER BUTTON (note 92, captured): lit on the deck that IS master
     const iMaster = engine.masterIdx === i ||
       (engine.masterIdx === null && engine.autoMasterIdx === i);
     midi.setLed(i, 92, iMaster);
-    midi.setLed(i, 84, !!d.cueOn); // CUE CASQUE de la tranche
-    // LOOP IN : aussi allumé quand un point IN attend son OUT
+    midi.setLed(i, 84, !!d.cueOn); // channel HEADPHONE CUE
+    // LOOP IN: also lit while an IN point is waiting for its OUT
     midi.setLed(i, 16, d.looping || d._loopInPoint != null);
     midi.setLed(i, 17, !!d.looping);       // LOOP OUT
     midi.setLed(i, 77, !!d.looping);       // RELOOP
-    midi.setLed(15, i, loaded);            // « track loaded » (canal 15)
-    // Boutons de MODE des pads : celui de l'onglet actif est allumé
+    midi.setLed(15, i, loaded);            // "track loaded" (channel 15)
+    // Pad MODE buttons: the one for the active tab is lit
     for (const mode of Object.keys(LED_MODE_NOTES)) {
       midi.setLed(i, LED_MODE_NOTES[mode], ui.padMode === mode);
     }
-    // PADS : allumés selon le CONTENU du mode (hot cue posé, sample chargé,
-    // sinon pad disponible). En mode FX, le pad TENU s'affiche seul : tous
-    // allumés au repos, et pendant l'appui SEUL le pad actif reste allumé
+    // PADS: lit according to the mode's CONTENT (hot cue set, sample loaded,
+    // otherwise pad available). In FX mode, the HELD pad shows alone: all
+    // lit when idle, and while pressed ONLY the active pad stays lit
     const base = LED_PAD_BASE[ui.padMode];
     if (base != null) {
       const fxHeld = ui.padMode === 'fx'
@@ -6036,10 +6037,10 @@ function ledTick() {
   }
 }
 
-// Bouton FX ON/OFF : CLIGNOTE au temps du master dès qu'un effet est actif
-// (panneau, pad FX ou master) — cadence dédiée 60 ms : le tick 4 Hz des
-// autres LED échantillonnait le battement trop lentement, le clignotement
-// « au temps » était invisible. setLed n'émet que les changements : coût nul.
+// FX ON/OFF button: BLINKS on the master's beat as soon as an effect is active
+// (panel, pad FX or master) — dedicated 60 ms rate: the 4 Hz tick of the
+// other LEDs sampled the beat too slowly, the "on the beat" blinking
+// was invisible. setLed only sends changes: zero cost.
 function fxLedTick() {
   if (!midi.outputs || !midi.outputs.length) return;
   const fxActive = engine.fx.some((u) => u && u.enabled)
@@ -6050,19 +6051,19 @@ function fxLedTick() {
     const mi2 = engine.masterIdx !== null ? engine.masterIdx : engine.autoMasterIdx;
     const md = mi2 != null ? engine.decks[mi2] : null;
     const ph = md && md.playing ? engine._beatPhase(md) : null;
-    // au temps si le master joue, sinon clignotant simple 2 Hz
+    // on the beat if the master is playing, otherwise a simple 2 Hz blink
     onLed = ph != null ? ph < 0.5 : (Math.floor(performance.now() / 250) % 2 === 0);
   }
-  // RÉSOLU AVEC DAVID : la lampe du bouton FX écoute la note de la
-  // POSITION du sélecteur FX SELECT (71/72/73 = positions 1/2/3, canal 4
-  // = FX1, canal 5 = FX2) — et la DERNIÈRE adresse reçue « arme » la
-  // zone (envoyer les six n'allumait que la dernière). On ne vise donc
-  // QUE la position apprise au dernier appui du bouton, par section,
-  // en éteignant les anciennes adresses quand elle change. Réaffirmé
-  // toutes les 200 ms ; JAMAIS de CC16 (bascule la zone en mode merge).
-  // Une SEULE adresse pilotée : la position apprise de la section utilisée
-  // en dernier (voir midiFxSide). Les deux sections recevaient la même
-  // valeur à chaque image : la seconde « désarmait » la première.
+  // SOLVED WITH DAVID: the FX button lamp listens to the note of the
+  // FX SELECT selector POSITION (71/72/73 = positions 1/2/3, channel 4
+  // = FX1, channel 5 = FX2) — and the LAST address received "arms" the
+  // zone (sending all six only lit the last one). So we target ONLY
+  // the position learned on the button's last press, per section,
+  // turning off the old addresses when it changes. Re-asserted
+  // every 200 ms; NEVER CC16 (switches the zone to merge mode).
+  // ONE single address driven: the learned position of the section used
+  // last (see midiFxSide). Both sections received the same value
+  // every frame: the second one "disarmed" the first.
   const vv = onLed ? 0x7f : 0;
   const st = midiFxSide ? 0x95 : 0x94;
   const note = midiFxSlotNote[midiFxSide];
@@ -6075,8 +6076,8 @@ function fxLedTick() {
     _fxLedAddr = addr;
     _fxLedSentAt = nowF;
     if (addrChanged) {
-      // section/position changée : éteindre TOUTES les autres adresses
-      // d'abord — la dernière envoyée doit rester la position courante
+      // section/position changed: turn off ALL the other addresses
+      // first — the last one sent must remain the current position
       for (const s2 of [0x94, 0x95]) {
         for (const n of [71, 72, 73]) {
           if (s2 === st && n === note) continue;
@@ -6093,15 +6094,15 @@ let _fxLedAddr = null;
 let _fxLedSig = null;
 let _fxLedSentAt = 0;
 setInterval(fxLedTick, 60);
-// 4 Hz suffisent (et la platine répond à CHAQUE émission par une rafale
-// de re-déclarations : moins on parle, mieux elle écoute les boutons)
+// 4 Hz is enough (and the controller answers EVERY send with a burst
+// of re-declarations: the less we talk, the better it hears the buttons)
 setInterval(ledTick, 250);
 
-// --- Bascule 2 decks / 4 decks ---
+// --- 2 decks / 4 decks toggle ---
 const btnDeckCount = document.getElementById('btn-deckcount');
 
-// --- 📨 DEMANDES DU PUBLIC : les invités votent
-// depuis http://IP:8722/guest — le DJ voit tout ici et charge en un clic ---
+// --- 📨 AUDIENCE REQUESTS: guests vote
+// from http://IP:8722/guest — the DJ sees everything here and loads in one click ---
 let guestData = { votes: [], msgs: [] };
 let guestSeen = 0;
 const btnGuests = document.createElement('button');
@@ -6136,7 +6137,7 @@ function renderGuestPanel() {
   bClose.addEventListener('click', () => guestPanel.classList.add('hidden'));
   head.append(bClear, bClose);
   guestPanel.appendChild(head);
-  // QR CODE : les invités scannent l'écran et tombent direct sur /guest
+  // QR CODE: guests scan the screen and land straight on /guest
   const qrWrap = document.createElement('div');
   qrWrap.className = 'gp-qr';
   guestPanel.appendChild(qrWrap);
@@ -6144,8 +6145,8 @@ function renderGuestPanel() {
     const guestUrl = `${r.url}/guest`;
     const u = document.getElementById('gp-url');
     if (u) {
-      // LIEN CLIQUABLE : ouvre la page invités dans le navigateur (pour la
-      // tester ou l'envoyer), clic droit = copier dans le presse-papiers
+      // CLICKABLE LINK: opens the guest page in the browser (to test
+      // or send it), right-click = copy to the clipboard
       u.textContent = `🔗 ${guestUrl}`;
       u.addEventListener('click', (e) => {
         e.preventDefault();
@@ -6171,7 +6172,7 @@ function renderGuestPanel() {
     e.textContent = t('guest_no_requests_yet');
     guestPanel.appendChild(e);
   }
-  // Titres de section : on sépare clairement les demandes des messages
+  // Section titles: requests are clearly separated from messages
   const gpSection = (txt) => {
     const s = document.createElement('div');
     s.className = 'gp-sect';
@@ -6194,41 +6195,41 @@ function renderGuestPanel() {
       ? t('guest_sc_request_title')
       : t('guest_click_load_title');
     row.addEventListener('click', async () => {
-      // Demande venue de la RECHERCHE SOUNDCLOUD des invités : on ouvre le
-      // lien dans la bibliothèque puis on charge le morceau sur le deck actif
-      // Un vote qui n'aboutit pas ne doit pas disparaître en silence : la
-      // ligne reste, marquée, avec la raison — le DJ sait quoi faire
-      const echec = (raison) => {
+      // Request coming from the guests' SOUNDCLOUD SEARCH: open the
+      // link in the library, then load the track on the active deck
+      // A vote that fails must not vanish silently: the row stays,
+      // flagged, with the reason — the DJ knows what to do
+      const markFailed = (reason) => {
         row.classList.add('gp-fail');
         const b = row.querySelector('.gp-warn') || document.createElement('span');
         b.className = 'gp-warn';
         b.textContent = '⚠';
-        b.title = raison;
+        b.title = reason;
         if (!row.querySelector('.gp-warn')) row.insertBefore(b, row.querySelector('.gp-bpm'));
-        row.title = raison;
-        flashStatus(raison);
+        row.title = reason;
+        flashStatus(reason);
       };
       if (v.url) {
         flashStatus(t('guest_loading_sc', { name: v.name }));
         const ok = await library.loadScUrl(v.url);
         if (ok !== false && library.scTracks && library.scTracks.length) {
-          const t0 = library.scTracks.find((t) => !t.scPlaylist && !t.scAccountRow);
+          const t0 = library.scTracks.find((track) => !track.scPlaylist && !track.scAccountRow);
           if (t0) {
             loadTrackToDeck(activeDeck, t0);
             guestPanel.classList.add('hidden');
             return;
           }
         }
-        echec(t('guest_sc_load_failed', { name: v.name }));
+        markFailed(t('guest_sc_load_failed', { name: v.name }));
         return;
       }
       const tr = [...library.tracks, ...library.scTracks].find(
-        (t) => !t.scPlaylist && !t.scAccountRow && t.name === v.name);
+        (track) => !track.scPlaylist && !track.scAccountRow && track.name === v.name);
       if (tr) {
         loadTrackToDeck(activeDeck, tr);
         guestPanel.classList.add('hidden');
       } else {
-        echec(t('guest_track_not_found', { name: v.name }));
+        markFailed(t('guest_track_not_found', { name: v.name }));
       }
     });
     guestPanel.appendChild(row);
@@ -6268,10 +6269,10 @@ function applyDeckCount(n, silent) {
   document.body.classList.toggle('two-decks', n === 2);
   btnDeckCount.textContent = n === 2 ? '2 DECKS' : '4 DECKS';
   if (n === 2) {
-    // On coupe proprement les decks cachés
+    // Cleanly stop the hidden decks
     [2, 3].forEach((j) => {
       if (engine.decks[j].playing) engine.decks[j].pause();
-      // Un deck caché ne doit rester ni sélectionné ni coupé (CUT)
+      // A hidden deck must stay neither selected nor cut (CUT)
       gpSelOwners.forEach((s) => s.delete(j));
       gpSelNeutral.delete(j);
       gpSelSync();
@@ -6282,26 +6283,26 @@ function applyDeckCount(n, silent) {
       stripUI[j].el.classList.remove('gp-sel');
     });
     if (activeDeck > 1) setActiveDeck(0);
-    // Ramène les curseurs manette sur des colonnes visibles
+    // Bring the gamepad cursors back onto visible columns
     for (const st of gamepad.pads.values()) {
       if (st.deck > 1) st.deck = 0;
       if (st.cur.r > 0 && st.cur.c > 1) st.cur.c = st.deck;
     }
   }
-  // Le layout change : les canvas doivent repartir de zéro (signatures et
-  // caches invalidés, sinon des bitmaps de largeur 0 traînent)
+  // The layout changes: the canvases must start from scratch (signatures and
+  // caches invalidated, otherwise 0-width bitmaps linger)
   invalidateWaves();
-  if (!silent) flashStatus(n === 2 ? 'Mode 2 decks — plus grand, plus simple' : 'Mode 4 decks — la totale');
+  if (!silent) flashStatus(n === 2 ? t('deck_mode_2_status') : t('deck_mode_4_status'));
 }
 
 btnDeckCount.addEventListener('click', () => applyDeckCount(deckCount === 2 ? 4 : 2));
-// NB : l'appel initial est plus bas, une fois le mixer et les decks
-// construits — applyDeckCount() lit stripUI[2]/[3], qui n'existent qu'après
-// buildMixer(). L'appeler ici plantait au démarrage si la dernière session
-// s'était terminée en mode 2 decks (stripUI encore vide), ce qui empêchait
-// TOUT le reste du démarrage de s'exécuter (mixer et decks jamais construits).
+// NB: the initial call is further down, once the mixer and decks are
+// built — applyDeckCount() reads stripUI[2]/[3], which only exist after
+// buildMixer(). Calling it here crashed at startup if the last session
+// had ended in 2-deck mode (stripUI still empty), which prevented ALL
+// of the rest of startup from running (mixer and decks never built).
 
-// --- Enregistrement du mix (sortie master -> fichier) ---
+// --- Mix recording (master output -> file) ---
 const btnRec = document.getElementById('btn-rec');
 const recTime = document.getElementById('rec-time');
 let recorder = null;
@@ -6328,7 +6329,7 @@ btnRec.addEventListener('click', async () => {
     recStart = performance.now();
     btnRec.classList.add('on');
     recTime.classList.remove('hidden');
-    flashStatus('● REC — enregistrement du mix en cours…');
+    flashStatus(t('rec_mix_recording_status'));
   } else {
     recorder.stop();
     recorder = null;
@@ -6353,11 +6354,11 @@ wzScratch.addEventListener('click', () => {
 refreshScratchBtn();
 
 // ---------------------------------------------------------------------------
-// Clavier (pratique sans manette)
+// Keyboard (handy without a gamepad)
 // ---------------------------------------------------------------------------
 
-// Raccourci pads : bascule l'onglet du deck actif (miroir des boutons de
-// mode de la platine — H/J/L/K/F/M)
+// Pad shortcut: switches the active deck's tab (mirrors the controller's
+// mode buttons — H/J/L/K/F/M)
 function kbdPadMode(mode) {
   deckUI[activeDeck].padMode = mode;
   renderPads(activeDeck);
@@ -6370,7 +6371,7 @@ document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') t.blur();
     return;
   }
-  // F2-F11 = pads 1 à 10 du deck actif (dans le mode d'onglet courant)
+  // F2-F11 = pads 1 to 10 of the active deck (in the current tab mode)
   const fPad = /^F([2-9]|1[01])$/.exec(e.key);
   if (fPad && !e.repeat) {
     e.preventDefault();
@@ -6428,7 +6429,7 @@ document.addEventListener('keydown', (e) => {
 document.addEventListener('pointerdown', () => engine.resume(), { once: true });
 
 // ---------------------------------------------------------------------------
-// Démarrage
+// Startup
 // ---------------------------------------------------------------------------
 
 for (let i = 0; i < 4; i++) buildDeckPanel(i);
@@ -6437,11 +6438,11 @@ buildFxBar();
 setActiveDeck(0);
 applyDeckCount(deckCount, true);
 deckUI.forEach((_, i) => renderPads(i));
-samplerInit(); // recharge les samples posés sur les pads (chemins mémorisés)
-// Fermeture : écrit en synchrone tout calage de grille encore en attente
+samplerInit(); // reloads the samples assigned to the pads (stored paths)
+// Closing: synchronously writes any grid alignment still pending
 window.addEventListener('beforeunload', () => library.flushSave());
 renderHelp();
-// Premier positionnement des faders une fois la mise en page calculée
+// Initial fader positioning once the layout has been computed
 requestAnimationFrame(() => {
   stripUI.forEach((_, i) => refreshStrip(i));
   xfFader.update();
@@ -6451,15 +6452,26 @@ document.getElementById('btn-folder').addEventListener('click', () => library.ch
 document.getElementById('btn-help').addEventListener('click', toggleHelp);
 document.getElementById('btn-close-help').addEventListener('click', toggleHelp);
 
-// --- Paramètres : palette, sortie audio, micros, télécommande ---
+// --- Settings: palette, audio output, mics, remote ---
 const settingsOverlay = document.getElementById('settings-overlay');
 
-// --- Langue ---
+// --- Language ---
 const setLangSelect = document.getElementById('set-lang');
 setLangSelect.value = getLang();
 setLangSelect.addEventListener('change', (e) => {
   setLang(e.target.value);
-  flashStatus(t('language_changed', { lang: e.target.value === 'fr' ? 'Français' : 'English' }));
+  const lang = e.target.value === 'fr' ? 'Français' : 'English';
+  // Decks, menus and labels built by JS keep the language they were built
+  // with: when nothing is playing, reload the window in the new language
+  // with the decks restored (one-time session restore); during a mix, only
+  // the static texts switch and the rest follows at the next launch.
+  if (!engine.decks.some((d) => d.playing)) {
+    saveSession();
+    try { localStorage.setItem('restoreOnce', '1'); } catch { /* storage unavailable */ }
+    location.reload();
+    return;
+  }
+  flashStatus(t('language_changed_next_launch', { lang }));
 });
 
 function invalidateWaves() {
@@ -6467,11 +6479,11 @@ function invalidateWaves() {
     ui._zoomSig = null;
     ui._overSig = null;
     ui.over._cache = null;
-    ui.wave.canvas._strip = null; // bande pré-rendue : à repeindre
+    ui.wave.canvas._strip = null; // pre-rendered strip: needs repainting
   });
 }
 
-// --- Analyse : plage BPM + ré-analyse globale ---
+// --- Analysis: BPM range + global re-analysis ---
 const setBpmRange = document.getElementById('set-bpmrange');
 const storedRange = localStorage.getItem('bpmRange');
 setBpmRange.value = storedRange && storedRange !== 'auto' ? storedRange : '85-170';
@@ -6484,14 +6496,14 @@ document.getElementById('set-reanalyze').addEventListener('click', () => {
   flashStatus(t('reanalyze_started', { n }));
 });
 document.getElementById('set-rbimport').addEventListener('click', async () => {
-  flashStatus('Lecture des analyses Rekordbox…');
+  flashStatus(t('rekordbox_grids_reading'));
   try {
     const n = await library.importRekordboxGrids();
     flashStatus(n
       ? t('rekordbox_grids_imported', { n })
       : t('rekordbox_grids_none'));
   } catch (e) {
-    flashStatus(`Import Rekordbox impossible : ${e.message}`);
+    flashStatus(t('rekordbox_grids_import_failed', { error: e.message }));
   }
 });
 const setGridOffset = document.getElementById('set-gridoffset');
@@ -6504,7 +6516,7 @@ setGridOffset.addEventListener('change', () => {
   flashStatus(t('grid_offset_changed', { ms }));
 });
 
-// --- Comportement ---
+// --- Behavior ---
 const setRestore = document.getElementById('set-restore');
 if (setRestore) {
   setRestore.checked = localStorage.getItem('restoreSession') === '1';
@@ -6536,23 +6548,23 @@ setWaveSize.addEventListener('change', () => {
   document.body.classList.toggle('waves-lg', setWaveSize.value === 'grand');
 });
 
-// Palette par défaut : RGB. (Une palette « club » est aussi disponible
-// dans ⚙ pour qui préfère basses bleues / médiums ambre / aigus blancs.)
-if (!localStorage.getItem('wavePaletteChosen') && localStorage.getItem('wavePalette') === 'rekordbox') {  // ancienne valeur
+// Default palette: RGB. (A "club" palette is also available in ⚙ for
+// those who prefer blue lows / amber mids / white highs.)
+if (!localStorage.getItem('wavePaletteChosen') && localStorage.getItem('wavePalette') === 'rekordbox') {  // old value
   localStorage.setItem('wavePalette', 'rgb');
 }
 setWavePalette(localStorage.getItem('wavePalette') || 'rgb');
 document.getElementById('set-palette').value = localStorage.getItem('wavePalette') || 'rgb';
 document.getElementById('set-palette').addEventListener('change', (e) => {
   localStorage.setItem('wavePalette', e.target.value);
-  localStorage.setItem('wavePaletteChosen', '1'); // choix explicite : respecté à vie
+  localStorage.setItem('wavePaletteChosen', '1'); // explicit choice: respected forever
   setWavePalette(e.target.value);
   invalidateWaves();
 });
 
 async function refreshDevices() {
   try {
-    // Demande la permission micro une fois pour révéler les noms des périphériques
+    // Ask for mic permission once to reveal the device names
     await navigator.mediaDevices.getUserMedia({ audio: true }).then(s => s.getTracks().forEach(t => t.stop())).catch(() => {});
     const devices = await navigator.mediaDevices.enumerateDevices();
     const outSel = document.getElementById('set-output');
@@ -6565,8 +6577,8 @@ async function refreshDevices() {
       if (d.deviceId === current) o.selected = true;
       outSel.appendChild(o);
     });
-    // Sortie CASQUE : auto (contrôleur DJ détecté), canaux 3/4 du master,
-    // ou une carte précise
+    // HEADPHONE output: auto (DJ controller detected), master channels 3/4,
+    // or a specific sound card
     const phSel = document.getElementById('set-phones');
     if (phSel) {
       const curP = phonesPref();
@@ -6596,7 +6608,7 @@ async function refreshDevices() {
 document.getElementById('set-output').addEventListener('change', async (e) => {
   try {
     await engine.ctx.setSinkId(e.target.value || '');
-    engine._wireOutput(); // le nombre de canaux (casque !) dépend du périphérique
+    engine._wireOutput(); // the channel count (headphones!) depends on the device
     localStorage.setItem('audioOutput', e.target.value);
     flashStatus(t('audio_output_changed'));
     applyPhonesOutput();
@@ -6605,9 +6617,9 @@ document.getElementById('set-output').addEventListener('change', async (e) => {
   }
 });
 
-// --- SORTIE CASQUE ---
-// Préférence : 'auto' (défaut) = le contrôleur DJ branché (FLX6…) reçoit la
-// pré-écoute sur ses canaux 3/4, même si le master sort sur une autre carte.
+// --- HEADPHONE OUTPUT ---
+// Preference: 'auto' (default) = the connected DJ controller (FLX6…) receives
+// the cue preview on its channels 3/4, even if the master goes out on another card.
 function phonesPref() {
   try { return localStorage.getItem('phonesOutput') ?? 'auto'; } catch { return 'auto'; }
 }
@@ -6625,19 +6637,19 @@ async function applyPhonesOutput(announce) {
     const pref = phonesPref();
     let id = '';
     let devices = [];
-    try { devices = await navigator.mediaDevices.enumerateDevices(); } catch { /* aucun */ }
+    try { devices = await navigator.mediaDevices.enumerateDevices(); } catch { /* none */ }
     if (pref === 'auto') {
       const dj = pickPhonesDevice(devices);
       id = dj ? dj.deviceId : '';
     } else if (pref && devices.some((d) => d.kind === 'audiooutput' && d.deviceId === pref)) {
       id = pref;
     }
-    // la carte casque EST la sortie master ? le câblage 4 canaux suffit
+    // the headphone card IS the master output? the 4-channel wiring is enough
     let masterId = '';
-    try { masterId = localStorage.getItem('audioOutput') || ''; } catch { /* défaut */ }
+    try { masterId = localStorage.getItem('audioOutput') || ''; } catch { /* default */ }
     if (id && masterId === id) id = '';
     if (id && !masterId) {
-      // master sur « sortie par défaut » : est-ce déjà la platine ?
+      // master on "default output": is that already the controller?
       const def = devices.find((d) => d.kind === 'audiooutput' && d.deviceId === 'default');
       const card = devices.find((d) => d.deviceId === id);
       if (def && card && card.label && (def.label || '').includes(card.label)) id = '';
@@ -6654,16 +6666,16 @@ async function applyPhonesOutput(announce) {
   }
 }
 document.getElementById('set-phones')?.addEventListener('change', (e) => {
-  try { localStorage.setItem('phonesOutput', e.target.value); } catch { /* stockage indisponible */ }
+  try { localStorage.setItem('phonesOutput', e.target.value); } catch { /* storage unavailable */ }
   applyPhonesOutput(true);
 });
-// contrôleur branché / débranché en cours de route : la sortie casque suit
+// controller plugged in / unplugged mid-session: the headphone output follows
 navigator.mediaDevices?.addEventListener?.('devicechange', () => {
   clearTimeout(applyPhonesOutput._t);
   applyPhonesOutput._t = setTimeout(() => applyPhonesOutput(), 800);
 });
 
-// --- Tableau d'apprentissage MIDI ---
+// --- MIDI learn table ---
 function renderMidiTable() {
   const table = document.getElementById('midi-learn-table');
   const info = document.getElementById('midi-device');
@@ -6686,7 +6698,7 @@ function renderMidiTable() {
       <span class="midi-label"></span>
       <span class="midi-bind">${bound ? bound : '—'}</span>
       <button class="midi-learn" title="${t('midi_learn_button_title')}">Learn</button>
-      <button class="midi-clear" title="Effacer">✕</button>
+      <button class="midi-clear" title="${t('midi_clear_binding_title')}">✕</button>
     `;
     row.querySelector('.midi-label').textContent = label;
     row.querySelector('.midi-learn').addEventListener('click', async (e) => {
@@ -6723,7 +6735,7 @@ document.getElementById('btn-close-settings').addEventListener('click', () => {
   settingsOverlay.classList.add('hidden');
 });
 
-// Restaure la sortie audio choisie précédemment
+// Restore the previously chosen audio output
 if (localStorage.getItem('audioOutput')) {
   engine.ctx.setSinkId(localStorage.getItem('audioOutput'))
     .then(() => engine._wireOutput())
@@ -6733,7 +6745,7 @@ if (localStorage.getItem('audioOutput')) {
   applyPhonesOutput();
 }
 
-// --- Console téléphone : exécution des commandes reçues du téléphone ---
+// --- Phone console: runs the commands received from the phone ---
 window.api.onRemoteCmd((c) => {
   const d = engine.decks[c.deck ?? 0];
   if (!d) return;
@@ -6744,7 +6756,7 @@ window.api.onRemoteCmd((c) => {
     case 'sync':
       if (d.synced) {
         d.synced = false;
-        flashStatus(`Deck ${(c.deck ?? 0) + 1} — SYNC OFF`);
+        flashStatus(t('deck_sync_off_flash', { n: (c.deck ?? 0) + 1 }));
       } else {
         syncDeck(c.deck);
       }
@@ -6758,14 +6770,14 @@ window.api.onRemoteCmd((c) => {
       stripUI[c.deck].kFilt.update();
       break;
     case 'bass':
-      // même règle que le logo / R1 : les basses passent à CE deck
+      // same rule as the logo / R1: the bass goes to THIS deck
       gpBassTo(c.deck);
       flashStatus(t('bass_routed_remote', { n: c.deck + 1 }));
       break;
     case 'jump': doBeatJump(c.deck, c.value); break;
     case 'hotcue': padPress(c.deck, c.value, 'hotcue', null); break;
     case 'pad':
-      // pad générique : même moteur que les pads du PC (hotcue/loop/jump)
+      // generic pad: same engine as the PC pads (hotcue/loop/jump)
       padPress(c.deck, c.value, c.mode || 'hotcue', null);
       break;
     case 'loopin': loopIn(c.deck); break;
@@ -6787,8 +6799,8 @@ window.api.onRemoteCmd((c) => {
     }
     case 'load': {
       const tr = library.filtered[c.value];
-      // Seules les VRAIES pistes (path ou scId) se chargent depuis le
-      // téléphone — jamais une ligne de navigation (playlist, compte 👤…)
+      // Only REAL tracks (path or scId) load from the phone —
+      // never a navigation row (playlist, 👤 account…)
       if (tr && !tr.scPlaylist && !tr.scAccountRow && tr.name && (tr.path || tr.scId)) {
         loadTrackToDeck(c.deck, tr);
       }
@@ -6804,11 +6816,11 @@ window.api.onRemoteCmd((c) => {
       xfFader.update();
       break;
     case 'led':
-      // Diagnostic : piloter une LED de la platine à la main (ch, note, on)
+      // Diagnostics: drive a controller LED by hand (ch, note, on)
       midi.send([0x90 | (c.ch & 0x0f), c.note & 0x7f, c.on ? 0x7f : 0]);
       break;
     case 'rawmidi':
-      // Diagnostic : trame MIDI brute (tableau d'octets)
+      // Diagnostics: raw MIDI frame (byte array)
       if (Array.isArray(c.bytes)) midi.send(c.bytes.map((b) => b & 0xff));
       break;
   }
@@ -6850,7 +6862,7 @@ setInterval(() => {
 const libSearchEl = document.getElementById('lib-search');
 libSearchEl.placeholder = t('search_placeholder_hint');
 libSearchEl.addEventListener('input', (e) => library.setSearch(e.target.value));
-// Entrée = moteur de recherche CATALOGUE SoundCloud (au-delà des playlists)
+// Enter = SoundCloud CATALOG search engine (beyond the playlists)
 libSearchEl.addEventListener('keydown', (e) => {
   if (e.key !== 'Enter') return;
   const q = libSearchEl.value.trim();
@@ -6859,18 +6871,18 @@ libSearchEl.addEventListener('keydown', (e) => {
   library.searchSc(q);
 });
 
-// --- Explorateur en arborescence (style Rekordbox) ---
+// --- Tree browser (Rekordbox style) ---
 const libTree = document.getElementById('lib-tree');
 let selectedTreeNode = null;
 
-// Registre chemin → nœud de l'arbre : permet de DÉPLIER l'arbre jusqu'au
-// dossier courant (« montre que je suis dans ce dossier qui est dans ce
-// dossier… ») quand on navigue à l'encodeur ou à la souris
+// Path → tree node registry: lets us EXPAND the tree down to the current
+// folder ("show that I'm in this folder which is inside that
+// folder…") when navigating with the encoder or the mouse
 const normTreePath = (s) => String(s).replace(/[\\/]+$/, '').toLowerCase();
 const treeRowsByPath = new Map(); // norm(path) -> { row, ensureOpen }
 
-// Nœud générique : { name, onClick, getChildren } — getChildren est RELU à
-// chaque ouverture (les playlists / dossiers changent en cours de session)
+// Generic node: { name, onClick, getChildren } — getChildren is RE-READ on
+// every expansion (playlists / folders change during the session)
 function makeTreeNode(item, depth) {
   const node = document.createElement('div');
   node.className = 'tree-node';
@@ -6918,8 +6930,8 @@ function makeTreeNode(item, depth) {
     if (item.onClick) item.onClick();
   });
 
-  // Dossiers DISQUE de l'arbre : on peut y ranger (musique OpenMix) et
-  // déplacer ceux de la musique OpenMix
+  // DISK folders of the tree: you can file things into them (OpenMix music)
+  // and move the ones inside OpenMix music
   if (item.path && /^([a-z]:[\\/]|\\\\)/i.test(item.path)) {
     makeFolderDropTarget(row, () => item.path);
     row.draggable = true;
@@ -6957,7 +6969,7 @@ function treeHighlight(row) {
   row.scrollIntoView({ block: 'nearest' });
 }
 
-// Déplie l'arbre de racine en racine jusqu'au dossier demandé et le surligne
+// Expands the tree level by level down to the requested folder and highlights it
 async function treeReveal(target) {
   const t = normTreePath(target);
   let best = null;
@@ -6967,18 +6979,18 @@ async function treeReveal(target) {
   if (!best) return;
   let [p, e] = best;
   while (p !== t) {
-    await e.ensureOpen(); // charge les enfants → ils s'enregistrent au registre
+    await e.ensureOpen(); // loads the children → they register themselves
     const seg = t.slice(p.length + 1).split(/[\\/]/)[0];
     const next = treeRowsByPath.get(`${p}\\${seg}`);
-    if (!next) break; // dossier filtré/caché : on s'arrête au plus proche
+    if (!next) break; // filtered/hidden folder: stop at the closest one
     p = `${p}\\${seg}`;
     e = next;
   }
   treeHighlight(e.row);
 }
 
-// Surligne un nœud « virtuel » (SoundCloud, Playlists…) et, si demandé, un
-// de ses enfants — déplié au passage
+// Highlights a "virtual" node (SoundCloud, Playlists…) and, if requested, one
+// of its children — expanding it on the way
 async function treeRevealKey(parentKey, childKey) {
   const parent = treeRowsByPath.get(normTreePath(parentKey));
   if (!parent) return;
@@ -6993,8 +7005,8 @@ async function treeRevealKey(parentKey, childKey) {
   treeHighlight(parent.row);
 }
 
-// Dossier disque : clic = scanner, flèche = sous-dossiers (PC ENTIER :
-// racines C:..G: + Musique/Bureau/Documents/Téléchargements)
+// Disk folder: click = scan, arrow = subfolders (WHOLE PC:
+// roots C:..G: + Music/Desktop/Documents/Downloads)
 function fsTreeItem(r) {
   return {
     name: r.native ? t('dl_native_root') : r.name,
@@ -7008,13 +7020,13 @@ async function buildTree() {
   const roots = await window.api.fsRoots();
   libTree.textContent = '';
   treeRowsByPath.clear();
-  // Le dossier de musique NATIF d'OpenMix (téléchargements) : tout en haut
+  // OpenMix's NATIVE music folder (downloads): at the very top
   roots.filter((r) => r.native).forEach((r) => libTree.appendChild(makeTreeNode(fsTreeItem(r), 0)));
-  // SoundCloud DANS l'explorateur : 1 compte = SES playlists (❤️ Likes
-  // comprise) en enfants directs, comme toujours ; ≥ 2 comptes (b2b) = un
-  // nœud 👤 par compte, chacun dépliant SES playlists avec SON jeton.
-  // Les playlists sont demandées DIRECTEMENT au main (sans passer par la
-  // vue) : déplier l'arbre ne change plus la liste affichée à droite.
+  // SoundCloud IN the browser: 1 account = ITS playlists (❤️ Likes
+  // included) as direct children, as always; ≥ 2 accounts (b2b) = one
+  // 👤 node per account, each expanding ITS playlists with ITS token.
+  // The playlists are requested DIRECTLY from main (without going through
+  // the view): expanding the tree no longer changes the list shown on the right.
   libTree.appendChild(makeTreeNode({
     name: 'SoundCloud',
     path: 'sc:',
@@ -7034,14 +7046,14 @@ async function buildTree() {
       };
       if (!multi) return plChildren(0);
       return accounts.map((a, i) => ({
-        name: a.name || `Compte ${i + 1}`,
+        name: a.name || t('sc_tree_account_fallback', { n: i + 1 }),
         path: `sc:acct:${i}`,
         onClick: () => openScAccount(i),
         getChildren: () => plChildren(i)
       }));
     }
   }, 0));
-  // Playlists locales (dont celles importées de Rekordbox)
+  // Local playlists (including those imported from Rekordbox)
   libTree.appendChild(makeTreeNode({
     name: 'Playlists',
     path: 'pl:',
@@ -7056,7 +7068,7 @@ async function buildTree() {
 }
 buildTree();
 
-// --- Onglets bibliothèque : fichiers locaux / SoundCloud ---
+// --- Library tabs: local files / SoundCloud ---
 const tabLocal = document.getElementById('tab-local');
 const tabSc = document.getElementById('tab-sc');
 const tabHist = document.getElementById('tab-hist');
@@ -7067,13 +7079,13 @@ const btnFolder = document.getElementById('btn-folder');
 const scUrlInput = document.getElementById('sc-url');
 
 // ---------------------------------------------------------------------------
-// TÉLÉCHARGEMENT PAR LIEN (yt-dlp) : YouTube, SoundCloud et les autres sites
-// que yt-dlp connaît. Bouton « ⬇ Lien », ou lien glissé sur un deck (il s'y
-// charge dès qu'il est arrivé). Fichiers dans Musique › OpenMix, au format
-// audio d'origine (aucun réencodage).
+// DOWNLOAD FROM A LINK (yt-dlp): YouTube, SoundCloud and the other sites
+// yt-dlp knows. "⬇ Link" button, or a link dropped on a deck (it loads
+// there as soon as it has arrived). Files go to Music › OpenMix, in the
+// original audio format (no re-encoding).
 // ---------------------------------------------------------------------------
-// DESTINATION des téléchargements : un dossier du dossier natif d'OpenMix
-// (chemin relatif mémorisé, '' = la racine)
+// Download DESTINATION: a folder inside OpenMix's native folder
+// (stored relative path, '' = the root)
 let dlDestRel = (() => { try { return localStorage.getItem('dlDest') || ''; } catch { return ''; } })();
 const dlDestPath = () => {
   if (!dlInfo.root) return null;
@@ -7102,11 +7114,11 @@ async function refreshDlInfo() {
 }
 function setDlDest(rel) {
   dlDestRel = rel || '';
-  try { localStorage.setItem('dlDest', dlDestRel); } catch { /* rien */ }
+  try { localStorage.setItem('dlDest', dlDestRel); } catch { /* nothing */ }
   const sel = document.getElementById('ws-dest');
   if (sel) sel.value = dlDestRel;
 }
-// Créer un dossier (« House » ou « House/Deep ») et le choisir comme destination
+// Create a folder ("House" or "House/Deep") and pick it as the destination
 async function dlNewFolder() {
   const name = await askText(t('dl_newdir_prompt'), '');
   if (!name) return null;
@@ -7123,20 +7135,20 @@ async function dlNewFolder() {
 }
 
 // ---------------------------------------------------------------------------
-// RANGER « Ma musique OpenMix » À LA SOURIS. Dans le dossier natif :
-//  - glisser un SON sur une ligne 📁 (ou sur un dossier de l'arbre, ou sur
-//    « .. ») = il y est rangé — DÉPLACÉ s'il est déjà dans la musique
-//    OpenMix, COPIÉ s'il vient d'ailleurs ;
-//  - glisser un DOSSIER sur un autre = déplacé dedans ;
-//  - fichiers glissés depuis l'Explorateur Windows, liens YouTube /
-//    SoundCloud : copiés / téléchargés DANS le dossier visé ;
-//  - « ＋ Dossier » crée un dossier dans le dossier ouvert ; clic droit =
-//    renommer, nouveau sous-dossier, corbeille.
-// Hors du dossier natif, rien ne change : on ne touche JAMAIS aux autres
-// fichiers du PC.
+// ORGANIZING "My OpenMix music" WITH THE MOUSE. In the native folder:
+//  - drag a TRACK onto a 📁 row (or onto a tree folder, or onto
+//    "..") = it is filed there — MOVED if it is already in OpenMix
+//    music, COPIED if it comes from elsewhere;
+//  - drag a FOLDER onto another = moved into it;
+//  - files dragged from Windows Explorer, YouTube /
+//    SoundCloud links: copied / downloaded INTO the target folder;
+//  - "＋ Folder" creates a folder in the open folder; right-click =
+//    rename, new subfolder, recycle bin.
+// Outside the native folder nothing changes: the PC's other files are
+// NEVER touched.
 // ---------------------------------------------------------------------------
-// (fonctions DÉCLARÉES, pas de const : la liste peut se dessiner avant
-// que le module n'arrive ici)
+// (DECLARED functions, not const: the list may render before
+// the module gets here)
 const DIR_MIME = 'application/x-openmix-dir';
 function normFsPath(p) { return String(p || '').replace(/\//g, '\\').replace(/\\+$/, '').toLowerCase(); }
 function parentDir(p) { return String(p || '').replace(/[\\/]+$/, '').replace(/[\\/][^\\/]+$/, ''); }
@@ -7148,7 +7160,7 @@ function inNative(p) {
   return x === r || x.startsWith(`${r}\\`);
 }
 function isNativeRoot(p) { return !!(dlInfo && dlInfo.root) && normFsPath(p) === normFsPath(dlInfo.root); }
-// Le dossier ouvert dans la liste est-il dans la musique OpenMix ?
+// Is the folder open in the list inside OpenMix music?
 function browsingNative() { return library.mode === 'local' && !library.rootsView && inNative(library.fsDir); }
 
 function startDirDrag(e, p) {
@@ -7163,21 +7175,21 @@ function canDropDir(src, dest) {
   return d !== s && !d.startsWith(`${s}\\`) && normFsPath(parentDir(src)) !== d;
 }
 function dragHasFiles(dt) { return !!dt && [...(dt.types || [])].includes('Files'); }
-// Ce qui est glissé peut-il être rangé dans dest ? → 'move' / 'copy' / null
+// Can what is being dragged be filed into dest? → 'move' / 'copy' / null
 function folderDropEffect(dt, dest) {
   if (!dest || !inNative(dest)) return null;
   if (dragDir) return canDropDir(dragDir, dest) ? 'move' : null;
   if (dragTrack) {
     if (!dragTrack.path || dragTrack.sc) return null;
-    if (normFsPath(parentDir(dragTrack.path)) === normFsPath(dest)) return null; // déjà là
-    return 'move'; // TOUJOURS déplacé, jamais copié
+    if (normFsPath(parentDir(dragTrack.path)) === normFsPath(dest)) return null; // already there
+    return 'move'; // ALWAYS moved, never copied
   }
   if (dragHasFiles(dt)) return 'move';
   if (dragHasLink(dt)) return 'copy';
   return null;
 }
 
-// Rend une ligne / un nœud capable de RECEVOIR un rangement
+// Makes a row / node able to RECEIVE dropped items
 function makeFolderDropTarget(el, getDir) {
   el.addEventListener('dragover', (e) => {
     const eff = folderDropEffect(e.dataTransfer, getDir());
@@ -7210,7 +7222,7 @@ async function dropIntoFolder(dest, dt) {
       return;
     }
     applyMoves(r.moves);
-    // le dossier ouvert était dans celui qu'on vient de déplacer : on le suit
+    // the open folder was inside the one just moved: follow it
     if (library.fsDir && inNative(library.fsDir)) {
       const s = normFsPath(dir);
       const cur = normFsPath(library.fsDir);
@@ -7264,7 +7276,7 @@ async function placeFiles(paths, dest, track) {
   afterOrganize(false);
 }
 
-// Fichiers déplacés / renommés : analyses, playlists, historique et decks suivent
+// Moved / renamed files: analyses, playlists, history and decks follow
 function applyMoves(moves) {
   (moves || []).forEach((m) => {
     library.relocateMoved(m);
@@ -7280,8 +7292,8 @@ function followDeckPath(from, to) {
   });
 }
 
-// Après un rangement : liste, dossiers de téléchargement, arbre
-// (followDir : le dossier ouvert a été déplacé / renommé / jeté — on le suit)
+// After organizing: list, download folders, tree
+// (followDir: the open folder was moved / renamed / trashed — follow it)
 let followDir = null;
 async function afterOrganize(foldersChanged) {
   await refreshDlInfo();
@@ -7298,7 +7310,7 @@ async function afterOrganize(foldersChanged) {
   }
 }
 
-// ＋ Dossier : créé DANS le dossier ouvert (ou à la racine de la musique OpenMix)
+// ＋ Folder: created INSIDE the open folder (or at the root of OpenMix music)
 async function newFolderIn(parent) {
   const name = await askText(t('dl_newdir_here_prompt', { dir: folderLabel(parent) }), '');
   if (!name) return null;
@@ -7349,7 +7361,7 @@ async function trashNative(p, isDir) {
   afterOrganize(!!isDir);
 }
 
-// Clic droit sur un dossier de la musique OpenMix
+// Right-click on a folder in OpenMix music
 function showNativeFolderMenu(e, p) {
   ctxMenu.textContent = '';
   const addItem = (label, fn) => {
@@ -7381,15 +7393,15 @@ function showNativeFolderMenu(e, p) {
   ctxMenu.classList.remove('hidden');
 }
 
-// Bouton « ＋ Dossier » de la barre : visible dans la musique OpenMix
+// The bar's "＋ Folder" button: visible inside OpenMix music
 document.getElementById('btn-lib-newdir')?.addEventListener('click', () => newFolderIn(browsingNative() ? library.fsDir : dlInfo.root));
 function updateNewDirBtn() {
   document.getElementById('btn-lib-newdir')?.classList.toggle('hidden', !browsingNative());
 }
 
-let ytJob = null; // téléchargement en cours { id, url, deck, pct, title }
+let ytJob = null; // download in progress { id, url, deck, pct, title }
 let ytSeq = 0;
-const ytQueue = []; // téléchargements en attente { url, deck }
+const ytQueue = []; // pending downloads { url, deck }
 const btnYt = document.getElementById('btn-ytdlp');
 
 async function refreshYtStatus() {
@@ -7413,7 +7425,7 @@ async function ytInstall() {
   return true;
 }
 
-// yt-dlp prêt ? Sinon on propose de l'installer (une fois, avec accord)
+// yt-dlp ready? Otherwise offer to install it (once, with consent)
 async function ytEnsure() {
   const st = await window.api.ytdlpStatus();
   if (st.ok) return true;
@@ -7436,7 +7448,7 @@ async function ytDownload(url, deckIdx = null, destDir = null) {
     return;
   }
   if (ytJob) {
-    // un téléchargement tourne déjà : celui-ci attend son tour
+    // a download is already running: this one waits its turn
     ytQueue.push({ url, deck: deckIdx, dest: destDir || dlDestPath() });
     ytUpdateButton();
     flashStatus(t('ytdlp_queued', { n: ytQueue.length }));
@@ -7456,7 +7468,7 @@ async function ytDownload(url, deckIdx = null, destDir = null) {
     ytJob = null;
     ytUpdateButton();
   }
-  // le suivant de la file part dès que celui-ci est fini
+  // the next one in the queue starts as soon as this one is done
   const next = () => {
     const n = ytQueue.shift();
     if (n) setTimeout(() => ytDownload(n.url, n.deck, n.dest), 50);
@@ -7464,7 +7476,7 @@ async function ytDownload(url, deckIdx = null, destDir = null) {
   };
   if (!res.ok) {
     flashStatus(res.cancelled ? t('ytdlp_cancelled') : t('ytdlp_failed', { error: res.error }));
-    if (res.cancelled) ytQueue.length = 0; // annuler = vider la file aussi
+    if (res.cancelled) ytQueue.length = 0; // cancel = empty the queue too
     next();
     return;
   }
@@ -7473,7 +7485,7 @@ async function ytDownload(url, deckIdx = null, destDir = null) {
   flashStatus(files.length > 1
     ? t('ytdlp_done_many', { n: files.length, dir: res.dir })
     : t('ytdlp_done', { name: files[0].name, dir: res.dir }));
-  // l'explorateur affiche déjà ce dossier : il se met à jour
+  // the browser is already showing this folder: it refreshes
   const norm = (p) => String(p || '').replace(/[\\/]+$/, '').toLowerCase();
   if (library.mode === 'local' && norm(library.fsDir) === norm(res.dir)) library.scan(library.fsDir);
   if (deckIdx != null && files[0]) loadTrackToDeck(deckIdx, { ...files[0] });
@@ -7496,20 +7508,20 @@ if (btnYt) {
       if (window.confirm(t('ytdlp_cancel_confirm'))) window.api.ytdlpCancel(ytJob.id);
       return;
     }
-    // un lien déjà copié est proposé d'office
+    // a link already copied is offered by default
     let clip = '';
-    try { clip = (await navigator.clipboard.readText()) || ''; } catch { /* presse-papiers refusé */ }
+    try { clip = (await navigator.clipboard.readText()) || ''; } catch { /* clipboard denied */ }
     const pre = /^https?:\/\/\S+$/i.test(clip.trim()) ? clip.trim() : '';
     await refreshDlInfo();
     const url = await askText(t('ytdlp_prompt_dest', { dir: dlDestRel ? dlDestRel.replace(/\//g, ' › ') : t('dl_native_root') }), pre);
     if (url) ytDownload(url, null);
   });
 }
-// lien glissé sur la LISTE : simple téléchargement
+// link dropped on the LIST: plain download
 const libWrapEl = document.getElementById('lib-list-wrap');
 if (libWrapEl) {
   libWrapEl.addEventListener('dragover', (e) => {
-    // dans la musique OpenMix : ce qu'on dépose arrive dans le dossier OUVERT
+    // inside OpenMix music: whatever is dropped lands in the OPEN folder
     if (browsingNative()) {
       const eff = folderDropEffect(e.dataTransfer, library.fsDir);
       if (!eff) return;
@@ -7540,9 +7552,9 @@ if (setYtInstall) setYtInstall.addEventListener('click', () => ytInstall());
 refreshYtStatus();
 
 // ---------------------------------------------------------------------------
-// RECHERCHE YouTube + SoundCloud, avec téléchargement (yt-dlp). Chaque
-// résultat : ⬇ (dans Musique › OpenMix) ou 1 2 3 4 (téléchargé puis chargé
-// sur ce deck). On peut aussi GLISSER un résultat sur un deck.
+// YouTube + SoundCloud SEARCH, with download (yt-dlp). Each result:
+// ⬇ (into Music › OpenMix) or 1 2 3 4 (downloaded then loaded on
+// that deck). A result can also be DRAGGED onto a deck.
 // ---------------------------------------------------------------------------
 const wsPanel = document.getElementById('web-search');
 const wsQuery = document.getElementById('ws-query');
@@ -7552,10 +7564,10 @@ let wsSeq = 0;
 
 function wsOpen() {
   wsPanel.classList.remove('hidden');
-  // le bouton RESTE ALLUMÉ tant que le panneau est ouvert : on sait qu'un
-  // nouveau clic ramène la bibliothèque
+  // the button STAYS LIT while the panel is open: you know another
+  // click brings the library back
   document.getElementById('btn-web-search')?.classList.add('on');
-  refreshDlInfo(); // dossiers créés entre-temps (explorateur Windows…)
+  refreshDlInfo(); // folders created in the meantime (Windows Explorer…)
   wsQuery.focus();
   wsQuery.select();
 }
@@ -7599,7 +7611,7 @@ function wsRow(it) {
   for (let d = 0; d < deckCount; d++) {
     btn(String(d + 1), t('web_search_deck_title', { n: d + 1 }), () => ytDownload(it.url, d));
   }
-  // glisser le résultat sur un deck = téléchargé puis chargé dessus
+  // dragging the result onto a deck = downloaded then loaded on it
   row.addEventListener('dragstart', (e) => {
     e.dataTransfer.setData('text/uri-list', it.url);
     e.dataTransfer.setData('text/plain', it.url);
@@ -7644,13 +7656,13 @@ async function wsSearch() {
     })());
   }
   const res = await Promise.all(jobs);
-  if (seq !== wsSeq) return; // une autre recherche a été lancée entre-temps
-  // résultats ENTRELACÉS (le 1er YouTube, le 1er SoundCloud, le 2e…)
+  if (seq !== wsSeq) return; // another search was started in the meantime
+  // INTERLEAVED results (1st YouTube, 1st SoundCloud, 2nd…)
   const lists = res.map((r) => r.items);
   const merged = [];
   for (let k = 0; k < 40; k++) for (const l of lists) if (l[k]) merged.push(l[k]);
   merged.forEach((it) => wsResults.appendChild(wsRow(it)));
-  const errs = res.filter((r) => r.error).map((r) => `${r.src === 'yt' ? 'YouTube' : 'SoundCloud'} : ${r.error}`);
+  const errs = res.filter((r) => r.error).map((r) => t('web_search_source_error', { src: r.src === 'yt' ? 'YouTube' : 'SoundCloud', error: r.error }));
   wsStatus.textContent = (merged.length ? t('web_search_count', { n: merged.length }) : t('web_search_none'))
     + (errs.length ? ` — ${errs.join(' · ')}` : '');
 }
@@ -7674,7 +7686,7 @@ document.getElementById('btn-web-search')?.addEventListener('click', () => {
 document.getElementById('ws-close')?.addEventListener('click', wsClose);
 document.getElementById('ws-go')?.addEventListener('click', wsSearch);
 wsQuery?.addEventListener('keydown', (e) => {
-  e.stopPropagation(); // les raccourcis clavier du logiciel ne doivent pas se déclencher
+  e.stopPropagation(); // the app's keyboard shortcuts must not fire
   if (e.key === 'Enter') wsSearch();
   if (e.key === 'Escape') wsClose();
 });
@@ -7695,7 +7707,7 @@ tabSc.addEventListener('click', () => setLibTab('sc'));
 tabHist.addEventListener('click', () => setLibTab('hist'));
 tabPl.addEventListener('click', () => setLibTab('pl'));
 
-// --- Mini-modal de saisie (Electron n'a pas window.prompt) ---
+// --- Small input modal (Electron has no window.prompt) ---
 function askText(title, def = '') {
   return new Promise((resolve) => {
     const ov = document.getElementById('prompt-overlay');
@@ -7726,58 +7738,58 @@ function askText(title, def = '') {
   });
 }
 
-// --- Playlists : barre d'actions ---
+// --- Playlists: action bar ---
 const btnPlBack = document.getElementById('btn-pl-back');
 const btnPlNew = document.getElementById('btn-pl-new');
 const btnPlPlay = document.getElementById('btn-pl-play');
 
 btnPlBack.addEventListener('click', () => library.closePlaylist());
 btnPlNew.addEventListener('click', async () => {
-  const name = await askText('Nom de la nouvelle playlist', `Playlist ${library.playlists.length + 1}`);
+  const name = await askText(t('new_playlist_name_prompt'), `Playlist ${library.playlists.length + 1}`);
   if (name) {
     library.createPlaylist(name);
     flashStatus(t('playlist_created', { name }));
   }
 });
 
-// --- Import Rekordbox : l'export XML officiel (Fichier → Exporter la
-// collection au format xml) contient la COLLECTION (chemins, BPM, grille)
-// et l'arbre de PLAYLISTS — on récupère les deux, gratuit et sans Pioneer.
+// --- Rekordbox import: the official XML export (File → Export Collection
+// in xml format) contains the COLLECTION (paths, BPM, grid) and the
+// PLAYLIST tree — we take both, free and without Pioneer.
 async function importRekordboxXml() {
   const xmlPath = await window.api.pickXml();
   if (!xmlPath) return;
-  flashStatus('Import Rekordbox : lecture du XML…');
+  flashStatus(t('rekordbox_xml_reading'));
   let doc;
   try {
     const raw = await window.api.readFile(xmlPath);
     const text = new TextDecoder('utf-8').decode(raw);
     doc = new DOMParser().parseFromString(text, 'text/xml');
   } catch {
-    flashStatus('Impossible de lire ce fichier XML');
+    flashStatus(t('rekordbox_xml_read_failed'));
     return;
   }
   if (!doc || doc.querySelector('parsererror') || !doc.querySelector('DJ_PLAYLISTS')) {
-    flashStatus('Ce fichier n\'est pas un export XML Rekordbox');
+    flashStatus(t('rekordbox_xml_not_export'));
     return;
   }
-  // 1) Collection : TrackID -> référence de morceau (chemin décodé, BPM et
-  // début de grille Rekordbox conservés — pas besoin de ré-analyser)
+  // 1) Collection: TrackID -> track reference (decoded path, Rekordbox BPM
+  // and grid start kept — no need to re-analyze)
   const byId = new Map();
   let skippedNoFile = 0;
-  for (const t of doc.querySelectorAll('COLLECTION TRACK')) {
-    const id = t.getAttribute('TrackID');
-    const loc = t.getAttribute('Location') || '';
-    if (!/^file:/i.test(loc)) { skippedNoFile++; continue; } // pistes streaming
+  for (const trackNode of doc.querySelectorAll('COLLECTION TRACK')) {
+    const id = trackNode.getAttribute('TrackID');
+    const loc = trackNode.getAttribute('Location') || '';
+    if (!/^file:/i.test(loc)) { skippedNoFile++; continue; } // streaming tracks
     let p = loc.replace(/^file:\/\/localhost\//i, '').replace(/^file:\/\//i, '');
-    try { p = decodeURIComponent(p); } catch { /* chemin déjà brut */ }
+    try { p = decodeURIComponent(p); } catch { /* path already raw */ }
     p = p.replace(/\//g, '\\');
-    const artist = t.getAttribute('Artist') || '';
-    const title = t.getAttribute('Name') || p.replace(/^.*\\/, '');
-    const bpm = parseFloat(t.getAttribute('AverageBpm')) || null;
-    const duration = parseFloat(t.getAttribute('TotalTime')) || null;
-    const tempo = t.querySelector('TEMPO');
+    const artist = trackNode.getAttribute('Artist') || '';
+    const title = trackNode.getAttribute('Name') || p.replace(/^.*\\/, '');
+    const bpm = parseFloat(trackNode.getAttribute('AverageBpm')) || null;
+    const duration = parseFloat(trackNode.getAttribute('TotalTime')) || null;
+    const tempo = trackNode.querySelector('TEMPO');
     const inizio = tempo ? parseFloat(tempo.getAttribute('Inizio')) : NaN;
-    // Si le morceau est déjà dans NOTRE bibliothèque, on pointe sur lui
+    // If the track is already in OUR library, point to it
     const known = library.tracks.find((x) => x.path && x.path.toLowerCase() === p.toLowerCase());
     byId.set(id, known ? library.trackRef(known) : {
       key: `rb:${p.toLowerCase()}`,
@@ -7792,13 +7804,13 @@ async function importRekordboxXml() {
       analyzed: false
     });
   }
-  // 2) Arbre de playlists : Type 1 = playlist, Type 0 = dossier (le chemin
-  // devient « Dossier / Playlist » pour ne rien perdre de l'organisation)
+  // 2) Playlist tree: Type 1 = playlist, Type 0 = folder (the path
+  // becomes "Folder / Playlist" so none of the organization is lost)
   const found = [];
   const walkNode = (node, prefix) => {
     for (const child of node.children) {
       if (child.tagName !== 'NODE') continue;
-      const nm = child.getAttribute('Name') || 'Sans nom';
+      const nm = child.getAttribute('Name') || t('rekordbox_untitled_node');
       if (child.getAttribute('Type') === '1') {
         const tracks = [...child.querySelectorAll(':scope > TRACK')]
           .map((k) => byId.get(k.getAttribute('Key')))
@@ -7815,7 +7827,7 @@ async function importRekordboxXml() {
     flashStatus(t('rekordbox_import_no_local'));
     return;
   }
-  // 3) Fusion : une playlist du même nom est MISE À JOUR, pas dupliquée
+  // 3) Merge: a playlist with the same name is UPDATED, not duplicated
   let created = 0;
   let updated = 0;
   for (const f of found) {
@@ -7845,10 +7857,10 @@ btnPlPlay.addEventListener('click', () => {
   flashStatus(t('playlist_first_track_queue', { name: p.name, n: i + 1, count: p.tracks.length - 1 }));
 });
 
-// Télécharge en dur (Musique/TurboMix) les pistes SoundCloud d'une playlist
+// Downloads a playlist's SoundCloud tracks to disk (Music/TurboMix)
 async function ensureLocalCopy(ref) {
   if (!ref || !ref.sc || !ref.scId) return;
-  // Le compte d'origine de la piste part avec la demande (privées/Go+)
+  // The track's original account goes with the request (private/Go+)
   const r = await window.api.scDownloadTo(ref.scId, ref.name, ref.acctIdx);
   if (r.ok) {
     ref.path = r.path;
@@ -7859,7 +7871,7 @@ async function ensureLocalCopy(ref) {
   }
 }
 
-// --- Menu clic droit sur un morceau : ajouter à une playlist, retirer… ---
+// --- Right-click menu on a track: add to a playlist, remove… ---
 const ctxMenu = document.getElementById('ctx-menu');
 
 function hideCtxMenu() {
@@ -7913,7 +7925,7 @@ function showTrackMenu(e, track, idx) {
       afterOrganize(false);
     };
     const here = normFsPath(parentDir(track.path));
-    // Dans un sous-dossier de la musique OpenMix : le SORTIR d'un niveau
+    // In a subfolder of OpenMix music: MOVE it up one level
     if (inNative(track.path) && !isNativeRoot(parentDir(track.path))) {
       const up = parentDir(parentDir(track.path));
       addItem(t('dl_menu_out', { name: String(parentDir(track.path)).split(/[\\/]/).pop() }), () => place(up));
@@ -7935,7 +7947,7 @@ function showTrackMenu(e, track, idx) {
     flashStatus(t('reanalyzing_track', { name: track.name }));
     try {
       const res = await library.reanalyze(track);
-      // Met à jour en direct les decks qui jouent ce morceau
+      // Live-updates the decks playing this track
       engine.decks.forEach((d, di) => {
         const same = d.track && ((track.path && d.track.path === track.path) ||
           (track.scId && d.track.scId === track.scId));
@@ -7954,7 +7966,7 @@ function showTrackMenu(e, track, idx) {
     }
   });
   addItem(t('add_to_new_playlist_label'), async () => {
-    const name = await askText('Nom de la nouvelle playlist', `Playlist ${library.playlists.length + 1}`);
+    const name = await askText(t('new_playlist_name_prompt'), `Playlist ${library.playlists.length + 1}`);
     if (!name) return;
     const p = library.createPlaylist(name);
     const ref = library.addToPlaylist(p, track);
@@ -7975,7 +7987,7 @@ function showTrackMenu(e, track, idx) {
 async function scLoad() {
   const url = scUrlInput.value.trim();
   if (!url) {
-    flashStatus('Colle un lien de playlist ou de profil SoundCloud (ex. https://soundcloud.com/tonpseudo)');
+    flashStatus(t('sc_paste_link_hint'));
     return;
   }
   await library.loadScUrl(url);
@@ -7986,22 +7998,22 @@ scUrlInput.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') scLoad();
 });
 
-// --- Connexion au compte SoundCloud ---
+// --- SoundCloud account login ---
 const btnScLogin = document.getElementById('btn-sc-login');
 const btnScMine = document.getElementById('btn-sc-mine');
 
 async function refreshScStatus() {
   const s = await window.api.scStatus();
   const accounts = (s && s.accounts) || [];
-  // scBack() a besoin de savoir s'il existe un niveau « liste des comptes »
+  // scBack() needs to know whether an "account list" level exists
   library.scAccountCount = accounts.length;
   btnScMine.classList.toggle('hidden', !s.connected);
-  // Le MÊME bouton sert à tout : 1er login, ajout du compte du pote (b2b),
-  // reconnexion d'un compte dont le jeton a expiré
+  // The SAME button does everything: 1st login, adding a friend's account (b2b),
+  // reconnecting an account whose token has expired
   const expired = accounts.find((a) => a.expired);
   btnScLogin.textContent = expired
-    ? `⚠ Reconnecter ${expired.name || 'le compte'}`
-    : accounts.length ? '+ Ajouter un compte' : 'Se connecter';
+    ? t('sc_reconnect_account', { name: expired.name || t('sc_reconnect_account_fallback') })
+    : accounts.length ? t('sc_add_account') : t('login');
   return s.connected;
 }
 
@@ -8010,21 +8022,21 @@ btnScLogin.addEventListener('click', async () => {
   if (r.ok) {
     flashStatus(t('sc_account_added', { name: r.name || 'SoundCloud' }));
     await refreshScStatus();
-    buildTree(); // le nœud SoundCloud change de forme (nœuds 👤 par compte)
+    buildTree(); // the SoundCloud node changes shape (👤 nodes per account)
     library.loadScMine(r.index ?? 0);
   } else {
-    flashStatus(`SoundCloud : ${r.error}`);
+    flashStatus(t('sc_error', { error: r.error }));
   }
 });
 
-// « Mes playlists » passe par openSoundCloud : en b2b il montre d'abord QUI
-// (la liste des comptes), en solo il garde son comportement direct
+// "My playlists" goes through openSoundCloud: in b2b it first shows WHO
+// (the account list), solo it keeps its direct behavior
 btnScMine.addEventListener('click', () => openSoundCloud());
 document.getElementById('btn-sc-back').addEventListener('click', () => library.scBack());
 
 refreshScStatus().then((connected) => {
-  // Si déjà connecté, l'onglet SoundCloud montrera direct tes playlists
-  // (ou la liste des comptes quand on est plusieurs)
+  // If already logged in, the SoundCloud tab will show your playlists right away
+  // (or the account list when there are several)
   if (connected) {
     tabSc.addEventListener('click', function once() {
       tabSc.removeEventListener('click', once);
@@ -8036,24 +8048,24 @@ refreshScStatus().then((connected) => {
 window.addEventListener('resize', () => {
   stripUI.forEach((_, i) => refreshStrip(i));
   if (xfFader) xfFader.update();
-  // OBLIGATOIRE depuis que la signature d'aperçu utilise la largeur du
-  // canvas : sans ça, redimensionner avec un deck en pause laissait la
-  // vague à l'ancienne taille
+  // REQUIRED since the overview signature uses the canvas width:
+  // without it, resizing with a paused deck left the waveform at
+  // the old size
   invalidateWaves();
 });
 
 // ---------------------------------------------------------------------------
-// SESSION : à la relance, on retrouve TOUT comme on l'a laissé (demande
-// David : « à chaque fois qu'on relance le logiciel tout est à 0 »). Les sons
-// reviennent sur leurs decks EN PAUSE, à leur position, avec point CUE,
-// tempo, KEY et SYNC ; le mixer (volumes, EQ, trim, filtres, crossfader,
-// master) et les réglages FX (effet, durée, assignations) aussi. Le NIVEAU
-// des FX, lui, repart de 0 — règle d'origine : jamais d'effet surprise.
+// SESSION: on restart, EVERYTHING is back the way it was left (David's
+// request: "every time the software is restarted everything is back to 0").
+// Tracks come back on their decks PAUSED, at their position, with CUE point,
+// tempo, KEY and SYNC; the mixer (volumes, EQ, trim, filters, crossfader,
+// master) and the FX settings (effect, duration, assignments) too. The FX
+// LEVEL, however, starts from 0 — original rule: never a surprise effect.
 // ---------------------------------------------------------------------------
 const SESSION_KEY = 'omSession';
 let sessionRestoring = false;
-// AUCUNE sauvegarde avant la fin de la restauration : sinon l'état vide du
-// démarrage écrasait la session avant même qu'on la relise
+// NO saving before the restore is finished: otherwise the empty startup
+// state overwrote the session before it was even read back
 let sessionReady = false;
 let lastSessionJson = '';
 
@@ -8064,7 +8076,7 @@ function captureSession() {
       track: d.track ? library.trackRef(d.track) : null,
       pos: d.buffer ? d.currentTime() : 0,
       cue: d.cuePoint || 0,
-      // tempo de BASE (sans la micro-correction du sync)
+      // BASE tempo (without the sync micro-correction)
       tempo: d.synced && d._syncBase ? d._syncBase : (d.tempo || 1) / (1 + (d._pllCorr || 0)),
       key: d.keyShift || 0,
       synced: !!d.synced,
@@ -8091,16 +8103,16 @@ function saveSession() {
       lastSessionJson = j;
       localStorage.setItem(SESSION_KEY, j);
     }
-  } catch { /* stockage indisponible : tant pis pour cette fois */ }
+  } catch { /* storage unavailable: too bad for this time */ }
 }
 setInterval(saveSession, 2000);
 window.addEventListener('beforeunload', saveSession);
 
 async function restoreSession() {
-  // OPTION (⚙ Comportement), désactivée par défaut : au lancement, decks
-  // vides et réglages neufs — « à chaque relance, tout est à 0 »
-  // restoreOnce : restauration UNIQUE (relance pour une mise à jour) — le
-  // drapeau est consommé, la séance suivante repart bien de zéro
+  // OPTION (⚙ Behavior), off by default: at launch, empty decks and fresh
+  // settings — "on every restart, everything is back to 0"
+  // restoreOnce: ONE-TIME restore (restart for an update) — the flag is
+  // consumed, the next session does start from scratch
   let once = localStorage.getItem('restoreOnce') === '1';
   if (once) localStorage.removeItem('restoreOnce');
   if (window.api.takeRestoreOnce && (await window.api.takeRestoreOnce().catch(() => false))) once = true;
@@ -8109,7 +8121,7 @@ async function restoreSession() {
     return;
   }
   let s = null;
-  try { s = JSON.parse(localStorage.getItem(SESSION_KEY)); } catch { /* rien */ }
+  try { s = JSON.parse(localStorage.getItem(SESSION_KEY)); } catch { /* nothing */ }
   if (!s || s.v !== 1 || !Array.isArray(s.decks)) {
     sessionReady = true;
     return;
@@ -8144,7 +8156,7 @@ async function restoreSession() {
     if (s.mvol != null) { engine.setMasterVolume(s.mvol); uiRefs.master.volKnob?.update(); }
     if (s.mfilter != null) { engine.setMasterFilter(s.mfilter); uiRefs.master.filterKnob?.update(); }
     engine.masterIdx = s.masterIdx ?? null;
-    // 2) réglages FX (niveau à 0, effet éteint : comme au démarrage)
+    // 2) FX settings (level at 0, effect off: as at startup)
     (s.fx || []).forEach((f, u) => {
       const unit = engine.fx[u];
       const r = uiRefs.fxUnits[u];
@@ -8156,8 +8168,8 @@ async function restoreSession() {
       engine.fxAssign = s.fxAssign.map((a) => [0, 1, 2, 3].map((k) => !!(a && a[k])));
       engine.updateFxSends();
     }
-    try { updateFxPanel(); } catch { /* panneau pas encore prêt */ }
-    // 3) les sons, un deck après l'autre, EN PAUSE à leur position
+    try { updateFxPanel(); } catch { /* panel not ready yet */ }
+    // 3) the tracks, one deck after another, PAUSED at their position
     let n = 0;
     for (let i = 0; i < 4; i++) {
       const ds = s.decks[i];
@@ -8170,14 +8182,14 @@ async function restoreSession() {
       d.cuePoint = ds.cue || 0;
       d.seek(ds.pos || 0);
       d.synced = !!ds.synced;
-      // rechargé, pas joué : il ne compte pas comme « déjà joué » ce soir
+      // reloaded, not played: it doesn't count as "already played" tonight
       library.unmarkPlayed(ds.track);
       n++;
     }
     markTakenRows();
     if (n) flashStatus(t('session_restored', { n }));
   } catch (err) {
-    console.log(`[midi] session : restauration interrompue (${err.message || err})`);
+    console.log(`[midi] session: restore interrupted (${err.message || err})`);
   } finally {
     sessionRestoring = false;
     sessionReady = true;

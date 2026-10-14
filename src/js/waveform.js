@@ -1,11 +1,11 @@
-// Formes d'onde haute précision : enveloppe réelle du signal (crête haute ET
-// basse par tranche de 2,5 ms), colorée par fréquences (graves -> R, médiums -> V,
-// aigus -> B), dessinée pixel par pixel (pas de gros blocs).
+// High-precision waveforms: real signal envelope (high AND low peak
+// per 2.5 ms slice), colored by frequency (lows -> R, mids -> G,
+// highs -> B), drawn pixel by pixel (no big blocks).
 
 import { gridIndexFracAt, gridTimeAtIndex } from './engine.js';
 
 export async function computeBandPeaks(buffer, perSecond = 400, opts = {}) {
-  // Rendu des 3 bandes à 16 kHz : suffisant pour la couleur, 3x moins de mémoire
+  // Render the 3 bands at 16 kHz: enough for the color, 3x less memory
   const bandSr = 16000;
   const off = new OfflineAudioContext(3, Math.ceil(buffer.duration * bandSr), bandSr);
   const src = off.createBufferSource();
@@ -17,7 +17,7 @@ export async function computeBandPeaks(buffer, perSecond = 400, opts = {}) {
 
   const mid = off.createBiquadFilter();
   mid.type = 'bandpass';
-  mid.frequency.value = 630;   // centre géométrique de 200–2000 Hz
+  mid.frequency.value = 630;   // geometric center of 200–2000 Hz
   mid.Q.value = 0.35;
 
   const high = off.createBiquadFilter();
@@ -40,13 +40,13 @@ export async function computeBandPeaks(buffer, perSecond = 400, opts = {}) {
   const orig2 = buffer.numberOfChannels > 1 ? buffer.getChannelData(1) : orig;
 
   const total = Math.max(1, Math.ceil(buffer.duration * perSecond));
-  // DÉCOUPAGE EN TEMPS EXACT : un nombre ENTIER d'échantillons par tranche
-  // (l'ancien floor) accumulait ~0,23 % de dérive — la vague glissait vers
-  // la droite le long du morceau (« la basse commence au trait rouge mais
-  // s'affiche après »). Chaque tranche est bornée par round(b × sr / pps).
+  // EXACT-TIME SLICING: a WHOLE number of samples per slice
+  // (the old floor) accumulated ~0.23% drift — the wave slid to
+  // the right along the track ("the bass starts at the red line but
+  // shows up after it"). Each slice is bounded by round(b × sr / pps).
   const sr = buffer.sampleRate;
 
-  // Enveloppe réelle : min et max signés du signal par tranche
+  // Real envelope: signed min and max of the signal per slice
   const top = new Float32Array(total);
   const bottom = new Float32Array(total);
   const bands = [new Float32Array(total), new Float32Array(total), new Float32Array(total)];
@@ -57,9 +57,9 @@ export async function computeBandPeaks(buffer, perSecond = 400, opts = {}) {
     let hi = 0;
     let lo = 0;
     for (let i = start; i < end; i++) {
-      // Enveloppe PAR CANAL (pas de moyenne L+R : sur les stéréos en
-      // opposition de phase — typiques des drops — la somme s'ANNULE et
-      // le drop paraissait muet à l'écran)
+      // Envelope PER CHANNEL (no L+R average: on stereo tracks in
+      // phase opposition — typical of drops — the sum CANCELS OUT and
+      // the drop looked silent on screen)
       const a = orig[i];
       const c2 = orig2[i];
       const mx = a > c2 ? a : c2;
@@ -83,26 +83,26 @@ export async function computeBandPeaks(buffer, perSecond = 400, opts = {}) {
     }
   }
 
-  // Enveloppe FINE (4000 pts/s, stockée en Int8 : ~2 Mo pour 4 min) —
-  // calculée UNE FOIS ici pour que le dessin au zoom ne relise plus les
-  // échantillons bruts à chaque frame (ça mettait les vieilles machines à
-  // genoux : vagues saccadées, son qui accroche)
+  // FINE envelope (4000 pts/s, stored as Int8: ~2 MB for 4 min) —
+  // computed ONCE here so that drawing when zoomed in no longer re-reads
+  // the raw samples every frame (that brought old machines to their
+  // knees: choppy waves, stuttering audio)
   const FINE_PPS = 4000;
-  // opts.fine === false : l'appelant (vignette de la bibliothèque, 150 px)
-  // ne s'en sert PAS — on économise ~1 million de tranches et 2 Mo par
-  // morceau pendant le scan
+  // opts.fine === false: the caller (library thumbnail, 150 px)
+  // does NOT use it — saves ~1 million slices and 2 MB per
+  // track during the scan
   const fineTotal = opts.fine === false ? 0 : Math.max(1, Math.ceil(buffer.duration * FINE_PPS));
   const fineTop = new Int8Array(fineTotal);
   const fineBottom = new Int8Array(fineTotal);
   for (let b = 0; b < fineTotal; b++) {
-    // même règle anti-dérive : bornes en temps exact
+    // same anti-drift rule: exact-time bounds
     const start = Math.round(b * sr / FINE_PPS);
     const end = Math.min(Math.round((b + 1) * sr / FINE_PPS), orig.length);
     let hi = 0;
     let lo = 0;
     for (let i = start; i < end; i++) {
-      // Même règle que l'enveloppe principale : par canal, jamais de
-      // moyenne (l'annulation de phase masquait les drops)
+      // Same rule as the main envelope: per channel, never an
+      // average (phase cancellation hid the drops)
       const a = orig[i];
       const c2 = orig2[i];
       const mx = a > c2 ? a : c2;
@@ -123,10 +123,10 @@ export async function computeBandPeaks(buffer, perSecond = 400, opts = {}) {
   };
 }
 
-// Couleurs des 8 hot cues (A-H)
+// Colors of the 8 hot cues (A-H)
 const CUE_COLORS = ['#ff3b30', '#ff9500', '#ffcc00', '#34c759', '#5ac8fa', '#3b82f7', '#af52de', '#ff2d55'];
 
-// Palette de la forme d'onde (réglable dans les paramètres)
+// Waveform palette (configurable in the settings)
 let PALETTE = 'rgb';
 export function setWavePalette(p) {
   PALETTE = p;
@@ -134,7 +134,7 @@ export function setWavePalette(p) {
 const PAL_SETS = {
   blueorange: [[40, 115, 255], [255, 150, 40], [235, 240, 255]],
   neon: [[255, 45, 150], [80, 255, 160], [90, 200, 255]],
-  // Palette « club » : basses bleu profond, médiums ambre, aigus blancs
+  // "Club" palette: deep blue lows, amber mids, white highs
   club: [[25, 70, 255], [255, 170, 70], [246, 248, 255]]
 };
 
@@ -145,9 +145,9 @@ function waveColor(l, m, h) {
     return `rgb(${Math.round((l / mx) * 255)},${Math.round((m / mx) * 255)},${Math.round((h / mx) * 255)})`;
   }
   if (PALETTE === 'club') {
-    // Poids au CARRÉ : la bande dominante impose sa couleur (le kick est
-    // FRANCHEMENT bleu, les hats FRANCHEMENT blancs) au lieu d'un mélange
-    // moyen délavé
+    // SQUARED weights: the dominant band imposes its color (the kick is
+    // CLEARLY blue, the hats CLEARLY white) instead of a washed-out
+    // average blend
     const C = PAL_SETS.club;
     const wl = (l / mx) ** 2, wm = (m / mx) ** 2, wh = (h / mx) ** 2;
     const sum = wl + wm + wh || 1;
@@ -173,7 +173,7 @@ function drawCueMarkers(ctx, deck, xOf, H, withLabels) {
     if (x < -10 || x > ctx.canvas.width + 10) return;
     ctx.fillStyle = CUE_COLORS[idx % CUE_COLORS.length];
     ctx.fillRect(x - 1, 0, 2, H);
-    // Petit fanion en haut
+    // Small flag at the top
     ctx.beginPath();
     ctx.moveTo(x - 1, 0);
     ctx.lineTo(x + 9, 0);
@@ -200,7 +200,7 @@ export function fitCanvas(canvas) {
   return false;
 }
 
-// Agrège les seaux couvrant [b0, b1) et dessine une colonne de 1 px.
+// Aggregates the buckets covering [b0, b1) and draws a 1 px column.
 function drawColumn(ctx, peaks, b0, b1, x, mid, scaleY) {
   let hi = 0, lo = 0, l = 0, m = 0, h = 0;
   for (let b = b0; b < b1; b++) {
@@ -216,15 +216,15 @@ function drawColumn(ctx, peaks, b0, b1, x, mid, scaleY) {
   ctx.fillRect(x, y0, 1, Math.max(1, y1 - y0));
 }
 
-// Vue zoomée défilante : fenêtre de `windowSec` s, dessinée par colonne de pixel.
-// timeOverride : position à afficher SI différente de la tête de lecture —
-// pendant un V.BRAKE/BACKSPIN, on montre la position VIRTUELLE (le son
-// « continue » en dessous), pas le rembobinage sonore.
+// Scrolling zoomed view: a `windowSec` s window, drawn per pixel column.
+// timeOverride: position to display IF different from the playhead —
+// during a V.BRAKE/BACKSPIN, we show the VIRTUAL position (the track
+// "keeps going" underneath), not the audible rewind.
 export function drawZoom(canvas, deck, windowSec = 8, timeOverride) {
   fitCanvas(canvas);
   const ctx = canvas.getContext('2d');
   const { width: W, height: H } = canvas;
-  if (!W || !H) return; // deck caché (mode 2 decks) : rien à dessiner
+  if (!W || !H) return; // hidden deck (2-deck mode): nothing to draw
   ctx.clearRect(0, 0, W, H);
   const peaks = deck.peaks;
   if (!peaks) return;
@@ -232,28 +232,28 @@ export function drawZoom(canvas, deck, windowSec = 8, timeOverride) {
   const time = timeOverride != null ? timeOverride : deck.currentTime();
   const pps = peaks.perSecond;
   const t0 = time - windowSec / 2;
-  const spx = windowSec / W; // secondes par pixel
+  const spx = windowSec / W; // seconds per pixel
   const mid = H / 2;
   const scaleY = H * 0.47;
   const len = peaks.top.length;
   const playedX = Math.floor((time - t0) / spx);
-  // À fort zoom : l'enveloppe FINE précalculée (min/max exact par tranche de
-  // 0,25 ms) remplace la relecture des échantillons bruts — même rendu,
-  // ~100× moins de travail par frame. Les échantillons bruts ne servent plus
-  // qu'aux zooms extrêmes (fenêtre < ~0,2 s), où ils sont bon marché.
+  // At high zoom: the precomputed FINE envelope (exact min/max per 0.25 ms
+  // slice) replaces re-reading the raw samples — same rendering,
+  // ~100× less work per frame. Raw samples are now only used
+  // for extreme zooms (window < ~0.2 s), where they are cheap.
   const finePps = peaks.finePps || 0;
   const useFine = finePps && spx * pps < 1 && spx * finePps >= 1;
   const useSamples = !useFine && spx * (finePps || pps) < 1 && deck.buffer;
 
   // ====================================================================
-  // BANDE PRÉ-RENDUE : la vague DÉFILE, son contenu ne change pas. On la
-  // dessine UNE FOIS sur 3 largeurs d'écran, puis chaque image se contente
-  // d'en RECOPIER la tranche visible — une opération accélérée par la carte
-  // graphique. On passe de ~1200 colonnes calculées 30 fois par seconde à
-  // un tracé complet toutes les ~8 s : c'est LE gain pour les machines
-  // modestes. Le rendu à l'écran est rigoureusement identique.
+  // PRE-RENDERED STRIP: the wave SCROLLS, its content does not change. We
+  // draw it ONCE over 3 screen widths, then each frame simply COPIES the
+  // visible slice — an operation accelerated by the graphics card. We go
+  // from ~1200 columns computed 30 times per second to one full redraw
+  // every ~8 s: this is THE gain for modest machines. The on-screen
+  // rendering is strictly identical.
   // ====================================================================
-  const peintureColonnes = (g, gt0, gW) => {
+  const paintColumns = (g, gt0, gW) => {
     if (useFine) {
       const fTop = peaks.fineTop;
       const fBot = peaks.fineBottom;
@@ -291,10 +291,10 @@ export function drawZoom(canvas, deck, windowSec = 8, timeOverride) {
         if (i1 <= 0 || i0 >= total) continue;
         if (i0 < 0) i0 = 0;
         if (i1 > total) i1 = total;
-        // TOUS les échantillons de la colonne : un stride qui en saute crée
-        // des ondes FANTÔMES par repliement (aliasing) — la « démultiplication »
-        // des ondes au zoom. Le min/max exact donne la vraie enveloppe,
-        // identique à tous les niveaux de zoom.
+        // ALL the samples of the column: a stride that skips some creates
+        // GHOST waves through aliasing — the "multiplying" waves
+        // when zooming in. The exact min/max gives the true envelope,
+        // identical at every zoom level.
         let hi = -1;
         let lo = 1;
         for (let s = i0; s < i1; s++) {
@@ -325,41 +325,41 @@ export function drawZoom(canvas, deck, windowSec = 8, timeOverride) {
     }
   };
 
-  // La bande couvre 3 écrans : tant que la fenêtre visible reste dedans,
-  // on ne recalcule RIEN. Signature : tout ce qui change le dessin.
+  // The strip covers 3 screens: as long as the visible window stays inside,
+  // NOTHING is recomputed. Signature: everything that changes the drawing.
   const sig = `${W}x${H}|${windowSec}|${PALETTE}|${useFine ? 'f' : useSamples ? 's' : 'b'}|${len}|${peaks.duration}`;
   let strip = canvas._strip;
-  // peaks : IDENTITÉ du morceau — un nouveau son doit toujours repeindre
+  // peaks: IDENTITY of the track — a new track must always repaint
   if (!strip || strip.sig !== sig || strip.peaks !== peaks) {
     const cv = strip && strip.cv ? strip.cv : document.createElement('canvas');
     cv.width = W * 3;
     cv.height = H;
     strip = canvas._strip = { cv, g: cv.getContext('2d'), sig, peaks, t0: NaN };
   }
-  // Hors bande (démarrage, saut, scratch rapide) : on la recentre.
-  // On ne peint TOUT DE SUITE que le tiers VISIBLE ; les deux autres tiers
-  // sont peints aux images suivantes, un par image. Sinon un repeint
-  // complet (3 écrans de colonnes) tombait d'un coup toutes les ~8 s et
-  // se voyait comme un micro-accroc dans le défilement.
+  // Outside the strip (start, jump, fast scratch): re-center it.
+  // Only the VISIBLE third is painted RIGHT AWAY; the other two thirds
+  // are painted on the following frames, one per frame. Otherwise a full
+  // repaint (3 screens of columns) landed all at once every ~8 s and
+  // showed up as a micro-hitch in the scrolling.
   if (!(t0 >= strip.t0 && t0 + windowSec <= strip.t0 + windowSec * 3)) {
-    strip.t0 = t0 - windowSec;                 // fenêtre visible au centre
+    strip.t0 = t0 - windowSec;                 // visible window in the center
     strip.g.clearRect(0, 0, W * 3, H);
     strip.g.save();
-    strip.g.translate(W, 0);                   // tiers du milieu
-    peintureColonnes(strip.g, strip.t0 + windowSec, W);
+    strip.g.translate(W, 0);                   // middle third
+    paintColumns(strip.g, strip.t0 + windowSec, W);
     strip.g.restore();
-    strip.reste = [2, 0];                      // droite d'abord (sens de lecture)
+    strip.pending = [2, 0];                    // right first (playback direction)
   }
-  // Un tiers restant par image : le coût est réparti, jamais un pic
-  if (strip.reste && strip.reste.length) {
-    const tiers = strip.reste.shift();
+  // One remaining third per frame: the cost is spread out, never a spike
+  if (strip.pending && strip.pending.length) {
+    const third = strip.pending.shift();
     strip.g.save();
-    strip.g.translate(W * tiers, 0);
-    peintureColonnes(strip.g, strip.t0 + windowSec * tiers, W);
+    strip.g.translate(W * third, 0);
+    paintColumns(strip.g, strip.t0 + windowSec * third, W);
     strip.g.restore();
   }
-  // Recopie GPU : partie DÉJÀ JOUÉE en pleine opacité, partie à venir en
-  // demi-teinte — exactement l'ancien rendu, en deux appels au lieu de 1200
+  // GPU copy: the ALREADY PLAYED part at full opacity, the upcoming part
+  // dimmed — exactly the old rendering, in two calls instead of 1200
   const sx = Math.round((t0 - strip.t0) / spx);
   const pw = Math.max(0, Math.min(W, playedX));
   if (pw > 0) ctx.drawImage(strip.cv, sx, 0, pw, H, 0, 0, pw, H);
@@ -369,7 +369,7 @@ export function drawZoom(canvas, deck, windowSec = 8, timeOverride) {
     ctx.globalAlpha = 1;
   }
 
-  // Boucle active : bande orange + drapeaux IN / OUT bien visibles
+  // Active loop: orange band + clearly visible IN / OUT flags
   if (deck.looping) {
     const x0 = (deck.loopStart - t0) / windowSec * W;
     const x1 = (deck.loopEnd - t0) / windowSec * W;
@@ -389,7 +389,7 @@ export function drawZoom(canvas, deck, windowSec = 8, timeOverride) {
       ctx.fillText('OUT', x1 - 19, 9);
     }
   }
-  // Point IN posé en attente du OUT : drapeau orange isolé
+  // IN point set, waiting for the OUT: lone orange flag
   if (!deck.looping && deck._loopInPoint != null) {
     const xi = (deck._loopInPoint - t0) / windowSec * W;
     if (xi > -20 && xi < W + 20) {
@@ -404,9 +404,9 @@ export function drawZoom(canvas, deck, windowSec = 8, timeOverride) {
     }
   }
 
-  // POINT CUE principal (pas les hot cues) : marqueur ORANGE bien visible,
-  // fanion en BAS (les hot cues occupent le haut) — « on ne voit pas bien
-  // le point de cue » (David)
+  // Main CUE POINT (not the hot cues): clearly visible ORANGE marker,
+  // flag at the BOTTOM (hot cues use the top) — "you can't see the
+  // cue point well" (David)
   if (deck.buffer && deck.cuePoint != null && deck.cuePoint > 0.005) {
     const xc = (deck.cuePoint - t0) / windowSec * W;
     if (xc > -14 && xc < W + 14) {
@@ -425,9 +425,9 @@ export function drawZoom(canvas, deck, windowSec = 8, timeOverride) {
     }
   }
 
-  // Beat grid : trait rouge plein à chaque MESURE (4 temps), tics blancs sur
-  // chaque temps, micro-tics sur les quarts. GRILLE DYNAMIQUE si disponible :
-  // chaque trait est posé sur le temps RÉEL détecté — aucune dérive possible.
+  // Beat grid: solid red line on every BAR (4 beats), white ticks on
+  // every beat, micro-ticks on the quarters. DYNAMIC GRID if available:
+  // each line is placed on the REAL detected beat — no drift possible.
   if (deck.beats && deck.beats.length > 2) {
     const anchor = deck.barAnchor || 0;
     const tick = Math.max(5, H * 0.1);
@@ -442,7 +442,7 @@ export function drawZoom(canvas, deck, windowSec = 8, timeOverride) {
       if (tb >= 0) {
         const rel = ((k - anchor) % 16 + 16) % 16;
         if (rel === 0) {
-          // Début de PHRASE (toutes les 4 mesures) : trait rouge renforcé
+          // Start of a PHRASE (every 4 bars): reinforced red line
           ctx.fillStyle = 'rgba(255, 45, 45, 1)';
           ctx.fillRect(x - 1.5, 0, 3, H);
           ctx.fillRect(x - 1.5, 0, 7, 4);
@@ -472,7 +472,7 @@ export function drawZoom(canvas, deck, windowSec = 8, timeOverride) {
     const period = 60 / deck.bpm;
     const tick = Math.max(5, H * 0.1);
     const beatPx = period / windowSec * W;
-    const showMicro = beatPx > 34; // micro-segments visibles quand on zoome
+    const showMicro = beatPx > 34; // micro-segments visible when zoomed in
     let k = Math.ceil((t0 - deck.beatOffset) / period - 1e-6) - 1;
     for (;; k++) {
       const tb = deck.beatOffset + k * period;
@@ -484,7 +484,7 @@ export function drawZoom(canvas, deck, windowSec = 8, timeOverride) {
           ctx.fillStyle = 'rgba(255, 45, 45, 0.95)';
           ctx.fillRect(x - 1, 0, 2, H);
         } else {
-          // Segment (temps) : ligne fine sur toute la hauteur + tics marqués
+          // Segment (beat): thin line over the full height + marked ticks
           ctx.fillStyle = 'rgba(255, 255, 255, 0.22)';
           ctx.fillRect(x - 0.5, 0, 1, H);
           ctx.fillStyle = 'rgba(255, 255, 255, 0.6)';
@@ -505,19 +505,19 @@ export function drawZoom(canvas, deck, windowSec = 8, timeOverride) {
     }
   }
 
-  // Marqueurs de hot cues (avec leur lettre)
+  // Hot cue markers (with their letter)
   drawCueMarkers(ctx, deck, (c) => (c - t0) / windowSec * W, H, true);
-  // (la tête de lecture est le trait global qui traverse les 4 pistes)
+  // (the playhead is the global line running across the 4 tracks)
 }
 
-// Vue d'ensemble : rendu complet mis en cache hors écran (une colonne par pixel),
-// puis à chaque frame on l'affiche (partie lue en pleine intensité).
+// Overview: full rendering cached off-screen (one column per pixel),
+// then shown on every frame (played part at full intensity).
 export function drawOverview(canvas, deck) {
   const resized = fitCanvas(canvas);
   const ctx = canvas.getContext('2d');
   const { width: W, height: H } = canvas;
-  // Deck caché (mode 2 decks) : un cache de largeur 0 ferait planter
-  // drawImage → boucle de rendu morte → toute l'app figée
+  // Hidden deck (2-deck mode): a 0-width cache would make
+  // drawImage crash → dead render loop → the whole app frozen
   if (!W || !H) return;
   ctx.clearRect(0, 0, W, H);
   const peaks = deck.peaks;
@@ -552,7 +552,7 @@ export function drawOverview(canvas, deck) {
     ctx.drawImage(canvas._cache, 0, 0, progressX, H, 0, 0, progressX, H);
   }
 
-  // Boucle active : bande orange
+  // Active loop: orange band
   if (deck.looping) {
     const x0 = (deck.loopStart / peaks.duration) * W;
     const x1 = (deck.loopEnd / peaks.duration) * W;
@@ -560,7 +560,7 @@ export function drawOverview(canvas, deck) {
     ctx.fillRect(x0, 0, Math.max(2, x1 - x0), H);
   }
 
-  // Marqueurs de hot cues sur la miniature (avec leur lettre)
+  // Hot cue markers on the thumbnail (with their letter)
   drawCueMarkers(ctx, deck, (c) => (c / peaks.duration) * W, H, true);
 
   ctx.fillStyle = '#ffffff';

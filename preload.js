@@ -1,8 +1,8 @@
 const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 contextBridge.exposeInMainWorld('api', {
-  // Utilisé côté renderer pour les ajustements spécifiques à une plateforme
-  // (ex : laisser de la place aux boutons natifs macOS en haut à gauche)
+  // Used by the renderer for platform-specific adjustments
+  // (e.g. leaving room for the native macOS buttons at the top left)
   platform: process.platform,
   pickFolder: () => ipcRenderer.invoke('pick-folder'),
   pickSamples: () => ipcRenderer.invoke('pick-samples'),
@@ -14,7 +14,7 @@ contextBridge.exposeInMainWorld('api', {
   cacheSave: (o) => ipcRenderer.invoke('cache-save', o),
   cacheSaveSync: (o) => ipcRenderer.sendSync('cache-save-sync', o),
   rbGrids: () => ipcRenderer.invoke('rb-grids'),
-  // acctIdx : index du compte SoundCloud à utiliser (b2b) — absent = compte 0
+  // acctIdx: index of the SoundCloud account to use (b2b) — absent = account 0
   scResolve: (url, acctIdx) => ipcRenderer.invoke('sc-resolve', url, acctIdx),
   scFetchTrack: (scId, acctIdx) => ipcRenderer.invoke('sc-fetch-track', scId, acctIdx),
   scDownloadTo: (scId, name, acctIdx) => ipcRenderer.invoke('sc-download-to', scId, name, acctIdx),
@@ -54,7 +54,7 @@ contextBridge.exposeInMainWorld('api', {
   dlMoveDir: (src, destDir) => ipcRenderer.invoke('dl-move-dir', src, destDir),
   dlRename: (p, name) => ipcRenderer.invoke('dl-rename', p, name),
   dlTrash: (p) => ipcRenderer.invoke('dl-trash', p),
-  // chemin d'un fichier glissé depuis l'Explorateur Windows
+  // path of a file dragged from Windows Explorer
   pathForFile: (f) => { try { return webUtils.getPathForFile(f) || ''; } catch { return ''; } },
   dlChooseRoot: () => ipcRenderer.invoke('dl-choose-root'),
   dlPlace: (file, destDir) => ipcRenderer.invoke('dl-place', file, destDir),

@@ -1,34 +1,36 @@
-// Contrôle manette (API Gamepad, mapping "standard") — PS et Xbox.
-// MULTI-JOUEURS : chaque manette a SON curseur sur la MATRICE DES KNOBS
-// (colonnes = decks, rangée du haut = MASTER). Le deck du joueur = sa colonne.
+// Gamepad control (Gamepad API, "standard" mapping) — PS and Xbox.
+// MULTIPLAYER: each gamepad has ITS OWN cursor on the KNOB MATRIX
+// (columns = decks, top row = MASTER). The player's deck = their column.
 //
-// Par manette :
-//  Dpad           : matrice des knobs · sous FILTER = mode NAVIGATION
-//                   (▲▼ sélection, ◀▶ onglets, ▲ en haut de liste = retour)
-// 16 Logo (milieu): couper / réactiver le knob survolé (LOW = basses EXCLUSIVES)
-//  0 Croix/A      : Play/Pause · en navigation : ouvrir / CHARGER ET LANCER
-//  1 Rond/B       : remet le knob survolé AU NEUTRE (nav : retour) ·
-//                   appui LONG = sélection CUT
-//  3 Triangle/Y   : CUT groupé des decks sélectionnés (tout coupe / tout revient)
-//  2 Carré/X      : court = durée FX (1/2·3/4·1·2) · ENFONCÉ = liste des
-//                   effets affichée + l'effet défile petit à petit
-// 10 L3           : FILTRE en général ON/OFF (COLOR)
-// 11 R3           : FX de la track ON/OFF (rangée master = tous)
-//  9 Options/Menu : BEAT SYNC ON/OFF du deck de la colonne
-//  4/5 L1/R1      : VOLUME de la piste − / + (rangée master : knob master)
-//  6/7 L2/R2      : appuient sur les PADS encadrés L2/R2 (moitié gauche /
-//                   droite, la rangée choisit la paire, mode CUE/JUMP/LOOP)
-//  8 Share/View   : appui court = mode L2/R2 (CUE→JUMP→LOOP), long = aide
-//  Stick gauche   : ▲▼ = knob survolé · ◀▶ (maintenu ½ s) = PITCH BEND jog
-//                   (avance/recule légèrement le son pour caler à l'oreille)
-//  Stick droit    : ▲▼ = NIVEAU du FX · ◀▶ (maintenu ½ s) = ZOOM des vagues
+// Per gamepad:
+//  Dpad           : knob matrix · below FILTER = NAVIGATION mode
+//                   (▲▼ selection, ◀▶ tabs, ▲ at the top of the list = back)
+// 16 Logo (middle): kill / restore the hovered knob (LOW = EXCLUSIVE bass)
+//  0 Cross/A      : Play/Pause · in navigation: open / LOAD AND PLAY
+//  1 Circle/B     : resets the hovered knob TO NEUTRAL (nav: back) ·
+//                   LONG press = CUT selection
+//  3 Triangle/Y   : grouped CUT of the selected decks (all cut / all back)
+//  2 Square/X     : short = FX length (1/2·3/4·1·2) · HELD = effect list
+//                   shown + the effect scrolls step by step
+// 10 L3           : global FILTER ON/OFF (COLOR)
+// 11 R3           : track FX ON/OFF (master row = all)
+//  9 Options/Menu : BEAT SYNC ON/OFF for the column's deck
+//  4/5 L1/R1      : track VOLUME − / + (master row: master knob)
+//  6/7 L2/R2      : press the PADS framed L2/R2 (left / right half,
+//                   the row picks the pair, CUE/JUMP/LOOP mode)
+//  8 Share/View   : short press = L2/R2 mode (CUE→JUMP→LOOP), long = help
+//  Left stick     : ▲▼ = hovered knob · ◀▶ (held ½ s) = jog PITCH BEND
+//                   (moves the track slightly forward/back to beatmatch by ear)
+//  Right stick    : ▲▼ = FX LEVEL · ◀▶ (held ½ s) = waveform ZOOM
+
+import { t } from './i18n.js';
 
 const DEADZONE = 0.18;
 
 export class GamepadManager {
   constructor(actions) {
     this.actions = actions;
-    this.pads = new Map(); // gamepad.index -> état du joueur
+    this.pads = new Map(); // gamepad.index -> player state
   }
 
   detectType(id) {
@@ -59,8 +61,8 @@ export class GamepadManager {
   }
 
   buttonLabel(idx) {
-    const ps = { 0: 'Croix', 1: 'Rond', 2: 'Carré', 3: 'Triangle', 4: 'L1', 5: 'R1', 6: 'L2', 7: 'R2', 8: 'Share', 9: 'Options', 10: 'L3', 11: 'R3', 16: 'Bouton PS' };
-    const xb = { 0: 'A', 1: 'B', 2: 'X', 3: 'Y', 4: 'LB', 5: 'RB', 6: 'LT', 7: 'RT', 8: 'View', 9: 'Menu', 10: 'L3', 11: 'R3', 16: 'Bouton Xbox' };
+    const ps = { 0: t('gamepad_btn_cross'), 1: t('gamepad_btn_circle'), 2: t('gamepad_btn_square'), 3: 'Triangle', 4: 'L1', 5: 'R1', 6: 'L2', 7: 'R2', 8: 'Share', 9: 'Options', 10: 'L3', 11: 'R3', 16: t('gamepad_btn_ps') };
+    const xb = { 0: 'A', 1: 'B', 2: 'X', 3: 'Y', 4: 'LB', 5: 'RB', 6: 'LT', 7: 'RT', 8: 'View', 9: 'Menu', 10: 'L3', 11: 'R3', 16: t('gamepad_btn_xbox') };
     return (this.type === 'ps' ? ps : xb)[idx] || `B${idx}`;
   }
 
@@ -92,14 +94,14 @@ export class GamepadManager {
         st = {
           prev: [],
           repeat: {},
-          hold: {},     // verrous d'angle des sticks (0,5 s)
-          navSel: null, // sélection bibliothèque PROPRE à ce joueur
-          mode: 'jump', // mode L2/R2 PROPRE à ce joueur (JUMP/LOOP/CUE/KEY)
+          hold: {},     // stick angle locks (0.5 s)
+          navSel: null, // library selection SPECIFIC to this player
+          mode: 'jump', // L2/R2 mode SPECIFIC to this player (JUMP/LOOP/CUE/KEY)
           player: gp.index + 1,
           deck,
           type: this.detectType(gp.id),
           name: gp.id,
-          cur: { r: 1, c: deck } // départ sur TRIM de son deck (matrice des knobs)
+          cur: { r: 1, c: deck } // starts on its deck's TRIM (knob matrix)
         };
         this.pads.set(gp.index, st);
         changed = true;
@@ -121,26 +123,26 @@ export class GamepadManager {
     const was = (i) => !!st.prev[i];
     const edge = (i) => pressed[i] && !was(i);
 
-    // --- Dpad : matrice des knobs + zone NAVIGATION sous FILTER ---
-    // Rangée 0 = master (2 cellules), rangées 1..5 = knobs (1 colonne par
-    // deck), rangée NAV (sous FILTER) = bibliothèque : ▲▼ = sélection
-    // (▲ tout en haut de la liste = retour sur la matrice), ◀▶ = onglets.
+    // --- Dpad: knob matrix + NAVIGATION zone below FILTER ---
+    // Row 0 = master (2 cells), rows 1..5 = knobs (1 column per
+    // deck), NAV row (below FILTER) = library: ▲▼ = selection
+    // (▲ at the very top of the list = back to the matrix), ◀▶ = tabs.
     const rows = this.actions.gridRows ? this.actions.gridRows() : 6;
-    const NAV = rows; // rangée virtuelle de navigation
+    const NAV = rows; // virtual navigation row
     const clampCur = () => {
       if (st.cur.r >= NAV) return;
-      // colonne FX (à droite des knobs) : pas de clamp, le deck ne change pas
+      // FX column (right of the knobs): no clamp, the deck does not change
       if (st.cur.c === 4) return;
       const n = this.actions.deckCount ? this.actions.deckCount() : 4;
       if (st.cur.c >= n) st.cur.c = n - 1;
-      // le deck du joueur = sa colonne (aussi sur la ligne SELECT)
+      // the player's deck = their column (also on the SELECT row)
       st.deck = st.cur.c;
     };
     const inNav = () => st.cur.r >= NAV;
     this._withRepeat(st, 12, pressed[12], now, () => {
       if (inNav()) {
         if ((st.navSel || 0) <= 0) {
-          st.cur.r = rows - 1; // haut de liste → retour matrice
+          st.cur.r = rows - 1; // top of the list → back to the matrix
           st.navSel = null;
           clampCur();
         } else {
@@ -155,15 +157,15 @@ export class GamepadManager {
       if (inNav()) {
         this.actions.navMove(st, 1);
       } else {
-        st.cur.r += 1; // sous FILTER → mode navigation
+        st.cur.r += 1; // below FILTER → navigation mode
         if (inNav() && st.navSel == null && this.actions.navSelIndex) {
           st.navSel = this.actions.navSelIndex();
         }
         clampCur();
       }
     });
-    // ◀▶ : déplacement VISUEL — la colonne suivante à l'écran (ordre club
-    // 3 1 2 4 puis FX), identique sur TOUTES les rangées (SELECT comprise)
+    // ◀▶: VISUAL movement — the next column on screen (club order
+    // 3 1 2 4 then FX), identical on ALL rows (SELECT included)
     const stepCol = (dir) => {
       const ord = this.actions.visualOrder ? this.actions.visualOrder() : [0, 1, 2, 3];
       let pos = ord.indexOf(st.cur.c);
@@ -182,18 +184,18 @@ export class GamepadManager {
     const D = st.deck;
     const nav = inNav();
 
-    // --- Bouton Xbox/PS (logo, 16) : couper / réactiver le knob survolé.
-    // Sur LOW : les basses passent à ce deck (exclusives). Ailleurs :
-    // simple enlever / remettre. (La Game Bar Windows est désactivée.)
+    // --- Xbox/PS button (logo, 16): kill / restore the hovered knob.
+    // On LOW: the bass moves to this deck (exclusive). Elsewhere:
+    // simple remove / put back. (The Windows Game Bar is disabled.)
     if (edge(16) && !nav) this.actions.killKnob(st.cur, st.player - 1);
-    // --- Croix/A : Play/Pause — en navigation : ouvre la playlist ou
-    // CHARGE ET LANCE le son (re-appuyer = pause) ---
+    // --- Cross/A: Play/Pause — in navigation: opens the playlist or
+    // LOADS AND PLAYS the track (press again = pause) ---
     if (edge(0)) (nav ? this.actions.navEnter(st, D) : this.actions.padPrimary(st, D));
-    // --- Rond/B : REMET LE KNOB SURVOLÉ AU NEUTRE (instantané — effet de
-    // filtre puis retour à zéro sec) · en navigation : RETOUR · appui
-    // long = sélectionner la colonne pour le CUT ---
-    // le reset part au RELÂCHER court : un appui long (sélection CUT) ne
-    // doit plus déclencher le reset filtre+FX au passage
+    // --- Circle/B: RESETS THE HOVERED KNOB TO NEUTRAL (instant — filter
+    // effect then an abrupt return to zero) · in navigation: BACK · long
+    // press = select the column for the CUT ---
+    // the reset fires on a short RELEASE: a long press (CUT selection) must
+    // no longer trigger the filter+FX reset along the way
     if (edge(1)) st.bT = now;
     if (pressed[1] && st.bT != null && now - st.bT >= 500) {
       this.actions.selectToggle(D, st.player - 1);
@@ -204,23 +206,23 @@ export class GamepadManager {
       else this.actions.resetKnob(st.cur, D, st.player - 1);
       st.bT = null;
     }
-    // --- Triangle/Y : CUT groupé (instantané) ---
+    // --- Triangle/Y: grouped CUT (instant) ---
     if (edge(3)) this.actions.cutToggle(D);
-    // --- L3 : FILTRE en général ON/OFF · R3 : FX de la track ON/OFF ---
+    // --- L3: global FILTER ON/OFF · R3: track FX ON/OFF ---
     if (edge(10)) this.actions.colorToggle();
     if (edge(11)) this.actions.fxToggle(st);
-    // --- Menu/Options (à droite du logo) : BEAT SYNC ON/OFF du deck ---
+    // --- Menu/Options (right of the logo): deck BEAT SYNC ON/OFF ---
     if (edge(9)) this.actions.syncToggle(D);
 
-    // --- Carré/X : court = durée FX (1/2·3/4·1·2) · ENFONCÉ = la liste des
-    // effets s'affiche et l'effet défile petit à petit tant que c'est tenu ---
+    // --- Square/X: short = FX length (1/2·3/4·1·2) · HELD = the effect
+    // list shows up and the effect scrolls step by step while held ---
     if (edge(2)) {
       st.sqT = now;
       st.sqHeld = false;
     }
     if (pressed[2] && st.sqT != null && now - st.sqT >= 550) {
       this.actions.fxTypeList(st, st.sqHeld ? 'next' : 'show');
-      st.sqT = now; // pas suivant toutes les 550 ms tant que maintenu
+      st.sqT = now; // next step every 550 ms while held
       st.sqHeld = true;
     }
     if (!pressed[2] && was(2)) {
@@ -230,7 +232,7 @@ export class GamepadManager {
       st.sqHeld = false;
     }
 
-    // --- Share/View : appui court = mode L2/R2 (CUE→JUMP→LOOP), long = aide ---
+    // --- Share/View: short press = L2/R2 mode (CUE→JUMP→LOOP), long = help ---
     if (edge(8)) st.shareT = now;
     if (pressed[8] && st.shareT != null && now - st.shareT >= 600) {
       this.actions.toggleHelp();
@@ -241,19 +243,19 @@ export class GamepadManager {
       st.shareT = null;
     }
 
-    // --- R1 : en mode SÉLECTION = ↺ RESET du mix (filtres 0, FX coupés,
-    // désélection) — sinon VOLUME + · L1 : VOLUME − ---
+    // --- R1: in SELECTION mode = ↺ mix RESET (filters 0, FX off,
+    // deselection) — otherwise VOLUME + · L1: VOLUME − ---
     if (edge(5) && this.actions.hasSelection && this.actions.hasSelection(st.player - 1)) {
       this.actions.selReset(D, st.cur);
-      st.r1Used = true; // le maintien ne doit pas remonter le volume derrière
+      st.r1Used = true; // holding it must not raise the volume afterwards
     }
     if (!pressed[5]) st.r1Used = false;
     if (pressed[5] && !st.r1Used) this.actions.volumeHold(st.cur, 1, dt);
     if (pressed[4]) this.actions.volumeHold(st.cur, -1, dt);
 
-    // --- L2 / R2 : CUE / JUMP / LOOP selon le mode — L recule, R avance,
-    // la rangée donne la force (TRIM = 16 → FILTER = 1) ---
-    // Appui = action · MAINTENU 1 s sur un cue posé = l'effacer
+    // --- L2 / R2: CUE / JUMP / LOOP depending on the mode — L goes back, R forward,
+    // the row sets the strength (TRIM = 16 → FILTER = 1) ---
+    // Press = action · HELD 1 s on a set cue = clear it
     if (edge(7)) { this.actions.sideAction(st, 1); st.r2T = now; st.r2Down = true; }
     if (pressed[7] && st.r2T != null && now - st.r2T >= 1000) {
       this.actions.sideHold(st, 1);
@@ -263,7 +265,7 @@ export class GamepadManager {
       st.r2T = null;
       if (st.r2Down) {
         st.r2Down = false;
-        // RELÂCHER du trigger : les PAD FX maintenus se coupent ici
+        // trigger RELEASE: held PAD FX stop here
         if (this.actions.sideRelease) this.actions.sideRelease(st, 1);
       }
     }
@@ -280,8 +282,8 @@ export class GamepadManager {
       }
     }
 
-    // --- Stick GAUCHE : ◀▶ = PITCH BEND façon jog CDJ, IMMÉDIAT
-    // (caler à l'oreille — relâcher = retour au tempo), ▲▼ = knob survolé ---
+    // --- LEFT stick: ◀▶ = CDJ-style jog PITCH BEND, IMMEDIATE
+    // (beatmatch by ear — release = back to tempo), ▲▼ = hovered knob ---
     const lx = gp.axes[0] || 0;
     const ly = gp.axes[1] || 0;
     const lxHold = this._angleHold(st, 'lx', lx, ly, now);
@@ -297,8 +299,8 @@ export class GamepadManager {
       this.actions.stickAdjust(st, -v, dt);
     }
 
-    // --- Stick DROIT : ▲▼ = NIVEAU du FX de la track (haut = monter,
-    // master = tous) · ◀▶ = ZOOM / DÉZOOM des vagues, immédiat ---
+    // --- RIGHT stick: ▲▼ = track FX LEVEL (up = raise,
+    // master = all) · ◀▶ = waveform ZOOM IN / OUT, immediate ---
     const rx = gp.axes[2] || 0;
     const ry = gp.axes[3] || 0;
     if (Math.abs(ry) > DEADZONE && Math.abs(ry) > Math.abs(rx)) {
@@ -311,9 +313,9 @@ export class GamepadManager {
     st.prev = pressed;
   }
 
-  // Verrou d'angle : ne renvoie une valeur horizontale QUE si le stick est
-  // poussé clairement à gauche/droite (l'axe X domine nettement). RÉPONSE
-  // IMMÉDIATE — plus d'attente de ½ s : le jog doit répondre sous le doigt.
+  // Angle lock: returns a horizontal value ONLY if the stick is pushed
+  // clearly left/right (the X axis clearly dominates). IMMEDIATE
+  // RESPONSE — no more ½ s wait: the jog must respond under the finger.
   _angleHold(st, key, x, y) {
     const mag = Math.abs(x);
     if (mag <= DEADZONE || mag <= Math.abs(y) * 1.6) return 0;

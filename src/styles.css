@@ -1,14 +1,14 @@
 /* ==========================================================================
    TURBO MIX — Design system
-   Refonte complète de l'interface : thème sombre « matériel club »,
-   typographie technique (Bahnschrift), contrôles façon DJM/CDJ.
-   Toutes les classes/ids sont pilotées par src/js/*.js — ne pas renommer.
+   Complete interface overhaul: dark "club hardware" theme,
+   technical typography (Bahnschrift), DJM/CDJ-style controls.
+   All classes/ids are driven by src/js/*.js — do not rename.
    ========================================================================== */
 
 * { margin: 0; padding: 0; box-sizing: border-box; user-select: none; }
 
 :root {
-  /* Fonds */
+  /* Backgrounds */
   --bg: #07080b;
   --bg-2: #0a0c10;
   --panel: #10131a;
@@ -16,17 +16,17 @@
   --panel-3: #1a1f2b;
   --inset: #08090d;
 
-  /* Lignes */
+  /* Lines */
   --border: rgba(255, 255, 255, 0.065);
   --border-2: rgba(255, 255, 255, 0.12);
   --hairline: rgba(255, 255, 255, 0.045);
 
-  /* Texte */
+  /* Text */
   --text: #dde2ee;
   --text-dim: #8b94ab;
   --text-faint: #59627a;
 
-  /* Accent global + couleurs fonctionnelles */
+  /* Global accent + functional colors */
   --accent: #2fb9f5;
   --danger: #ff4d5e;
   --rec: #ff3b4e;
@@ -34,12 +34,12 @@
   --stems: #a06bff;
   --tutor: #ffd24a;
 
-  /* Géométrie */
+  /* Geometry */
   --r-lg: 10px;
   --r-md: 7px;
   --r-sm: 5px;
 
-  /* Typo */
+  /* Typography */
   --font: 'Segoe UI', system-ui, -apple-system, sans-serif;
   --font-tech: 'Bahnschrift', 'Segoe UI', system-ui, sans-serif;
 
@@ -59,9 +59,9 @@ body {
 
 ::selection { background: rgba(47, 185, 245, 0.35); }
 
-/* ---------- Cadre général ----------
-   4 rangées : barre du haut / vagues / decks+mixer / bibliothèque.
-   minmax(0, 1fr) : rien ne peut dépasser la fenêtre, même si un canvas gonfle. */
+/* ---------- Overall frame ----------
+   4 rows: top bar / waveforms / decks+mixer / library.
+   minmax(0, 1fr): nothing can overflow the window, even if a canvas grows. */
 #app {
   height: 100vh;
   width: 100vw;
@@ -71,12 +71,12 @@ body {
   overflow: hidden;
 }
 #topbar, #waves, #decks-area, #library { min-width: 0; }
-/* Mode VIEW : bibliothèque masquée → la rangée disparaît VRAIMENT et les
-   decks prennent tout l'espace (sinon un trou noir de 238 px restait) */
+/* VIEW mode: library hidden → the row REALLY disappears and the
+   decks take all the space (otherwise a 238 px black hole remained) */
 #app.lib-hidden { grid-template-rows: 46px auto minmax(0, 1fr) 0; }
 
 /* ==========================================================================
-   BOUTONS & CHAMPS — base
+   BUTTONS & FIELDS — base
    ========================================================================== */
 
 button {
@@ -131,7 +131,7 @@ input[type="text"]:focus, input[type="number"]:focus {
 input[type="checkbox"] { accent-color: var(--accent); width: 14px; height: 14px; }
 
 /* ==========================================================================
-   BARRE DU HAUT
+   TOP BAR
    ========================================================================== */
 
 #topbar {
@@ -152,13 +152,13 @@ input[type="checkbox"] { accent-color: var(--accent); width: 14px; height: 14px;
   letter-spacing: 3.5px;
   color: #eef2f8;
   margin-right: 2px;
-  text-shadow: none;              /* le halo faisait « jouet » */
+  text-shadow: none;              /* the glow looked "toy-like" */
 }
 #logo span { color: var(--accent); }
 
-/* ---- BARRE DU HAUT, allure MATÉRIEL PRO ---------------------------------
-   Tout est aligné sur une même hauteur, groupé par blocs séparés par un
-   filet, sans emoji : c'est une façade d'appareil, pas une page web. */
+/* ---- TOP BAR, PRO HARDWARE look ----------------------------------------
+   Everything is aligned to the same height, grouped in blocks separated by a
+   thin rule, no emoji: it is a device faceplate, not a web page. */
 .tb-sep {
   width: 1px;
   height: 17px;
@@ -191,7 +191,7 @@ input[type="checkbox"] { accent-color: var(--accent); width: 14px; height: 14px;
   background: linear-gradient(180deg, #242a36, #1b2029);
 }
 #topbar > button:active { transform: translateY(1px); }
-/* boutons ronds : réglages et aide */
+/* round buttons: settings and help */
 #btn-settings, #btn-help {
   width: 24px;
   padding: 0 !important;
@@ -210,7 +210,7 @@ input[type="checkbox"] { accent-color: var(--accent); width: 14px; height: 14px;
 
 #topbar > button { padding: 5px 11px; font-size: 11.5px; }
 
-/* Pastilles d'état (manette / MIDI) : une VRAIE LED, pas un emoji */
+/* Status dots (gamepad / MIDI): a REAL LED, not an emoji */
 #pad-status, #midi-status {
   display: inline-flex;
   align-items: center;
@@ -235,13 +235,13 @@ input[type="checkbox"] { accent-color: var(--accent); width: 14px; height: 14px;
   height: 6px;
   border-radius: 50%;
   flex-shrink: 0;
-  background: #3a4150;                       /* éteinte */
+  background: #3a4150;                       /* off */
   box-shadow: inset 0 0 2px rgba(0, 0, 0, 0.8);
 }
 #pad-status { margin-left: auto; }
 .pad-on { color: #d8e2ef; border-color: #2b3a33; }
 .pad-on::before {
-  background: #35d97a;                       /* allumée */
+  background: #35d97a;                       /* lit */
   box-shadow: 0 0 6px rgba(53, 217, 122, 0.85);
 }
 .pad-off { color: var(--text-faint); }
@@ -249,7 +249,7 @@ input[type="checkbox"] { accent-color: var(--accent); width: 14px; height: 14px;
 #btn-tutor { color: var(--tutor); border-color: rgba(255, 210, 74, 0.35); }
 #btn-tutor:hover { border-color: var(--tutor); box-shadow: 0 0 10px -2px rgba(255, 210, 74, 0.5); }
 
-/* Enregistrement : pastille rouge dessinée, pas un caractère « ● » */
+/* Recording: drawn red dot, not a "●" character */
 #btn-rec { color: var(--rec) !important; gap: 6px; }
 #btn-rec::before {
   content: '';
@@ -282,7 +282,7 @@ input[type="checkbox"] { accent-color: var(--accent); width: 14px; height: 14px;
 #btn-help { font-weight: 700; }
 
 /* ==========================================================================
-   FORMES D'ONDE EMPILÉES
+   STACKED WAVEFORMS
    ========================================================================== */
 
 #waves {
@@ -337,7 +337,7 @@ input[type="checkbox"] { accent-color: var(--accent); width: 14px; height: 14px;
   flex-shrink: 0;
 }
 
-/* Trait de lecture unique traversant les 4 pistes */
+/* Single playhead line crossing the 4 tracks */
 #wave-playhead {
   position: absolute;
   top: 6px;
@@ -369,18 +369,18 @@ input[type="checkbox"] { accent-color: var(--accent); width: 14px; height: 14px;
 #wave-zoom-ctl #wz-scratch { width: 34px; }
 #wave-zoom-ctl #wz-scratch.on { border-color: var(--accent); color: var(--accent); opacity: 1; }
 
-/* Cible de drag & drop survolée */
+/* Drag & drop target being hovered */
 .drop-hover {
   border-color: #fff !important;
   box-shadow: 0 0 14px -2px rgba(255, 255, 255, 0.55) !important;
 }
 
-/* Taille des vagues « Grande » (paramètres) */
+/* "Large" waveform size (settings) */
 body.waves-lg .wave-row { height: 80px; }
 body.waves-lg .wave-row canvas { height: 70px; }
 
 /* ==========================================================================
-   ZONE DECKS
+   DECKS AREA
    ========================================================================== */
 
 #decks-area {
@@ -394,8 +394,8 @@ body.waves-lg .wave-row canvas { height: 70px; }
   overflow: hidden;
 }
 
-/* Panneaux : 1 et 2 en haut, 3 et 4 en dessous (mixer au centre).
-   C'est le MIXER qui suit l'ordre club 3 1 2 4 (voir .strip order inline). */
+/* Panels: 1 and 2 on top, 3 and 4 below (mixer in the center).
+   It is the MIXER that follows the club order 3 1 2 4 (see .strip order inline). */
 #deck-slot-0 { grid-area: 1 / 1; }
 #deck-slot-1 { grid-area: 1 / 3; }
 #deck-slot-2 { grid-area: 2 / 1; }
@@ -425,7 +425,7 @@ body.waves-lg .wave-row canvas { height: 70px; }
   box-shadow: 0 0 18px -4px var(--deck-color), inset 0 0 24px -16px var(--deck-color);
 }
 
-/* Refus de chargement : ce son joue déjà ailleurs — secousse + flash rouge */
+/* Load refused: this track is already playing elsewhere — shake + red flash */
 .deck.refused { animation: deck-refuse 0.5s ease-out; }
 @keyframes deck-refuse {
   0%, 100% { transform: translateX(0); }
@@ -439,7 +439,7 @@ body.waves-lg .wave-row canvas { height: 70px; }
   }
 }
 
-/* --- En-tête du deck --- */
+/* --- Deck header --- */
 .deck-head {
   display: flex;
   align-items: center;
@@ -465,7 +465,7 @@ body.waves-lg .wave-row canvas { height: 70px; }
   flex-shrink: 0;
 }
 
-/* Badge « quel joueur contrôle ce deck » */
+/* "Which player controls this deck" badge */
 .pad-chip {
   font-size: 9px;
   font-weight: 800;
@@ -551,7 +551,7 @@ body.waves-lg .wave-row canvas { height: 70px; }
 }
 .deck-bpm small { font-size: 9.5px; color: var(--text-faint); font-weight: 600; letter-spacing: 0.5px; }
 
-/* Vue d'ensemble cliquable */
+/* Clickable overview */
 .wave-over {
   width: 100%;
   height: 20px;
@@ -562,7 +562,7 @@ body.waves-lg .wave-row canvas { height: 70px; }
   flex-shrink: 0;
 }
 
-/* File d'attente du deck */
+/* Deck queue */
 .queue-line {
   display: flex;
   align-items: center;
@@ -603,7 +603,7 @@ body.waves-lg .wave-row canvas { height: 70px; }
 .queue-clear:hover { color: #fff; background: var(--panel-3); }
 
 /* ==========================================================================
-   PADS DE PERFORMANCE & STEMS
+   PERFORMANCE PADS & STEMS
    ========================================================================== */
 
 .pads-bar {
@@ -613,7 +613,7 @@ body.waves-lg .wave-row canvas { height: 70px; }
   min-height: 0;
 }
 
-/* Modes des pads : LISTE verticale (demande David), ½/×2 en bas */
+/* Pad modes: vertical LIST (David's request), ½/×2 at the bottom */
 .pad-modes {
   display: flex;
   flex-direction: column;
@@ -650,11 +650,11 @@ body.waves-lg .wave-row canvas { height: 70px; }
 .pads {
   flex: 1;
   display: grid;
-  grid-template-columns: repeat(10, 1fr); /* 5 rangées × L2/R2 */
+  grid-template-columns: repeat(10, 1fr); /* 5 rows × L2/R2 */
   gap: 3px;
   min-width: 0;
 }
-/* Séparation visuelle moitié L2 | moitié R2 */
+/* Visual split: L2 half | R2 half */
 .pads .pad:nth-child(5) { margin-right: 4px; }
 .pads .pad {
   position: relative;
@@ -674,8 +674,8 @@ body.waves-lg .wave-row canvas { height: 70px; }
 }
 .pads .pad:hover { border-color: #3a4256; background: linear-gradient(180deg, #232936, #1b202c); }
 
-/* QR code du panneau invités : scanne → /guest */
-/* Bloc QR : la carte qu'on montre au public — il doit être NET et lisible */
+/* QR code of the guests panel: scan → /guest */
+/* QR block: the card shown to the crowd — it must be SHARP and readable */
 .gp-qr {
   display: flex;
   align-items: center;
@@ -690,9 +690,9 @@ body.waves-lg .wave-row canvas { height: 70px; }
   width: 96px;
   height: 96px;
   padding: 5px;
-  background: #fff;              /* un QR se lit sur fond blanc */
+  background: #fff;              /* a QR code reads on a white background */
   border-radius: 6px;
-  image-rendering: pixelated;    /* pas de flou : le scan est plus rapide */
+  image-rendering: pixelated;    /* no blur: scanning is faster */
   flex-shrink: 0;
 }
 .gp-qr span {
@@ -702,12 +702,12 @@ body.waves-lg .wave-row canvas { height: 70px; }
   font-weight: 600;
 }
 
-/* Jaquette SoundCloud dans la liste (à défaut de mini-vague) */
+/* SoundCloud artwork in the list (instead of a mini waveform) */
 .col-prev .prev-art { height: 22px; width: 22px; object-fit: cover; }
 
-/* Pochette du morceau chargé, dans l'en-tête du deck — CALÉE sur la hauteur
-   de la ligne de titre : elle ne doit JAMAIS grandir l'en-tête (sinon la
-   rangée CUE/PLAY du bas sortait du cadre sur les petites fenêtres) */
+/* Artwork of the loaded track, in the deck header — LOCKED to the height
+   of the title line: it must NEVER make the header taller (otherwise the
+   bottom CUE/PLAY row overflowed the frame on small windows) */
 .deck-cover {
   width: 18px;
   height: 18px;
@@ -717,8 +717,8 @@ body.waves-lg .wave-row canvas { height: 70px; }
   align-self: center;
 }
 
-/* Bandeau FX MASTER : le FX du mix entier, sous la matrice des 4 unités —
-   empilé VERTICALEMENT (le panneau est étroit) comme les cellules du dessus */
+/* FX MASTER strip: the FX of the whole mix, below the matrix of the 4 units —
+   stacked VERTICALLY (the panel is narrow) like the cells above */
 .fx-master {
   display: flex;
   flex-direction: column;
@@ -741,7 +741,7 @@ body.waves-lg .wave-row canvas { height: 70px; }
   border-color: var(--accent);
 }
 
-/* Vignette PAD FX : quel effet joue, en grand sur le deck tant qu'on tient */
+/* PAD FX thumbnail: which effect is playing, shown large on the deck while held */
 .padfx-chip {
   position: absolute;
   top: 6px;
@@ -758,7 +758,7 @@ body.waves-lg .wave-row canvas { height: 70px; }
 }
 .padfx-chip.live { display: block; }
 
-/* Modes PAD FX / SAMPLER : les pads portent des NOMS — police compacte */
+/* PAD FX / SAMPLER modes: the pads carry NAMES — compact font */
 .pads.pads-text .pad {
   font-size: 7.5px;
   letter-spacing: 0;
@@ -766,14 +766,14 @@ body.waves-lg .wave-row canvas { height: 70px; }
   text-align: center;
 }
 
-/* Cue posé à la souris / session passée : repère neutre */
+/* Cue set with the mouse / previous session: neutral marker */
 .pads .pad.set {
   background: #1c212c !important;
   border-color: #8a94ae !important;
   color: var(--text) !important;
   box-shadow: inset 0 0 6px rgba(138, 148, 174, 0.25);
 }
-/* Cue posé par un JOUEUR : rempli de SA couleur */
+/* Cue set by a PLAYER: filled with THEIR color */
 .pads .pad.set.set-owned {
   background: var(--own-color) !important;
   border-color: var(--own-color) !important;
@@ -788,22 +788,22 @@ body.waves-lg .wave-row canvas { height: 70px; }
   box-shadow: 0 0 9px var(--own-color, #5fe08a),
     inset 0 0 5px color-mix(in srgb, var(--own-color, #5fe08a) 40%, transparent);
 }
-/* Posé à la souris / ancien sur un pad divisé : simple liseré neutre */
+/* Set with the mouse / old cue on a split pad: simple neutral outline */
 .pads .pad.set-any { outline: 1px solid #8a94ae; }
-/* Un seul joueur sur le deck : ses pads prennent une teinte de SA couleur */
+/* Only one player on the deck: their pads take a tint of THEIR color */
 .pads .pad.pad-tinted {
   background: color-mix(in srgb, var(--pt) 16%, #1c212c);
   border-color: color-mix(in srgb, var(--pt) 50%, #282e3d);
 }
 
-/* Flash bref de la couleur du joueur à l'appui d'un pad */
+/* Brief flash of the player's color when a pad is pressed */
 .pad-flash { animation: pad-flash-anim 0.35s ease-out; }
 @keyframes pad-flash-anim {
   0% { box-shadow: inset 0 0 0 30px var(--flash-color), 0 0 12px var(--flash-color); }
   100% { box-shadow: inset 0 0 0 0 transparent, 0 0 0 transparent; }
 }
 
-/* Pads divisés par joueur : chaque segment = l'action d'UN joueur */
+/* Pads split per player: each segment = the action of ONE player */
 .pad-seg {
   flex: 1;
   display: flex;
@@ -832,7 +832,7 @@ body.waves-lg .wave-row canvas { height: 70px; }
   box-shadow: 0 0 9px var(--pc);
 }
 
-/* Vue fusionnée (tous les joueurs dans le même mode) */
+/* Merged view (all players in the same mode) */
 .pad-owners {
   display: flex;
   gap: 2px;
@@ -867,9 +867,9 @@ body.waves-lg .wave-row canvas { height: 70px; }
 /* --- Stems --- */
 .stems-col {
   display: flex;
-  flex-direction: row;      /* disque À GAUCHE, boutons stems À DROITE :
-                               en colonne, la platine agrandie débordait sur
-                               la rangée CUE/PLAY */
+  flex-direction: row;      /* disc on the LEFT, stems buttons on the RIGHT:
+                               in a column, the enlarged platter overflowed onto
+                               the CUE/PLAY row */
   align-items: center;
   gap: 5px;
   width: 128px;
@@ -913,7 +913,7 @@ body.waves-lg .wave-row canvas { height: 70px; }
 }
 
 /* ==========================================================================
-   CONTRÔLES DU DECK (transport + tempo)
+   DECK CONTROLS (transport + tempo)
    ========================================================================== */
 
 .deck-controls {
@@ -959,7 +959,7 @@ body.waves-lg .wave-row canvas { height: 70px; }
   flex-shrink: 0;
 }
 
-/* Curseur de tempo */
+/* Tempo slider */
 .tempo-wrap {
   display: flex;
   align-items: center;
@@ -1001,7 +1001,7 @@ body.waves-lg .wave-row canvas { height: 70px; }
   border-radius: 2px;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
 }
-/* Repère du zéro : trait au centre + zéro aimanté (double-clic = reset) */
+/* Zero marker: line in the center + magnetic zero (double-click = reset) */
 .tempo-zero {
   position: absolute;
   left: 50%;
@@ -1026,7 +1026,7 @@ body.waves-lg .wave-row canvas { height: 70px; }
   font-variant-numeric: tabular-nums;
   color: var(--text-faint);
 }
-/* Marqueur BPM d'un autre deck sur l'échelle */
+/* BPM marker of another deck on the scale */
 .tempo-mark {
   position: absolute;
   top: -3px;
@@ -1051,11 +1051,11 @@ body.waves-lg .wave-row canvas { height: 70px; }
   padding: 6px 6px 8px;
   min-height: 0;
   min-width: 0;
-  overflow: visible; /* les anneaux de loop / étiquettes cue dépassent des tranches */
+  overflow: visible; /* loop rings / cue labels stick out of the channel strips */
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
 }
 
-/* --- Color FX (effet du knob FILTER de chaque tranche) --- */
+/* --- Color FX (effect of each channel's FILTER knob) --- */
 #color-row {
   display: flex;
   align-items: center;
@@ -1077,7 +1077,7 @@ body.waves-lg .wave-row canvas { height: 70px; }
   box-shadow: 0 0 8px rgba(47, 185, 245, 0.5);
 }
 
-/* --- Rangée MASTER : filtre global, volume du mix, VU-mètre master --- */
+/* --- MASTER row: global filter, mix volume, master VU meter --- */
 #master-row {
   display: flex;
   align-items: center;
@@ -1117,7 +1117,7 @@ body.waves-lg .wave-row canvas { height: 70px; }
   top: 0;
   bottom: 0;
   width: 100%;
-  /* animé par transform (compositeur seul) : zéro reflow par frame */
+  /* animated via transform (compositor only): zero reflow per frame */
   transform: scaleX(0);
   transform-origin: left center;
   background: linear-gradient(to right, #2ecc71, #a3d94e 55%, #f1c40f 75%, #e67e22 88%, #e74c3c 97%);
@@ -1132,7 +1132,7 @@ body.waves-lg .wave-row canvas { height: 70px; }
 }
 #master-meter-clip.on { background: #ff2222; box-shadow: 0 0 7px #ff2222; }
 
-/* BPM MASTER : ± 0,5 — dirige tous les sons en SYNC */
+/* MASTER BPM: ± 0.5 — drives all tracks in SYNC */
 #master-bpm { display: inline-flex; align-items: center; gap: 3px; margin-left: 4px; }
 #master-bpm button {
   width: 18px;
@@ -1154,7 +1154,7 @@ body.waves-lg .wave-row canvas { height: 70px; }
   font-variant-numeric: tabular-nums;
 }
 
-/* --- Corps du mixer : 4 tranches + rack FX --- */
+/* --- Mixer body: 4 channel strips + FX rack --- */
 #mix-body {
   flex: 1;
   display: flex;
@@ -1184,7 +1184,7 @@ body.waves-lg .wave-row canvas { height: 70px; }
 }
 .strip:last-child { border-right: none; }
 .strip.active { box-shadow: inset 0 2px 0 var(--deck-color); background: rgba(255, 255, 255, 0.015); }
-/* Tranche sélectionnée à la manette : couleur du joueur (fond posé en inline) */
+/* Channel strip selected with the gamepad: player color (background set inline) */
 .strip.gp-sel {
   border-radius: 6px;
   box-shadow:
@@ -1201,7 +1201,7 @@ body.waves-lg .wave-row canvas { height: 70px; }
   line-height: 1;
 }
 
-/* Ligne SELECT au-dessus de chaque tranche */
+/* SELECT row above each channel strip */
 .strip-sel {
   width: calc(100% - 8px);
   padding: 2px 0;
@@ -1220,7 +1220,7 @@ body.waves-lg .wave-row canvas { height: 70px; }
   box-shadow: 0 0 8px var(--psel, var(--deck-color));
 }
 
-/* Corps de tranche : knobs + VU-mètre vertical le long des knobs (Serato) */
+/* Channel strip body: knobs + vertical VU meter along the knobs (Serato) */
 .strip-body {
   display: flex;
   align-items: stretch;
@@ -1275,7 +1275,7 @@ body.waves-lg .wave-row canvas { height: 70px; }
 .strip .knob-wrap { gap: 1px; }
 .strip .knob-wrap span { font-size: 7px; }
 
-/* VU-mètre vertical de tranche */
+/* Vertical channel VU meter */
 .meter {
   position: relative;
   width: 5px;
@@ -1292,7 +1292,7 @@ body.waves-lg .wave-row canvas { height: 70px; }
   left: 0;
   right: 0;
   height: 100%;
-  /* animé par transform (compositeur seul) : zéro reflow par frame */
+  /* animated via transform (compositor only): zero reflow per frame */
   transform: scaleY(0);
   transform-origin: bottom center;
   background: linear-gradient(to top, #2ecc71, #a3d94e 55%, #f1c40f 75%, #e67e22 88%, #e74c3c 97%);
@@ -1388,7 +1388,7 @@ body.waves-lg .wave-row canvas { height: 70px; }
   border-radius: 2px;
   box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.7);
 }
-/* Repère du centre (0) — aimanté comme les knobs */
+/* Center (0) marker — magnetic like the knobs */
 #crossfader::after {
   content: '';
   position: absolute;
@@ -1413,7 +1413,7 @@ body.waves-lg .wave-row canvas { height: 70px; }
 }
 
 /* ==========================================================================
-   RACK FX (dans le mixer, à droite des tranches)
+   FX RACK (in the mixer, to the right of the channel strips)
    ========================================================================== */
 
 #fxbar {
@@ -1426,7 +1426,7 @@ body.waves-lg .wave-row canvas { height: 70px; }
   min-height: 0;
 }
 
-/* Onglets = les 4 JOUEURS */
+/* Tabs = the 4 PLAYERS */
 .fx-tabs { display: flex; gap: 2px; flex-shrink: 0; }
 .fx-tab {
   position: relative;
@@ -1460,7 +1460,7 @@ body.waves-lg .wave-row canvas { height: 70px; }
   border-color: var(--pc, var(--deck-color));
   box-shadow: 0 0 8px var(--pc, var(--deck-color));
 }
-/* bandeau « couleur des sons » en haut de l'onglet */
+/* "track colors" strip at the top of the tab */
 .fx-tab::before {
   content: '';
   position: absolute;
@@ -1470,7 +1470,7 @@ body.waves-lg .wave-row canvas { height: 70px; }
   height: 3px;
   background: var(--sons, transparent);
 }
-/* barre de niveau en bas */
+/* level bar at the bottom */
 .fx-tab::after {
   content: '';
   position: absolute;
@@ -1503,7 +1503,7 @@ body.waves-lg .wave-row canvas { height: 70px; }
 .fx-tab.on .fx-tab-beats,
 .fx-tab.fx-live .fx-tab-beats { opacity: 1; }
 
-/* Les 4 unités « cerveau » restent en DOM mais sont CACHÉES */
+/* The 4 "brain" units stay in the DOM but are HIDDEN */
 .fx-logic { display: none !important; }
 .fx-unit.fx-hidden { display: none !important; }
 .fx-unit { min-width: 0; }
@@ -1531,7 +1531,7 @@ body.waves-lg .wave-row canvas { height: 70px; }
 .fxu-on { min-width: 40px; font-weight: 800; }
 .fxu-on.on { background: var(--deck-color); color: #0b0d12; border-color: var(--deck-color); }
 
-/* Vue MATRICE : une cellule par rangée, alignée sur les knobs */
+/* MATRIX view: one cell per row, aligned with the knobs */
 .fx-cells {
   flex: 1;
   display: flex;
@@ -1577,7 +1577,7 @@ body.waves-lg .wave-row canvas { height: 70px; }
   overflow: hidden;
   text-overflow: ellipsis;
   line-height: 1.1;
-  white-space: nowrap;          /* jamais de retour a la ligne dans une cellule */
+  white-space: nowrap;          /* never wrap to a new line inside a cell */
   font-variant-numeric: tabular-nums;
 }
 .fx-cell-onoff { justify-content: center; flex-direction: column; gap: 1px; padding: 0 2px; }
@@ -1591,7 +1591,7 @@ body.waves-lg .wave-row canvas { height: 70px; }
 .fx-cell-onoff.on .fx-cell-lbl,
 .fx-cell-onoff.on .fx-cell-val { color: #0b0d12; }
 
-/* Cellules EFFET + DURÉE : valeur de CHAQUE joueur en badges alignés */
+/* EFFECT + DURATION cells: EACH player's value as aligned badges */
 .fx-cell-beats,
 .fx-cell-type {
   flex-direction: column;
@@ -1616,8 +1616,8 @@ body.waves-lg .wave-row canvas { height: 70px; }
   opacity: 0.4;
   overflow: hidden;
   cursor: pointer;
-  /* UNE SEULE LIGNE, toujours : « MT Delay » passait sur deux lignes et
-     cassait la hauteur de toute la colonne FX */
+  /* ONE SINGLE LINE, always: "MT Delay" wrapped onto two lines and
+     broke the height of the whole FX column */
   white-space: nowrap;
   text-overflow: clip;
   letter-spacing: -0.2px;
@@ -1632,7 +1632,7 @@ body.waves-lg .wave-row canvas { height: 70px; }
   box-shadow: 0 0 6px var(--pc);
 }
 .fx-badge.sel { outline: 1px solid #fff; outline-offset: 1px; }
-/* bandeau « couleur des sons » sous chaque badge */
+/* "track colors" strip under each badge */
 .fx-badge::after {
   content: '';
   position: absolute;
@@ -1655,11 +1655,11 @@ body.waves-lg .wave-row canvas { height: 70px; }
 }
 .fx-asg.sel { outline: 2px solid #fff; outline-offset: 1px; }
 
-/* Knob NIVEAU : canvas ×2 pour la netteté (jauges des 4 joueurs) */
+/* LEVEL knob: canvas ×2 for sharpness (gauges of the 4 players) */
 .fx-cell-level { flex: 2.4; }
 .fx-lvl-cv { width: 48px; height: 48px; flex-shrink: 0; }
 
-/* Liste des effets affichée quand Carré est maintenu à la manette */
+/* Effects list shown while Square is held on the gamepad */
 .fx-type-list {
   position: fixed;
   z-index: 95;
@@ -1684,7 +1684,7 @@ body.waves-lg .wave-row canvas { height: 70px; }
 }
 
 /* ==========================================================================
-   BIBLIOTHÈQUE
+   LIBRARY
    ========================================================================== */
 
 #library {
@@ -1703,7 +1703,7 @@ body.waves-lg .wave-row canvas { height: 70px; }
   padding: 5px 10px;
 }
 
-/* Onglets façon contrôle segmenté */
+/* Tabs styled as a segmented control */
 #lib-tabs {
   display: flex;
   gap: 2px;
@@ -1756,7 +1756,7 @@ body.waves-lg .wave-row canvas { height: 70px; }
   border-top: 1px solid var(--hairline);
 }
 
-/* --- Arborescence --- */
+/* --- Folder tree --- */
 #lib-tree {
   width: 210px;
   flex-shrink: 0;
@@ -1795,7 +1795,7 @@ body.waves-lg .wave-row canvas { height: 70px; }
 .tree-arrow:hover { color: #fff; }
 .tree-name { overflow: hidden; text-overflow: ellipsis; }
 
-/* --- Table des morceaux --- */
+/* --- Track table --- */
 #lib-list-wrap { flex: 1; overflow-y: auto; min-width: 0; }
 
 #lib-table { width: 100%; border-collapse: collapse; }
@@ -1832,7 +1832,7 @@ body.waves-lg .wave-row canvas { height: 70px; }
   color: var(--text-dim);
   font-family: var(--font-tech);
 }
-/* Aperçu waveform */
+/* Waveform preview */
 .col-prev { width: 156px; }
 #lib-table td.col-prev { padding: 2px 4px; }
 #lib-table td.col-prev img {
@@ -1848,16 +1848,16 @@ body.waves-lg .wave-row canvas { height: 70px; }
 #lib-table tbody tr { cursor: pointer; }
 #lib-table tbody tr:hover { background: var(--panel-2); }
 #lib-table tbody tr[draggable="true"] { cursor: grab; }
-/* Sélection : couleur du JOUEUR qui navigue (--sel-color), sinon accent */
+/* Selection: color of the PLAYER who is browsing (--sel-color), otherwise accent */
 #lib-table tbody tr.selected {
   background: color-mix(in srgb, var(--sel-color, #2b4a7a) 26%, transparent);
   box-shadow: inset 3px 0 0 var(--sel-color, var(--accent)),
     0 0 10px color-mix(in srgb, var(--sel-color, transparent) 25%, transparent);
 }
 #lib-table tbody tr.selected td { color: #fff; }
-/* Ligne choisie par un joueur */
+/* Row chosen by a player */
 #lib-table tbody tr.psel td { color: #fff; }
-/* Badge « J1 » sur le son CHARGÉ par ce joueur */
+/* "J1" badge on the track LOADED by this player */
 .psel-badge {
   display: inline-block;
   margin-left: 6px;
@@ -1869,11 +1869,11 @@ body.waves-lg .wave-row canvas { height: 70px; }
   box-shadow: 0 0 6px currentColor;
   vertical-align: middle;
 }
-/* Réordonnancement dans une playlist */
+/* Reordering inside a playlist */
 tr.reorder-target td { border-top: 2px solid var(--accent) !important; }
 
 /* ==========================================================================
-   MENU CONTEXTUEL & MINI-MODAL
+   CONTEXT MENU & MINI MODAL
    ========================================================================== */
 
 #ctx-menu {
@@ -1922,7 +1922,7 @@ tr.reorder-target td { border-top: 2px solid var(--accent) !important; }
 #prompt-ok:hover { background: var(--accent); color: #0b0d12; }
 
 /* ==========================================================================
-   PARAMÈTRES & AIDE
+   SETTINGS & HELP
    ========================================================================== */
 
 #settings-overlay, #help-overlay {
@@ -2013,10 +2013,10 @@ tr.reorder-target td { border-top: 2px solid var(--accent) !important; }
 .help-note { color: var(--text-dim); font-size: 11px; margin-bottom: 14px; }
 
 /* ==========================================================================
-   OVERLAYS MANETTE (curseurs joueurs, prévisualisations, flashes)
+   GAMEPAD OVERLAYS (player cursors, previews, flashes)
    ========================================================================== */
 
-/* Curseur manette : cadre coloré autour du contrôle survolé par chaque joueur */
+/* Gamepad cursor: colored frame around the control hovered by each player */
 .gp-cursor {
   position: fixed;
   border: 2px solid #fff;
@@ -2036,7 +2036,7 @@ tr.reorder-target td { border-top: 2px solid var(--accent) !important; }
   border-radius: 2px;
   white-space: nowrap;
 }
-/* Étiquettes L / R : ce que L2 et R2 vont faire sur la rangée survolée */
+/* L / R labels: what L2 and R2 will do on the hovered row */
 .gp-side {
   position: absolute;
   top: 50%;
@@ -2050,7 +2050,7 @@ tr.reorder-target td { border-top: 2px solid var(--accent) !important; }
 }
 .gp-side-l { right: 100%; margin-right: 3px; }
 .gp-side-r { left: 100%; margin-left: 3px; }
-/* Cadres L2/R2 posés sur les VRAIS pads qui vont être déclenchés */
+/* L2/R2 frames placed on the REAL pads that are about to be triggered */
 .gp-cursor.gp-target {
   border-width: 2px;
   border-style: dashed;
@@ -2058,7 +2058,7 @@ tr.reorder-target td { border-top: 2px solid var(--accent) !important; }
 }
 .gp-cursor.gp-target .gp-cursor-tag { top: auto; bottom: -13px; font-size: 8px; }
 
-/* Effet GLITCH quand un curseur joueur se déplace */
+/* GLITCH effect when a player cursor moves */
 .gp-cursor.gp-glitch { animation: gp-glitch-anim 0.16s steps(2) 2; }
 @keyframes gp-glitch-anim {
   0%   { transform: translate(0, 0); }
@@ -2068,7 +2068,7 @@ tr.reorder-target td { border-top: 2px solid var(--accent) !important; }
   100% { transform: translate(0, 0); }
 }
 
-/* Prévisualisation jump/loop du joueur sur la vague (couleur néon) */
+/* Player's jump/loop preview on the waveform (neon color) */
 .gp-preview {
   position: fixed;
   z-index: 70;
@@ -2081,7 +2081,7 @@ tr.reorder-target td { border-top: 2px solid var(--accent) !important; }
   opacity: 0.85;
 }
 
-/* Flash néon à l'endroit où L2/R2 frappe */
+/* Neon flash where L2/R2 hits */
 .gp-burst {
   position: fixed;
   z-index: 85;
@@ -2096,7 +2096,7 @@ tr.reorder-target td { border-top: 2px solid var(--accent) !important; }
   100% { opacity: 0;    transform: scaleX(1.9); }
 }
 
-/* Lettres de cue à gauche (L2) / droite (R2) des knobs de la matrice */
+/* Cue letters to the left (L2) / right (R2) of the matrix knobs */
 .cue-tag {
   position: absolute;
   top: 32%;
@@ -2113,7 +2113,7 @@ tr.reorder-target td { border-top: 2px solid var(--accent) !important; }
 .cue-tag-l { left: -6px; }
 .cue-tag-r { right: -6px; }
 
-/* Anneau de LOOP autour du knob : tourne quand la boucle joue */
+/* LOOP ring around the knob: spins while the loop plays */
 .loop-ring {
   position: absolute;
   top: -5px;
@@ -2132,11 +2132,11 @@ tr.reorder-target td { border-top: 2px solid var(--accent) !important; }
   from { transform: translateX(-50%) rotate(0deg); }
   to   { transform: translateX(-50%) rotate(360deg); }
 }
-/* Boucle posée mais deck en PAUSE : anneau statique, en préparation */
+/* Loop set but deck PAUSED: static ring, getting ready */
 .loop-ring.prepared { animation: none; opacity: 0.55; border-style: dotted; }
 
 /* ==========================================================================
-   ÉCOLE DE MIX (façon Guitar Hero)
+   MIX SCHOOL (Guitar Hero style)
    ========================================================================== */
 
 #tutor-bar {
@@ -2242,12 +2242,12 @@ tr.reorder-target td { border-top: 2px solid var(--accent) !important; }
 }
 
 /* ==========================================================================
-   UTILITAIRES & VARIANTES
+   UTILITIES & VARIANTS
    ========================================================================== */
 
 .hidden { display: none !important; }
 
-/* Scrollbars fines */
+/* Thin scrollbars */
 ::-webkit-scrollbar { width: 9px; height: 9px; }
 ::-webkit-scrollbar-thumb {
   background: #2a3145;
@@ -2258,7 +2258,7 @@ tr.reorder-target td { border-top: 2px solid var(--accent) !important; }
 ::-webkit-scrollbar-thumb:hover { background: #3a4358; background-clip: content-box; }
 ::-webkit-scrollbar-track { background: transparent; }
 
-/* ============ Mode 2 decks ============ */
+/* ============ 2-deck mode ============ */
 body.two-decks .wave-row[data-deck="2"],
 body.two-decks .wave-row[data-deck="3"],
 body.two-decks .strip[data-deck="2"],
@@ -2276,7 +2276,7 @@ body.two-decks #strips { grid-template-columns: repeat(2, 1fr); }
 body.two-decks .fxu-assign-btn:nth-child(3),
 body.two-decks .fxu-assign-btn:nth-child(4) { display: none; }
 
-/* Avec 2 decks : on utilise TOUT l'espace */
+/* With 2 decks: use ALL the space */
 body.two-decks .wave-row { height: 74px; }
 body.two-decks .wave-row canvas { height: 64px; }
 body.two-decks .deck { gap: 6px; padding: 8px 10px; }
@@ -2304,7 +2304,7 @@ body.two-decks .strip .knob-wrap span { font-size: 8.5px; }
 body.two-decks .knob-col { gap: 6px; }
 body.two-decks .vfader { width: 36px; }
 
-/* ===== DEMANDES DU PUBLIC ===== */
+/* ===== CROWD REQUESTS ===== */
 #btn-guests { color: #ffd24a; }
 #btn-guests b {
   display: inline-block;
@@ -2353,8 +2353,8 @@ body.two-decks .vfader { width: 36px; }
 }
 .gp-head b { color: #ffd24a; letter-spacing: 0.5px; }
 .gp-head span { flex: 1; color: #8a94ae; font-size: 10px; }
-/* Lien de la page invités : une PASTILLE cliquable (ouvre le navigateur,
-   clic droit = copier) — c'est l'élément qu'on montre au public */
+/* Guests page link: a clickable PILL (opens the browser,
+   right-click = copy) — it is the element shown to the crowd */
 .gp-head #gp-url {
   flex: 1 0 100%;
   order: 3;
@@ -2420,7 +2420,7 @@ body.two-decks .vfader { width: 36px; }
 }
 .gp-row:hover { background: #1a1f29; border-color: #2c3444; }
 .gp-row:active { transform: translateY(1px); }
-/* Le compteur de votes : une pastille, pas un chiffre perdu */
+/* The vote counter: a pill, not a lost number */
 .gp-votes {
   min-width: 34px;
   padding: 3px 0;
@@ -2459,20 +2459,20 @@ body.two-decks .vfader { width: 36px; }
   line-height: 1.5;
 }
 
-/* ===== Barre de titre integree : le topbar EST la barre de fenetre =====
-   (fenetre frameless, boutons systeme en overlay a droite) */
+/* ===== Integrated title bar: the topbar IS the window bar =====
+   (frameless window, system buttons overlaid on the right) */
 #topbar { -webkit-app-region: drag; padding-right: 145px; }
 #topbar button, #topbar select, #topbar input, #topbar a {
   -webkit-app-region: no-drag;
 }
 
-/* macOS : les ronds rouge/jaune/vert natifs sont TOUJOURS en haut à gauche
-   (contrairement à Windows où titleBarOverlay les met à droite) — on
-   pousse le contenu du topbar pour ne pas passer dessous. */
+/* macOS: the native red/yellow/green circles are ALWAYS at the top left
+   (unlike Windows, where titleBarOverlay puts them on the right) — we
+   push the topbar content so it does not go underneath them. */
 html.is-mac #topbar { padding-left: 80px; }
 
-/* ===== OPENMIX : passe de finitions pro ===== */
-/* Compteur de temps 1-2-3-4 dans l'entete de deck */
+/* ===== OPENMIX: pro finishing pass ===== */
+/* 1-2-3-4 beat counter in the deck header */
 .beat-dots { display: inline-flex; gap: 3px; align-items: center; padding: 0 3px; }
 .beat-dots i {
   width: 6px;
@@ -2488,11 +2488,11 @@ html.is-mac #topbar { padding-left: 80px; }
   border-color: var(--deck-color);
   box-shadow: 0 0 6px var(--deck-color);
 }
-/* Etats de survol/appui unifies sur tous les boutons */
+/* Unified hover/press states on all buttons */
 button:hover { border-color: #3a4258; }
 button:active { transform: translateY(0.5px); }
 button:focus-visible { outline: 1px solid #4aa3ff; outline-offset: 1px; }
-/* Logo : point d'accent + respiration */
+/* Logo: accent dot + breathing */
 #logo { letter-spacing: 2.5px; }
 #logo::after {
   content: '';
@@ -2505,18 +2505,18 @@ button:focus-visible { outline: 1px solid #4aa3ff; outline-offset: 1px; }
   vertical-align: super;
   box-shadow: 0 0 6px #39c2ff;
 }
-/* REC : pulse quand ca enregistre */
+/* REC: pulses while recording */
 @keyframes rec-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
 #btn-rec.on { animation: rec-pulse 1.2s ease-in-out infinite; }
 
 /* ============================================================ */
-/* ===== THEME PRO SOBRE : noir, UN accent ==== */
-/* ===== bleu, plat, net. La couleur ne reste que la ou elle == */
-/* ===== INFORME (decks, cues, joueurs). ====================== */
+/* ===== SOBER PRO THEME: black, ONE accent ================= */
+/* ===== blue, flat, crisp. Color only remains where it ===== */
+/* ===== CONVEYS INFO (decks, cues, players). ================ */
 /* ============================================================ */
 :root { --accent: #2d7df1; }
 
-/* Boutons : plats, angles nets, monochromes */
+/* Buttons: flat, sharp corners, monochrome */
 button {
   background: #15171c;
   border: 1px solid #262a31;
@@ -2527,7 +2527,7 @@ button {
 button:hover { background: #1b1e25; border-color: #363c47; }
 button:active { background: #22262e; transform: none; }
 
-/* Etats actifs : LE bleu, pas l'arc-en-ciel */
+/* Active states: THE blue, not the rainbow */
 .deck-controls button.on,
 #color-on.on,
 .pad-modes button.on,
@@ -2541,7 +2541,7 @@ button:active { background: #22262e; transform: none; }
 .deck-controls .btn-grid { color: #b8c0cc; }
 .deck-controls .btn-grid.on { background: var(--accent); color: #fff; }
 
-/* Pads : flats au repos — la couleur n'apparait QUE posee/active */
+/* Pads: flat at rest — color appears ONLY when set/active */
 .pads .pad {
   background: #14161b;
   border: 1px solid #23262d;
@@ -2551,59 +2551,59 @@ button:active { background: #22262e; transform: none; }
 }
 .pads .pad:hover { border-color: #363c47; }
 
-/* Onglets modes (JUMP/LOOP/CUE/KEY) : sobres, actif = bleu */
+/* Mode tabs (JUMP/LOOP/CUE/KEY): sober, active = blue */
 .pad-modes button {
   background: #15171c;
   border-color: #262a31;
   color: #8a94ae;
 }
 
-/* Knobs : corps neutre, l'identite deck reste sur le badge numero */
+/* Knobs: neutral body, the deck identity stays on the number badge */
 .strip .knob, .knob {
   background: #17191f;
   border-color: #2a2e37;
   box-shadow: none;
 }
 
-/* SEL : sobre au repos (la couleur joueur arrive a la selection) */
+/* SEL: sober at rest (the player color arrives on selection) */
 .strip-sel {
   background: #15171c;
   border-color: #262a31;
   color: #8a94ae;
 }
 
-/* Rangees de vagues : liseres fins, pas de cadre epais */
+/* Waveform rows: thin outlines, no thick frame */
 .wave-row { border-width: 1px; }
 
-/* Panneau FX : cellules discretes */
+/* FX panel: discreet cells */
 .fx-cell { background: #101216; border-color: #23262d; }
 .fx-tab { box-shadow: none; }
 .fx-tab.fx-live { box-shadow: none; }
 
-/* Demandes du public : bouton neutre, badge accent */
+/* Crowd requests: neutral button, accent badge */
 #btn-guests { color: #b8c0cc; }
 #btn-guests b { background: var(--accent); color: #fff; }
 #guest-panel { border-color: #363c47; }
 .gp-head b { color: var(--accent); }
 .gp-votes { color: var(--accent); }
 
-/* Topbar : logo bicolore sobre */
+/* Topbar: sober two-tone logo */
 #logo span { color: var(--accent); }
 #logo::after { background: var(--accent); box-shadow: none; }
 #btn-rec { color: #ff5252; }
 #btn-rec.on { background: #c62828; border-color: #c62828; }
 
-/* Neons calmes : plus de halos permanents sur les boutons de transport */
+/* Calm neons: no more permanent glows on the transport buttons */
 .deck-controls button { box-shadow: none !important; }
 #master-bpm b { color: var(--accent); }
 #master-bpm button:hover { border-color: var(--accent); color: var(--accent); }
 
-/* Bibliotheque : rangee active discrete */
+/* Library: discreet active row */
 #lib-table tr.selected td { background: rgba(45, 125, 241, 0.14); }
 .lib-tabs button.on, #lib-tabs button.on { background: var(--accent); color: #fff; border-color: var(--accent); }
 
-/* ===== CARRE ET SEC : angles droits partout, ===== */
-/* ===== seuls les knobs et indicateurs ronds le restent ============ */
+/* ===== SQUARE AND CRISP: right angles everywhere, ===== */
+/* ===== only knobs and round indicators stay round ================ */
 button, input, select, textarea,
 .pads .pad, .pad-modes button, .stems-col button,
 .deck, .wave-row, .strip-sel, .fader-wrap,
@@ -2616,14 +2616,14 @@ button, input, select, textarea,
 .overlay-box, #help-table, .gp-cursor, .gp-cursor-tag {
   border-radius: 0 !important;
 }
-/* le materiel rond reste rond */
+/* round hardware stays round */
 .knob, .knob-ind, .beat-dots i { border-radius: 50% !important; }
-/* plus aucun halo decoratif sur le chrome */
+/* no more decorative glow on the chrome */
 #logo::after { display: none; }
 .deck-badge, .pad-chip { box-shadow: none; }
 
-/* ===== NOIR TOTAL : fond #000, panneaux presque ===== */
-/* ===== noirs, indicateurs BLEUS uniformes, zero halo ================ */
+/* ===== TOTAL BLACK: #000 background, nearly ===== */
+/* ===== black panels, uniform BLUE indicators, zero glow ============== */
 body, #app { background: #000; }
 #topbar { background: #000; }
 .deck {
@@ -2639,28 +2639,28 @@ body, #app { background: #000; }
 }
 #mixer, #mix-body { background: #0a0b0e; }
 #mixer { border-color: #17191e; }
-/* BPM : chiffres blancs nets, plus de couleur par deck ni de glow */
+/* BPM: crisp white digits, no more per-deck color or glow */
 .deck-bpm { color: #d7dce8; text-shadow: none; }
-/* Tous les indicateurs de knobs : LE bleu, comme leur rendu */
+/* All knob indicators: THE blue, matching how they are drawn */
 .knob-ind {
   background: var(--accent) !important;
   box-shadow: none !important;
 }
-/* VU-metres : degrade bleu uniforme */
+/* VU meters: uniform blue gradient */
 .meter-fill { background: linear-gradient(to top, #1d5fd0, #2d7df1 70%, #9cc4ff); }
 #master-meter-fill { background: linear-gradient(to right, #1d5fd0, #2d7df1 70%, #9cc4ff); }
-/* Numeros de strip mixer : gris sobre */
+/* Mixer strip numbers: sober gray */
 .strip-label { color: #8a94ae !important; }
-/* Badges deck : contour fin colore, fond noir (identite discrete) */
+/* Deck badges: thin colored outline, black background (discreet identity) */
 .deck-badge {
   background: transparent;
   color: var(--deck-color);
   border: 1px solid var(--deck-color);
 }
 
-/* ===== Platines par deck + crossfader sous les tranches ===== */
+/* ===== Per-deck platters + crossfader below the channel strips ===== */
 .deck-wheel {
-  width: 86px;          /* 48 px : on ne lisait RIEN. Cadran façon CDJ. */
+  width: 86px;          /* 48 px: you could read NOTHING. CDJ-style dial. */
   height: 86px;
   align-self: center;
   flex-shrink: 0;
@@ -2669,9 +2669,9 @@ body, #app { background: #000; }
 body.two-decks .deck-wheel { width: 104px; height: 104px; }
 #strips #xf-wrap { grid-column: 1 / -1; margin-top: 2px; }
 
-/* ===== FIX RESPONSIVE MIXER : les tranches utilisent `order` (3-1-2-4),
-   le crossfader doit se placer APRES elles dans la grille — et les
-   colonnes ne doivent jamais s'ecraser ni se re-empiler ===== */
+/* ===== RESPONSIVE MIXER FIX: the channel strips use `order` (3-1-2-4),
+   the crossfader must be placed AFTER them in the grid — and the
+   columns must never squash or re-stack ===== */
 #strips { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 #strips .strip { min-width: 0; }
 #strips #xf-wrap {
@@ -2680,7 +2680,7 @@ body.two-decks .deck-wheel { width: 104px; height: 104px; }
   margin-top: 2px;
 }
 
-/* ===== PARAMETRES PLEIN ECRAN : tout l'espace, table MIDI a l'aise ===== */
+/* ===== FULL-SCREEN SETTINGS: all the space, roomy MIDI table ===== */
 #settings-panel {
   width: 100vw;
   max-width: 100vw;
@@ -2692,7 +2692,7 @@ body.two-decks .deck-wheel { width: 104px; height: 104px; }
 }
 #settings-panel .midi-table { max-height: none; }
 
-/* ===== FX ACTIVE = BLEU VISIBLE (badge ON rempli, onglet allume) ===== */
+/* ===== ACTIVE FX = VISIBLE BLUE (ON badge filled, tab lit) ===== */
 .fx-badge.live {
   color: var(--accent);
   border-color: var(--accent);
@@ -2709,7 +2709,7 @@ body.two-decks .deck-wheel { width: 104px; height: 104px; }
   background: color-mix(in srgb, var(--accent) 22%, #0a0b0e);
 }
 
-/* Menu déroulant EFFET de la ligne FX MASTER (liste visible des effets) */
+/* EFFECT dropdown of the FX MASTER row (visible list of effects) */
 .fxm-type-sel {
   background: transparent;
   border: none;
@@ -2719,14 +2719,14 @@ body.two-decks .deck-wheel { width: 104px; height: 104px; }
   cursor: pointer;
   max-width: 92px;
   text-align: right;
-  text-align-last: right;   /* la valeur fermee s aligne a droite comme les autres */
+  text-align-last: right;   /* the closed value aligns to the right like the others */
   white-space: nowrap;
-  direction: rtl;           /* si le nom est trop long, il est coupe a GAUCHE */
+  direction: rtl;           /* if the name is too long, it is cut on the LEFT */
 }
 .fxm-type-sel option { direction: ltr; text-align: left; }
 .fxm-type-sel option { background: #14171f; color: #dfe6f2; }
 
-/* Titre de section dans le panneau des demandes */
+/* Section title in the requests panel */
 .gp-sect {
   font-size: 9px;
   font-weight: 900;
@@ -2735,16 +2735,16 @@ body.two-decks .deck-wheel { width: 104px; height: 104px; }
   padding: 10px 4px 5px;
 }
 
-/* Demande qui n'a PAS pu être chargée : la ligne reste, marquée */
+/* Request that could NOT be loaded: the row stays, marked */
 .gp-row.gp-fail { border-color: #6b2630; background: #1a1216; }
 .gp-warn { color: #ff8a5c; font-size: 12px; flex-shrink: 0; cursor: help; }
 
-/* Morceau SoundCloud protégé (DRM) : visible AVANT de le charger */
+/* DRM-protected SoundCloud track: visible BEFORE loading it */
 tr.drm { opacity: 0.55; }
 tr.drm .col-name, tr.drm td:nth-child(3) { text-decoration: line-through; text-decoration-color: #6b2630; }
 .drm-lock { margin-right: 5px; font-size: 10px; opacity: 0.9; }
 
-/* KEYLOCK : cadenas dans l'en-tête du deck — allumé = tonalité verrouillée */
+/* KEYLOCK: padlock in the deck header — lit = key locked */
 .deck-key .keylock {
   padding: 0 4px;
   font-size: 9px;
@@ -2765,13 +2765,13 @@ tr.drm .col-name, tr.drm td:nth-child(3) { text-decoration: line-through; text-d
   box-shadow: 0 0 6px -1px rgba(255, 210, 74, 0.6);
 }
 
-/* STEMS : les 3 boutons EN LIGNE sous le disque — en colonne, INST sortait
-   du cadre depuis que la platine a été agrandie */
+/* STEMS: the 3 buttons IN A ROW under the disc — in a column, INST overflowed
+   the frame since the platter was enlarged */
 .stems-btns { display: flex; flex-direction: column; gap: 2px; width: 100%; }
 .stems-btns .stem-btn { width: 100%; padding: 3px 0; font-size: 9px; }
 
 /* ==========================================================================
-   BIBLIOTHÈQUE : aperçu vague + pochette, colonne KEY, tri par en-tête
+   LIBRARY: waveform preview + artwork, KEY column, sort by header
    ========================================================================== */
 .col-prev { width: 178px; }
 #lib-table td.col-prev .prev-box {
@@ -2799,7 +2799,7 @@ tr.drm .col-name, tr.drm td:nth-child(3) { text-decoration: line-through; text-d
   font-variant-numeric: tabular-nums;
   color: var(--text-dim);
 }
-/* compatible (roue Camelot) avec la tonalité du master qui joue */
+/* compatible (Camelot wheel) with the key of the master that is playing */
 #lib-table td.col-key.key-ok { color: #4ade80; font-weight: 700; }
 #lib-table th[data-sort] { cursor: pointer; user-select: none; }
 #lib-table th[data-sort]:hover { color: var(--text-dim); }
@@ -2807,8 +2807,8 @@ tr.drm .col-name, tr.drm td:nth-child(3) { text-decoration: line-through; text-d
 #lib-table th.sorted[data-dir="asc"]::after { content: ' ▲'; font-size: 8px; }
 #lib-table th.sorted[data-dir="desc"]::after { content: ' ▼'; font-size: 8px; }
 
-/* TONALITÉ dans l'en-tête du deck : Camelot entendu (morceau + KEY + tempo),
-   VERT = compatible avec le master, ORANGE = dissonant. Clic = KEY SYNC */
+/* KEY in the deck header: Camelot as heard (track + KEY + tempo),
+   GREEN = compatible with the master, ORANGE = dissonant. Click = KEY SYNC */
 .deck-key .key-lbl {
   min-width: 30px;
   padding: 0 4px;
@@ -2823,20 +2823,20 @@ tr.drm .col-name, tr.drm td:nth-child(3) { text-decoration: line-through; text-d
 .deck-key .key-lbl.ok { color: #4ade80; border-color: #4ade8055; }
 .deck-key .key-lbl.clash { color: #ffa94d; border-color: #ffa94d55; }
 .deck-key .key-lbl.master { color: #fff; }
-/* pads du mode KEY : la tonalité obtenue, verte si elle colle au master */
+/* KEY mode pads: the resulting key, green if it fits the master */
 .pads .pad.key-compat { box-shadow: inset 0 -3px 0 #4ade80; }
 .pads .pad .pad-sub { display: block; font-size: 8.5px; opacity: 0.75; font-family: var(--font-tech); }
 
-/* Morceau DÉJÀ PRIS ce soir (chargé sur un deck) : titre et artiste en vert,
-   même sur la ligne sélectionnée */
+/* Track ALREADY USED tonight (loaded on a deck): title and artist in green,
+   even on the selected row */
 #lib-table tbody tr.taken td.col-title,
 #lib-table tbody tr.taken td.col-artist,
 #lib-table tbody tr.taken.selected td.col-title,
 #lib-table tbody tr.taken.selected td.col-artist { color: #4ade80; }
 
-/* Bouton « ⬇ Lien » (yt-dlp) : allumé pendant un téléchargement */
+/* "⬇ Link" button (yt-dlp): lit during a download */
 #btn-ytdlp.on { color: #fff; border-color: var(--accent); background: color-mix(in srgb, var(--accent) 35%, transparent); }
-/* rangement par glisser-déposer dans la musique OpenMix */
+/* drag-and-drop sorting into the OpenMix music */
 #lib-table tr.folder-drop td,
 .tree-row.folder-drop {
   background: color-mix(in srgb, var(--accent) 30%, transparent) !important;
@@ -2850,7 +2850,7 @@ tr.drm .col-name, tr.drm td:nth-child(3) { text-decoration: line-through; text-d
 }
 
 /* ==========================================================================
-   RECHERCHE YouTube + SoundCloud (panneau au-dessus de la liste)
+   YouTube + SoundCloud SEARCH (panel above the list)
    ========================================================================== */
 #library { position: relative; }
 #web-search {
@@ -2895,11 +2895,11 @@ tr.drm .col-name, tr.drm td:nth-child(3) { text-decoration: line-through; text-d
 .ws-drm { opacity: 0.5; cursor: default; }
 .ws-drm .ws-actions { font-size: 10px; color: var(--text-faint); }
 
-/* Destination des téléchargements, dans la barre de recherche */
+/* Download destination, in the search bar */
 #ws-bar .ws-dest-label { font-size: 11px; color: var(--text-dim); white-space: nowrap; }
 #ws-dest { max-width: 220px; font-size: 12px; }
 
-/* − / + du BPM, de part et d'autre de la jauge de tempo */
+/* BPM − / +, on either side of the tempo gauge */
 .deck-controls .tempo-btn {
   min-width: 22px !important;
   width: 22px;

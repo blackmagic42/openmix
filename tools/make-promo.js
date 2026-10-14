@@ -1,8 +1,8 @@
-// Fabrique l'image de promotion : logo + capture + accroches.
-// Format 1600x900 : bon pour Reddit, Facebook, X, miniature YouTube.
+// Builds the promo image: logo + screenshot + taglines.
+// 1600x900 format: good for Reddit, Facebook, X, YouTube thumbnail.
 //
-//   npx electron tools/make-promo.js         -> docs/promo.png    (francais)
-//   npx electron tools/make-promo.js --en    -> docs/promo-en.png (anglais)
+//   npx electron tools/make-promo.js         -> docs/promo.png    (French)
+//   npx electron tools/make-promo.js --en    -> docs/promo-en.png (English)
 //
 const { app, BrowserWindow } = require('electron');
 const fs = require('fs');
@@ -15,28 +15,28 @@ const ICON = path.join(__dirname, '..', 'build', 'icon-256.png');
 const EN = process.argv.includes('--en');
 const OUT = path.join(DOCS, EN ? 'promo-en.png' : 'promo.png');
 
-const MANETTE = '🎮';
-const PLATINE = '🎛';
-const TEL = '📱';
-const BULLE = '💬';
+const GAMEPAD = '🎮';
+const DECK = '🎛';
+const PHONE = '📱';
+const BUBBLE = '💬';
 
 const T = EN ? {
-  sous: 'Free DJ software — 4 decks, DDJ, gamepads, phone',
+  subtitle: 'Free DJ software — 4 decks, DDJ, gamepads, phone',
   badge: 'FREE · OPEN SOURCE',
   args: [
-    [MANETTE, 'Up to 4 players on gamepads'],
-    [PLATINE, 'Any USB-MIDI controller'],
-    [TEL, 'Phone as a second console'],
-    [BULLE, 'Crowd requests via QR code']
+    [GAMEPAD, 'Up to 4 players on gamepads'],
+    [DECK, 'Any USB-MIDI controller'],
+    [PHONE, 'Phone as a second console'],
+    [BUBBLE, 'Crowd requests via QR code']
   ]
 } : {
-  sous: 'Logiciel DJ libre — 4 platines, DDJ, manettes, téléphone',
+  subtitle: 'Logiciel DJ libre — 4 platines, DDJ, manettes, téléphone',
   badge: 'GRATUIT · OPEN SOURCE',
   args: [
-    [MANETTE, 'Jusqu’à 4 joueurs à la manette'],
-    [PLATINE, 'Toute platine USB-MIDI'],
-    [TEL, 'Console sur téléphone'],
-    [BULLE, 'Demandes du public par QR']
+    [GAMEPAD, 'Jusqu’à 4 joueurs à la manette'],
+    [DECK, 'Toute platine USB-MIDI'],
+    [PHONE, 'Console sur téléphone'],
+    [BUBBLE, 'Demandes du public par QR']
   ]
 };
 
@@ -46,15 +46,15 @@ const H = 900;
 const PAGE = `<!doctype html><html><head><meta charset="utf-8">
 <style>html,body{margin:0;background:#000}</style></head><body>
 <canvas id="c" width="${W}" height="${H}"></canvas><script>
-const charge = (u) => new Promise((ok, ko) => {
+const loadImage = (u) => new Promise((ok, fail) => {
   const i = new Image();
   i.onload = () => ok(i);
-  i.onerror = () => ko(new Error('image ' + u));
+  i.onerror = () => fail(new Error('image ' + u));
   i.src = u;
 });
 
-// Rectangle a coins arrondis (roundRect n'existe pas partout)
-function coinsRonds(g, x, y, w, h, r) {
+// Rounded-corner rectangle (roundRect doesn't exist everywhere)
+function roundedRect(g, x, y, w, h, r) {
   g.beginPath();
   g.moveTo(x + r, y);
   g.lineTo(x + w - r, y);
@@ -68,13 +68,13 @@ function coinsRonds(g, x, y, w, h, r) {
   g.closePath();
 }
 
-window.fabrique = async function (urlShot, urlIcon, T) {
-  const [shot, icon] = await Promise.all([charge(urlShot), charge(urlIcon)]);
+window.makePromo = async function (urlShot, urlIcon, T) {
+  const [shot, icon] = await Promise.all([loadImage(urlShot), loadImage(urlIcon)]);
   const cv = document.getElementById('c');
   const g = cv.getContext('2d');
   const W = cv.width, H = cv.height;
 
-  // Fond sombre + halo bleu derriere la capture
+  // Dark background + blue halo behind the screenshot
   const f = g.createLinearGradient(0, 0, 0, H);
   f.addColorStop(0, '#0e1219');
   f.addColorStop(1, '#05070a');
@@ -86,7 +86,7 @@ window.fabrique = async function (urlShot, urlIcon, T) {
   g.fillStyle = halo;
   g.fillRect(0, 0, W, H);
 
-  // En-tete : logo + nom + sous-titre
+  // Header: logo + name + subtitle
   g.drawImage(icon, 54, 44, 76, 76);
   g.textBaseline = 'middle';
   g.textAlign = 'left';
@@ -98,12 +98,12 @@ window.fabrique = async function (urlShot, urlIcon, T) {
   g.fillText('MIX', 148 + wOpen, 74);
   g.font = '600 17px "Segoe UI", system-ui, sans-serif';
   g.fillStyle = '#8a94ae';
-  g.fillText(T.sous, 149, 106);
+  g.fillText(T.subtitle, 149, 106);
 
-  // Badge a droite
+  // Badge on the right
   g.font = '800 17px "Segoe UI", system-ui, sans-serif';
   const bw = g.measureText(T.badge).width + 34;
-  coinsRonds(g, W - 54 - bw, 56, bw, 40, 20);
+  roundedRect(g, W - 54 - bw, 56, bw, 40, 20);
   g.fillStyle = 'rgba(53,217,122,0.13)';
   g.fill();
   g.strokeStyle = 'rgba(53,217,122,0.55)';
@@ -113,43 +113,43 @@ window.fabrique = async function (urlShot, urlIcon, T) {
   g.textAlign = 'center';
   g.fillText(T.badge, W - 54 - bw / 2, 77);
 
-  // La capture, cadree et arrondie
+  // The screenshot, framed and rounded
   const cw = 1360;
   const ch = Math.round(cw * shot.height / shot.width);
   const cx = (W - cw) / 2;
   const cy = 150;
-  const bas = Math.min(ch, 560);
+  const frameH = Math.min(ch, 560);
   g.save();
   g.shadowColor = 'rgba(0,0,0,0.75)';
   g.shadowBlur = 46;
   g.shadowOffsetY = 16;
-  coinsRonds(g, cx, cy, cw, bas, 12);
+  roundedRect(g, cx, cy, cw, frameH, 12);
   g.fillStyle = '#0a0b0e';
   g.fill();
   g.restore();
   g.save();
-  coinsRonds(g, cx, cy, cw, bas, 12);
+  roundedRect(g, cx, cy, cw, frameH, 12);
   g.clip();
   g.drawImage(shot, cx, cy, cw, ch);
-  // Fondu en bas : sans lui la capture parait coupee au couteau
-  const fade = g.createLinearGradient(0, cy + bas - 110, 0, cy + bas);
+  // Fade at the bottom: without it the screenshot looks cut off with a knife
+  const fade = g.createLinearGradient(0, cy + frameH - 110, 0, cy + frameH);
   fade.addColorStop(0, 'rgba(7,9,13,0)');
   fade.addColorStop(1, 'rgba(7,9,13,0.97)');
   g.fillStyle = fade;
-  g.fillRect(cx, cy + bas - 110, cw, 110);
+  g.fillRect(cx, cy + frameH - 110, cw, 110);
   g.restore();
   g.strokeStyle = 'rgba(57,194,255,0.30)';
   g.lineWidth = 1.5;
-  coinsRonds(g, cx, cy, cw, bas, 12);
+  roundedRect(g, cx, cy, cw, frameH, 12);
   g.stroke();
 
-  // Bandeau du bas : les arguments, la manette en tete
+  // Bottom strip: the selling points, the gamepad first
   const y = 762;
-  const largeur = W - 108;
-  const pas = largeur / T.args.length;
+  const stripW = W - 108;
+  const step = stripW / T.args.length;
   T.args.forEach(([ico, txt], i) => {
-    const x = 54 + pas * i;
-    coinsRonds(g, x, y, pas - 18, 84, 10);
+    const x = 54 + step * i;
+    roundedRect(g, x, y, step - 18, 84, 10);
     g.fillStyle = 'rgba(255,255,255,0.035)';
     g.fill();
     g.strokeStyle = 'rgba(255,255,255,0.09)';
@@ -177,7 +177,7 @@ app.whenReady().then(async () => {
   const win = new BrowserWindow({ width: 300, height: 200, show: false });
   await win.loadFile(page);
   const dataUrl = await win.webContents.executeJavaScript(
-    `window.fabrique(${JSON.stringify(fileUrl(SHOT))}, ${JSON.stringify(fileUrl(ICON))}, ${JSON.stringify(T)})`);
+    `window.makePromo(${JSON.stringify(fileUrl(SHOT))}, ${JSON.stringify(fileUrl(ICON))}, ${JSON.stringify(T)})`);
   fs.writeFileSync(OUT, Buffer.from(String(dataUrl).split(',')[1], 'base64'));
   win.destroy();
   fs.unlinkSync(page);
