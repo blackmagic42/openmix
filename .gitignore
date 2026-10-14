@@ -17,3 +17,8 @@ build/_*.html
 android-app/build/
 *.apk
 *.idsig
+
+# VST3 SDK (fetched by npm run build:vst) and native build output
+native/vst3sdk/
+native/vsthost/build/
+native/tpb/

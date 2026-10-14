@@ -119,6 +119,27 @@ Optional:
 - **Grid import**: if an analysis folder exists on the same PC, there is an
   import button in ⚙ Settings.
 
+## VST3 plugins (Windows)
+
+Every mixer channel has a **VST** button under its fader: pick an installed
+VST3 effect and it is inserted on that deck, after the EQ and the filter (the
+headphone cue hears it too). Click the button again to open the plugin's own
+editor, bypass it, swap it or remove it. The plugin and its settings are kept
+per deck and come back at the next launch.
+
+- Plugins are searched in `C:\Program Files\Common Files\VST3` and in the
+  folders added in ⚙ Settings.
+- The insert adds a fixed latency (about 17 ms), compensated like the keylock:
+  the beat grid, SYNC and cues stay exactly on time.
+- Tempo-synced effects (delays, LFOs…) receive the deck's BPM.
+- A plugin that crashes is switched off instead of taking OpenMix down with
+  it, and a plugin that crashed OpenMix is not reloaded automatically.
+
+Building the native host from source: `npm run build:vst` (Visual Studio 2022
+with the C++ workload, CMake and git; the Steinberg VST3 SDK, MIT license, is
+downloaded the first time). `OPENMIX_VST_PATH` adds plugin folders (separated
+by `;`) for testing.
+
 ## Phone console
 
 The server starts automatically with the app (port **8722**).

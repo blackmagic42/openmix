@@ -6,6 +6,7 @@ import { MidiManager, MIDI_ACTIONS_DECK, MIDI_ACTIONS_GLOBAL } from './midi.js';
 import { gridIndexFracAt, gridTimeAtIndex, gridPeriodAt, setGlobalGridOffset, getGlobalGridOffset, barAlignedSeekTime } from './engine.js';
 import { camelotLabel, keyName, keyDistance, heardKey, shiftKey } from './key.js';
 import { t, getLang, setLang, applyStaticTranslations } from './i18n.js';
+import { VstHost } from './vst.js';
 
 // Translate everything carrying data-i18n / data-i18n-title / data-i18n-placeholder
 // before building the rest of the interface (decks, mixer…), so that
@@ -2378,10 +2379,21 @@ function buildMixer() {
     strip.appendChild(faderRow);
     const fader = makeVFader(faderEl, () => deck.volume, v => deck.setVolume(v));
 
+    // VST3 plugin inserted on this channel (click = menu, see showVstMenu)
+    const vstBtn = document.createElement('button');
+    vstBtn.className = 'strip-vst';
+    vstBtn.textContent = 'VST';
+    vstBtn.title = t('vst_btn_title');
+    vstBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      showVstMenu(e, i);
+    });
+    strip.appendChild(vstBtn);
+
     strip.addEventListener('pointerdown', () => setActiveDeck(i));
     strips.appendChild(strip);
     stripUI.push({
-      el: strip, selBtn, kTrim, kHigh, kMid, kLow, kFilt, fader,
+      el: strip, selBtn, kTrim, kHigh, kMid, kLow, kFilt, fader, vstBtn,
       meterFill: meter.querySelector('.meter-fill'),
       meterClip: meter.querySelector('.meter-clip'),
       meterVal: 0,
@@ -8281,3 +8293,111 @@ library.init().then(() => {
 
 
 requestAnimationFrame(frame);
+
+// ---------------------------------------------------------------------------
+// VST3 PLUGINS on the mixer channels (see vst.js). The VST button under each
+// fader opens a menu: choose a plugin, open its editor, bypass, remove.
+// ---------------------------------------------------------------------------
+const vstHost = new VstHost(engine);
+
+function vstShortName(name) {
+  const n = String(name || 'VST').trim();
+  return n.length > 9 ? `${n.slice(0, 8)}…` : n;
+}
+
+function updateVstButtons() {
+  stripUI.forEach((s, i) => {
+    const b = s.vstBtn;
+    if (!b) return;
+    const slot = vstHost.slots[i];
+    b.textContent = slot ? vstShortName(slot.plugin.name) : 'VST';
+    b.classList.toggle('on', !!slot && slot.mix > 0);
+    b.classList.toggle('bypass', !!slot && slot.mix === 0);
+    b.title = !vstHost.available
+      ? t('vst_unavailable', { reason: vstHost.error || '…' })
+      : slot ? t('vst_btn_loaded_title', { name: slot.plugin.name }) : t('vst_btn_title');
+  });
+  const st = document.getElementById('set-vst-status');
+  if (st) {
+    st.textContent = vstHost.available
+      ? t('vst_settings_status', { n: vstHost.plugins.length })
+      : t('vst_unavailable', { reason: vstHost.error || '…' });
+  }
+}
+
+async function vstScan() {
+  flashStatus(t('vst_scanning'));
+  const list = await vstHost.scan().catch(() => []);
+  flashStatus(t('vst_scan_done', { n: list.length }));
+  updateVstButtons();
+  return list;
+}
+
+async function vstLoad(i, plugin) {
+  flashStatus(t('vst_loading', { name: plugin.name, n: i + 1 }));
+  const r = await vstHost.load(i, plugin).catch((e) => ({ ok: false, error: String(e.message || e) }));
+  updateVstButtons();
+  flashStatus(r.ok
+    ? t('vst_loaded', { name: r.name, n: i + 1 })
+    : t('vst_load_failed', { name: plugin.name, error: r.error }));
+}
+
+function showVstMenu(e, i) {
+  ctxMenu.textContent = '';
+  const addItem = (label, fn, cls) => {
+    const d = document.createElement('div');
+    d.className = 'ctx-item' + (cls ? ` ${cls}` : '');
+    d.textContent = label;
+    if (fn) d.addEventListener('click', () => { hideCtxMenu(); fn(); });
+    ctxMenu.appendChild(d);
+  };
+  if (!vstHost.available) {
+    addItem(t('vst_unavailable', { reason: vstHost.error || '…' }), null, 'ctx-info');
+  } else {
+    const slot = vstHost.slots[i];
+    if (slot) {
+      addItem(t('vst_menu_open_editor', { name: slot.plugin.name }), async () => {
+        const r = await vstHost.openEditor(i).catch((err) => ({ ok: false, error: String(err.message || err) }));
+        if (!r.ok) flashStatus(t('vst_editor_failed', { error: r.error }));
+      });
+      addItem(slot.mix > 0 ? t('vst_menu_bypass_on') : t('vst_menu_bypass_off'), () => {
+        vstHost.setMix(i, slot.mix > 0 ? 0 : 1);
+        updateVstButtons();
+      });
+      addItem(t('vst_menu_remove'), async () => {
+        await vstHost.unload(i);
+        updateVstButtons();
+        flashStatus(t('vst_removed', { n: i + 1 }));
+      });
+    }
+    if (!vstHost.plugins.length) addItem(t('vst_menu_none'), null, 'ctx-info');
+    vstHost.plugins.slice(0, 40).forEach((p) => {
+      addItem(p.vendor ? `${p.name} — ${p.vendor}` : p.name, () => vstLoad(i, p));
+    });
+    addItem(t('vst_menu_scan'), () => vstScan());
+    addItem(t('vst_menu_add_folder'), async () => {
+      const r = await window.api.vstAddFolder();
+      if (r.ok) vstScan();
+    });
+  }
+  ctxMenu.style.left = `${Math.min(e.clientX, window.innerWidth - 300)}px`;
+  ctxMenu.style.top = `${Math.max(8, Math.min(e.clientY, window.innerHeight - ctxMenu.childElementCount * 30 - 10))}px`;
+  ctxMenu.classList.remove('hidden');
+}
+
+document.getElementById('set-vst-scan')?.addEventListener('click', () => vstScan());
+document.getElementById('set-vst-folder')?.addEventListener('click', async () => {
+  const r = await window.api.vstAddFolder();
+  if (r.ok) vstScan();
+});
+
+vstHost.init().then(async (ok) => {
+  updateVstButtons();
+  if (!ok) return;
+  if (!vstHost.plugins.length) await vstHost.scan().catch(() => []);
+  await vstHost.restore();
+  if (vstHost.lastCrash) flashStatus(t('vst_crash_skipped', { name: vstHost.lastCrash }));
+  updateVstButtons();
+  // the plugins' own settings (changed in their editors) are saved regularly
+  setInterval(() => { if (vstHost.slots.some(Boolean)) vstHost.saveAll(); }, 15000);
+});

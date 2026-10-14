@@ -117,6 +117,27 @@ Optionnel :
 - **Import de grilles** : si un dossier d'analyses existe sur le même PC, bouton
   d'import dans ⚙ Paramètres.
 
+## Plugins VST3 (Windows)
+
+Chaque voie du mixer a un bouton **VST** sous son fader : choisis un effet VST3
+installé et il est inséré sur ce deck, après l'EQ et le filtre (le casque
+l'entend aussi). Re-clique sur le bouton pour ouvrir l'interface du plugin, le
+bypasser, le changer ou le retirer. Le plugin et ses réglages sont gardés par
+deck et reviennent au prochain lancement.
+
+- Les plugins sont cherchés dans `C:\Program Files\Common Files\VST3` et dans
+  les dossiers ajoutés dans ⚙ Paramètres.
+- L'insert ajoute un retard fixe (environ 17 ms), compensé comme le keylock :
+  la grille, le SYNC et les cues restent pile à l'heure.
+- Les effets calés sur le tempo (delays, LFO…) reçoivent le BPM du deck.
+- Un plugin qui plante est coupé au lieu de faire tomber OpenMix, et un plugin
+  qui a fait planter OpenMix n'est pas rechargé automatiquement.
+
+Compiler l'hôte natif depuis les sources : `npm run build:vst` (Visual Studio
+2022 avec le C++, CMake et git ; le SDK VST3 de Steinberg, licence MIT, est
+téléchargé la première fois). `OPENMIX_VST_PATH` ajoute des dossiers de plugins
+(séparés par `;`) pour les tests.
+
 ## Console téléphone
 
 Le serveur démarre automatiquement avec l'app (port **8722**).

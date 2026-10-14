@@ -221,13 +221,20 @@ export class Deck {
     this.eqLow.connect(this.eqMid);
     this.eqMid.connect(this.eqHigh);
     this.eqHigh.connect(this.filter);
-    this.filter.connect(this.fader);
+    // INSERT point (VST3 plugin, see vst.js): filter → [insert] → post.
+    // Fader, headphone cue, meter and Color FX all listen to `post`, so they
+    // hear the plugin too.
+    this.post = ctx.createGain();
+    this.insert = null;
+    this.insertLat = 0;     // latency of the insert (s), added to procLat
+    this.filter.connect(this.post);
+    this.post.connect(this.fader);
     // PRE-FADER send to the headphone bus (the channel's headphone CUE button):
     // the deck is heard in the headphones even with the fader down — true PFL
     this.cueSend = ctx.createGain();
     this.cueSend.gain.value = 0;
     this.cueOn = false;
-    this.filter.connect(this.cueSend);
+    this.post.connect(this.cueSend);
     this.fader.connect(this.xf);
     // DRY output of the deck, adjustable: while a PAD FX is held, the effect
     // MANIPULATES the sound (the dry is cut) instead of adding on top of it.
@@ -245,7 +252,7 @@ export class Deck {
     // Level analyser (VU meter + clipping detection), post-EQ/filter
     this.analyser = ctx.createAnalyser();
     this.analyser.fftSize = 512;
-    this.filter.connect(this.analyser);
+    this.post.connect(this.analyser);
     this.meterBuf = new Float32Array(this.analyser.fftSize);
 
     // Deck entry point: straight to the EQ (via TRIM), or through the
@@ -515,6 +522,37 @@ export class Deck {
     return at;
   }
 
+  // VST3 INSERT: plugs an AudioWorkletNode between the filter and `post`.
+  // Its fixed latency joins procLat: the track is read that much ahead, so
+  // what you hear stays on the beat grid (sync, waveforms, cues). While
+  // playing, the sources restart at the heard position with the new
+  // read-ahead (a few ms glitch, only when a plugin is added or removed).
+  setInsert(node, latency) {
+    if (this.insert) {
+      try { this.filter.disconnect(this.insert); } catch { /* not connected */ }
+      try { this.insert.disconnect(this.post); } catch { /* not connected */ }
+    } else {
+      try { this.filter.disconnect(this.post); } catch { /* not connected */ }
+    }
+    this.insert = node || null;
+    if (this.insert) {
+      this.filter.connect(this.insert);
+      this.insert.connect(this.post);
+    } else {
+      this.filter.connect(this.post);
+    }
+    this.insertLat = this.insert ? Math.max(0, latency || 0) : 0;
+    const total = (this._routeW ? this.wsLat : 0) + this.insertLat;
+    if (Math.abs(total - this.procLat) < 1e-6) return;
+    if (this.playing && this.buffer) {
+      const heard = this.currentTime();
+      this.procLat = total;
+      this.seek(heard);
+    } else {
+      this.procLat = total;
+    }
+  }
+
   // Enables the separated stems (vocals/drums/bass/instrumental) on this deck
   loadStems(stems) {
     this.stems = stems;
@@ -590,7 +628,7 @@ export class Deck {
     };
     if (!this.playing || !this.buffer) {
       this._routeW = on;
-      this.procLat = L;
+      this.procLat = L + this.insertLat;
       ramp(this.dirGain.gain, on ? 0 : 1, now);
       ramp(this.wsOut.gain, on ? 1 : 0, now);
       return;
@@ -600,7 +638,7 @@ export class Deck {
     this.source = null;
     this._extraSources = [];
     this._routeW = on;
-    this.procLat = L;
+    this.procLat = L + this.insertLat;
     const at = now + 0.03;
     if (on) {
       // the old sound keeps flowing DIRECT until the transposer outputs
@@ -1551,7 +1589,7 @@ export class AudioEngine {
     this.decks.forEach((d) => {
       d.colorSend = this.ctx.createGain();
       d.colorSend.gain.value = 0;
-      d.filter.connect(d.colorSend);
+      d.post.connect(d.colorSend);
       d.colorSend.connect(this.colorBus);
       // White noise dosed by the knob, which follows the deck's fader
       d.noiseGain = this.ctx.createGain();
@@ -1596,7 +1634,7 @@ export class AudioEngine {
         node.port.onmessage = (e) => {
           if (e.data && e.data.lat) {
             d.wsLat = e.data.lat / this.ctx.sampleRate;
-            if (d._routeW) d.procLat = d.wsLat;
+            if (d._routeW) d.procLat = d.wsLat + d.insertLat;
           }
         };
         d.wsola = node;
@@ -2594,7 +2632,7 @@ export class AudioEngine {
       // latency) — when the BPM goes up, it falls slightly behind. Its
       // tempo does NOT affect its pitch (keylock): it can be corrected
       // ~10× harder, it's inaudible.
-      const strong = d.procLat > 0;
+      const strong = d._routeW;
       const lim = strong ? 0.015 : 0.002;
       const corr = Math.max(-lim, Math.min(lim, eF * (strong ? 1.0 : 0.08)));
       // THE BASE IS FROZEN — NO MORE ABSORPTION AT ALL. That was THE cause of the

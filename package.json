@@ -7,14 +7,17 @@
   "scripts": {
     "start": "electron .",
     "icon": "electron tools/make-icon.js",
+    "build:vst": "node tools/build-vst.js",
     "dist": "electron-builder --win",
     "dist:portable": "electron-builder --win portable"
   },
   "author": "David (blackmagic42)",
   "license": "MIT",
   "devDependencies": {
+    "cmake-js": "^8.0.0",
     "electron": "^43.1.0",
-    "electron-builder": "^26.15.3"
+    "electron-builder": "^26.15.3",
+    "node-addon-api": "^8.9.2"
   },
   "build": {
     "appId": "org.openmix.app",
@@ -26,7 +29,11 @@
       "main.js",
       "preload.js",
       "src/**/*",
-      "package.json"
+      "package.json",
+      "native/vsthost/build/Release/openmix_vsthost.node"
+    ],
+    "asarUnpack": [
+      "native/vsthost/build/Release/openmix_vsthost.node"
     ],
     "win": {
       "target": [

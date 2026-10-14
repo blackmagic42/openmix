@@ -11,6 +11,11 @@ let win = null;
 // the cues or the SoundCloud session)
 app.setPath('userData', path.join(app.getPath('appData'), 'Turbo Mix'));
 
+// VST3 inserts (src/js/vst.js): the audio is exchanged with the native
+// plugin host through SharedArrayBuffers, which Chromium only enables for
+// cross-origin-isolated pages — or with this switch (local app pages only)
+app.commandLine.appendSwitch('enable-features', 'SharedArrayBuffer');
+
 // Allows Web MIDI **with SysEx** (required for the Pioneer keep-alive
 // that unlocks the controllers' LEDs) — local app, no remote page
 app.whenReady().then(() => {
@@ -36,6 +41,11 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
+      // Node only in Web Workers: the VST3 host worker loads the native
+      // module. The page itself still has no Node, and its CSP
+      // (default-src 'self') only allows the app's own worker scripts.
+      nodeIntegrationInWorker: true,
+      sandbox: false,
       backgroundThrottling: false
     }
   });
@@ -958,6 +968,60 @@ async function findYtDlp(force = false) {
   ytdlpCmd = null;
   return null;
 }
+
+// --- VST3 PLUGINS (inserts on the decks, see src/js/vst.js) ---
+// Native host built from native/vsthost (npm run build:vst); in the
+// installer it sits next to app.asar (asarUnpack).
+function vstModulePath() {
+  return path.join(__dirname, 'native', 'vsthost', 'build', 'Release', 'openmix_vsthost.node')
+    .replace(`app.asar${path.sep}`, `app.asar.unpacked${path.sep}`);
+}
+// Standard VST3 folder + the folders added in ⚙
+function vstFolders() {
+  const std = path.join(process.env.CommonProgramFiles || 'C:\\Program Files\\Common Files', 'VST3');
+  const extra = Array.isArray(settings.vstFolders) ? settings.vstFolders : [];
+  // OPENMIX_VST_PATH (folders separated by ;) — developers, test plugins
+  const env = (process.env.OPENMIX_VST_PATH || '').split(';').filter(Boolean);
+  return [...new Set([std, ...extra, ...env].filter(Boolean))];
+}
+
+ipcMain.handle('vst-info', async () => {
+  if (process.platform !== 'win32') return { available: false, reason: 'Windows only for now' };
+  const modulePath = vstModulePath();
+  try {
+    await fsp.access(modulePath);
+  } catch {
+    return { available: false, reason: 'native host not built (npm run build:vst)' };
+  }
+  let owner = null;
+  try { owner = win.getNativeWindowHandle().readBigUInt64LE(0).toString(); } catch { /* no owner */ }
+  return { available: true, modulePath, owner, folders: vstFolders() };
+});
+
+// Every *.vst3 (bundle folder or single file) under the VST3 folders
+ipcMain.handle('vst-list-files', async () => {
+  const out = [];
+  const walk = async (dir, depth) => {
+    if (depth > 6 || out.length > 2000) return;
+    let entries = [];
+    try { entries = await fsp.readdir(dir, { withFileTypes: true }); } catch { return; }
+    for (const e of entries) {
+      const p = path.join(dir, e.name);
+      if (e.name.toLowerCase().endsWith('.vst3')) out.push(p);
+      else if (e.isDirectory()) await walk(p, depth + 1);
+    }
+  };
+  for (const f of vstFolders()) await walk(f, 0);
+  return out;
+});
+
+ipcMain.handle('vst-add-folder', async () => {
+  const r = await dialog.showOpenDialog(win, { title: 'VST3 plugin folder', properties: ['openDirectory'] });
+  if (r.canceled || !r.filePaths[0]) return { ok: false, folders: vstFolders() };
+  settings.vstFolders = [...new Set([...(settings.vstFolders || []), r.filePaths[0]])];
+  await saveSettings();
+  return { ok: true, folders: vstFolders() };
+});
 
 ipcMain.handle('ytdlp-status', async () => {
   const c = await findYtDlp();

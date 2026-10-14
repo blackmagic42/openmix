@@ -2920,3 +2920,32 @@ tr.drm .col-name, tr.drm td:nth-child(3) { text-decoration: line-through; text-d
   border-color: var(--deck-color);
   color: #0b0d12;
 }
+
+/* VST3 plugin button under each channel fader */
+.strip-vst {
+  margin-top: 4px;
+  width: 100%;
+  min-height: 20px;
+  padding: 2px 3px;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.strip-vst.on {
+  color: #0b0d12;
+  background: var(--deck-color);
+  border-color: var(--deck-color);
+}
+.strip-vst.bypass {
+  color: var(--deck-color);
+  border-color: var(--deck-color);
+  border-style: dashed;
+}
+.ctx-item.ctx-info {
+  cursor: default;
+  opacity: 0.7;
+}
