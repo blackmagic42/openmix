@@ -1,0 +1,79 @@
+{
+  "name": "@openmix/web-engine",
+  "version": "0.1.0",
+  "description": "The Web Audio DJ engine of OpenMix as a standalone library: multi-deck playback, beat grids, sync with phase lock, WSOLA keylock (AudioWorklet), 3-band EQ, filters, beat FX, headphone cue routing, BPM/key analysis and waveform drawing. Pure ES modules, zero dependencies.",
+  "keywords": [
+    "dj",
+    "web-audio",
+    "audioworklet",
+    "mixer",
+    "mixing",
+    "bpm",
+    "beatgrid",
+    "beat-sync",
+    "keylock",
+    "time-stretch",
+    "pitch-shift",
+    "wsola",
+    "waveform",
+    "camelot",
+    "openmix"
+  ],
+  "license": "MIT",
+  "author": "David (blackmagic42)",
+  "contributors": [
+    "OpenMix contributors"
+  ],
+  "homepage": "https://github.com/blackmagic42/openmix/tree/main/packages/web-engine#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/blackmagic42/openmix.git",
+    "directory": "packages/web-engine"
+  },
+  "bugs": {
+    "url": "https://github.com/blackmagic42/openmix/issues"
+  },
+  "private": true,
+  "publishConfig": {
+    "access": "public"
+  },
+  "type": "module",
+  "main": "./src/index.js",
+  "module": "./src/index.js",
+  "types": "./types/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./types/index.d.ts",
+      "default": "./src/index.js"
+    },
+    "./analysis": {
+      "types": "./types/analysis.d.ts",
+      "default": "./src/analysis/index.js"
+    },
+    "./waveform": {
+      "types": "./types/waveform.d.ts",
+      "default": "./src/waveform/index.js"
+    },
+    "./worklets/pitch-processor.js": "./worklets/pitch-processor.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "src/",
+    "worklets/",
+    "types/",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "sideEffects": [
+    "./worklets/*.js"
+  ],
+  "scripts": {
+    "demo": "node scripts/serve.js",
+    "test": "node --test \"test/unit/*.test.js\"",
+    "test:browser": "node scripts/test-browser.js"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
