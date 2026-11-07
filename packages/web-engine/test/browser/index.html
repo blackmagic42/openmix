@@ -1,0 +1,101 @@
+<!doctype html>
+<!--
+  SPDX-License-Identifier: MIT
+  Copyright (c) 2026 blackmagic42 (OpenMix) and contributors
+  @openmix/web-engine — the Web Audio DJ engine of OpenMix
+  https://github.com/blackmagic42/openmix
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>web-engine browser tests</title>
+  <link rel="icon" href="data:,">
+  <style>
+    :root {
+      --bg: #0b0d12;
+      --panel: #141821;
+      --line: #252b38;
+      --text: #e6e9ef;
+      --dim: #8a93a6;
+      --pass: #5fe08a;
+      --fail: #ff6b6b;
+      --skip: #ffb454;
+      --run: #39c2ff;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 16px 20px 32px;
+      background: var(--bg);
+      color: var(--text);
+      font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    }
+    h1 { margin: 0 0 4px; font-size: 18px; font-weight: 650; }
+    h1 small { color: var(--dim); font-weight: 400; font-size: 13px; margin-left: 6px; }
+    p { margin: 0 0 12px; color: var(--dim); max-width: 960px; }
+    .bar { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; flex-wrap: wrap; }
+    button {
+      font: inherit;
+      color: var(--text);
+      background: #1d2330;
+      border: 1px solid #323a4b;
+      border-radius: 6px;
+      padding: 6px 14px;
+      cursor: pointer;
+    }
+    button:hover:not(:disabled) { border-color: var(--run); }
+    button:disabled { opacity: 0.5; cursor: default; }
+    button:focus-visible { outline: 2px solid var(--run); outline-offset: 2px; }
+    #summary { font-weight: 600; }
+    body[data-result="pass"] #summary { color: var(--pass); }
+    body[data-result="fail"] #summary { color: var(--fail); }
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; background: var(--panel); border: 1px solid var(--line); }
+    th, td { text-align: left; vertical-align: top; padding: 7px 10px; border-bottom: 1px solid var(--line); }
+    thead th { color: var(--dim); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; }
+    tbody th { white-space: nowrap; font-weight: 600; }
+    td.status { white-space: nowrap; font-weight: 700; width: 80px; }
+    td.metrics { font: 12px/1.5 ui-monospace, "Cascadia Mono", Consolas, monospace; color: #c3c9d6; word-break: break-word; }
+    td.error { color: var(--fail); font-size: 13px; max-width: 320px; }
+    tr[data-status="PASS"] td.status { color: var(--pass); }
+    tr[data-status="FAIL"] td.status { color: var(--fail); }
+    tr[data-status="SKIP"] td.status { color: var(--skip); }
+    tr[data-status="running…"] td.status { color: var(--run); }
+    code { font: 12px ui-monospace, Consolas, monospace; color: #c3c9d6; }
+  </style>
+</head>
+<body>
+  <h1>@openmix/web-engine — browser tests <small id="version"></small></h1>
+  <p>
+    Silent by construction: every test renders into an <code>OfflineAudioContext</code> at 48 kHz from
+    seeded synthetic signals, through the public API only. Each deck is captured with a unity
+    <code>deck.setInsert()</code> tap; the master goes to a gain-0 sink. Event times are energy centroids
+    (a threshold-onset variant is reported too). Results: <code>window.__TEST_RESULTS__</code>; the page
+    title becomes <code>PASS n/n</code> or <code>FAIL k/n</code> (passed / tests that ran).
+  </p>
+  <div class="bar">
+    <button id="run" type="button" disabled>Run again</button>
+    <span id="summary" role="status" aria-live="polite">Loading…</span>
+  </div>
+  <div class="table-wrap">
+    <table id="results">
+      <thead>
+        <tr><th scope="col">Test</th><th scope="col">Result</th><th scope="col">Metrics</th><th scope="col">Error</th></tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </div>
+  <script>
+    // Module scripts cannot load from file:// — say so instead of failing silently
+    if (location.protocol === 'file:') {
+      document.getElementById('summary').textContent =
+        'Open this page over http: run "npm run demo" in packages/web-engine, then open http://127.0.0.1:8080/test/browser/';
+      window.__TEST_RESULTS__ = { done: true, passed: 0, failed: 0, skipped: 0, results: [], error: 'file:// is not supported' };
+      document.title = 'FAIL 0/0';
+    }
+  </script>
+  <script type="module" src="./suite.js"></script>
+</body>
+</html>

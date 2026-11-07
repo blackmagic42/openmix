@@ -1,0 +1,99 @@
+<!doctype html>
+<!--
+  SPDX-License-Identifier: MIT
+  Copyright (c) 2026 blackmagic42 (OpenMix) and contributors
+  @openmix/web-engine — the Web Audio DJ engine of OpenMix
+  https://github.com/blackmagic42/openmix
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="description" content="Four-deck DJ demo of @openmix/web-engine, the Web Audio engine of OpenMix.">
+  <title>OpenMix Web Engine — demo</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="./demo.css">
+</head>
+<body>
+  <div id="notice" class="notice" role="alert" hidden></div>
+  <noscript><div class="notice">This demo needs JavaScript.</div></noscript>
+
+  <div id="app">
+    <header id="topbar">
+      <h1 class="brand"><span class="brand-mark">OpenMix</span> Web Engine <small id="version"></small></h1>
+      <dl class="stats" aria-label="Audio status">
+        <div><dt>Context</dt><dd id="st-state">starting…</dd></div>
+        <div><dt>Sample rate</dt><dd id="st-rate">—</dd></div>
+        <div><dt>Latency</dt><dd id="st-latency">—</dd></div>
+        <div><dt>Keylock engine</dt><dd id="st-pitch">—</dd></div>
+        <div><dt>Headphones</dt><dd id="st-phones">—</dd></div>
+        <div><dt>Master</dt><dd id="st-master">—</dd></div>
+      </dl>
+      <span id="silent-badge" class="badge silent" title="Started with ?silent=1: the master and headphone volumes are at 0" hidden>SILENT</span>
+      <div class="top-actions">
+        <button id="btn-demo-set" class="btn" type="button" title="Synthesize two demo tracks and load them on decks 1 and 2" disabled>Load demo set</button>
+        <button id="btn-start" class="btn primary" type="button" title="Browsers start audio suspended until a click: this resumes the AudioContext" disabled>Start audio</button>
+      </div>
+    </header>
+
+    <section id="waves" aria-label="Zoomed waveforms"></section>
+
+    <main id="decks-area">
+      <div class="deck-slot" id="deck-slot-0"></div>
+      <section id="mixer" class="panel" aria-label="Mixer"></section>
+      <div class="deck-slot" id="deck-slot-1"></div>
+      <div class="deck-slot" id="deck-slot-2"></div>
+      <div class="deck-slot" id="deck-slot-3"></div>
+    </main>
+
+    <section id="fx" aria-label="Effects"></section>
+
+    <section id="outputs" class="panel" aria-label="Output devices">
+      <h2 class="panel-title">OUTPUT DEVICES</h2>
+    </section>
+
+    <details id="log-panel" class="panel">
+      <summary>Engine log</summary>
+      <pre id="log"></pre>
+    </details>
+
+    <footer class="foot">
+      <code>@openmix/web-engine</code>, the Web Audio engine of OpenMix (MIT).
+      The demo tracks are synthesized in your browser: nothing is downloaded.
+      Silent automated tests: <a href="../test/browser/">test/browser</a>.
+    </footer>
+  </div>
+
+  <script>
+    // ES modules and the AudioWorklet cannot load from a file:// page: say how
+    // to serve the demo instead of failing silently. Over http(s), load the
+    // demo module and report a failure to load it or the engine.
+    (function () {
+      'use strict';
+      var notice = document.getElementById('notice');
+      function show(text) {
+        notice.textContent = text;
+        notice.hidden = false;
+      }
+      if (location.protocol === 'file:') {
+        document.documentElement.classList.add('is-file');
+        show('This demo must be served over HTTP: browsers do not load ES modules or AudioWorklets from file:// pages. '
+          + 'In packages/web-engine, run "npm run demo" (or any static server rooted at the package folder), '
+          + 'then open http://127.0.0.1:8080/example/');
+        return;
+      }
+      window.addEventListener('error', function (e) {
+        if (!window.__demoReady) show('The demo failed to start: ' + (e.message || 'script error') + ' (see the browser console).');
+      });
+      var script = document.createElement('script');
+      script.type = 'module';
+      script.src = './demo.js';
+      script.onerror = function () {
+        show('Could not load the demo or the engine (../src/index.js). Serve the whole packages/web-engine folder.');
+      };
+      document.body.appendChild(script);
+    })();
+  </script>
+</body>
+</html>
