@@ -67,6 +67,51 @@ export function previewFromPeaks(peaks) {
   return c.toDataURL('image/png');
 }
 
+// Bit depth of a lossless file from its header (WAV, FLAC, AIFF), or null.
+// Read once per load (no extra I/O: the bytes are already in memory); the
+// native engine stores tracks deeper than 16 bits as float32 instead of int16
+// (native/engine/SPEC.md §7.2.2). Lossy formats -> null.
+export function sniffBitsPerSample(bytes) {
+  const b = bytes;
+  if (!b || b.length < 36) return null;
+  const tag = (o) => String.fromCharCode(b[o], b[o + 1], b[o + 2], b[o + 3]);
+  const u16le = (o) => b[o] | (b[o + 1] << 8);
+  const u32le = (o) => (b[o] | (b[o + 1] << 8) | (b[o + 2] << 16) | (b[o + 3] << 24)) >>> 0;
+  const u16be = (o) => (b[o] << 8) | b[o + 1];
+  const u32be = (o) => ((b[o] << 24) | (b[o + 1] << 16) | (b[o + 2] << 8) | b[o + 3]) >>> 0;
+  let p = 0;
+  if (b[0] === 0x49 && b[1] === 0x44 && b[2] === 0x33 && b.length > 10) {
+    // ID3v2 in front of a FLAC: syncsafe size
+    p = 10 + ((b[6] & 0x7f) << 21 | (b[7] & 0x7f) << 14 | (b[8] & 0x7f) << 7 | (b[9] & 0x7f)) + ((b[5] & 0x10) ? 10 : 0);
+  }
+  if (tag(p) === 'fLaC' && b.length >= p + 26 && (b[p + 4] & 0x7f) === 0) {
+    const o = p + 8 + 10;   // STREAMINFO: 20 bits rate, 3 bits channels - 1, 5 bits bits - 1
+    return (((b[o + 2] & 1) << 4) | (b[o + 3] >> 4)) + 1;
+  }
+  if (tag(0) === 'RIFF' && tag(8) === 'WAVE') {
+    for (let o = 12; o + 8 <= b.length && o < 1 << 20;) {
+      const size = u32le(o + 4);
+      if (tag(o) === 'fmt ' && o + 8 + 16 <= b.length) {
+        const fmt = u16le(o + 8);
+        const bits = u16le(o + 22);
+        if (fmt === 3) return 32;                                   // IEEE float
+        if (fmt === 0xfffe && size >= 24 && o + 8 + 20 <= b.length) return u16le(o + 26) || bits;  // valid bits
+        return bits || null;
+      }
+      o += 8 + size + (size & 1);
+    }
+    return null;
+  }
+  if (tag(0) === 'FORM' && (tag(8) === 'AIFF' || tag(8) === 'AIFC')) {
+    for (let o = 12; o + 8 <= b.length && o < 1 << 20;) {
+      const size = u32be(o + 4);
+      if (tag(o) === 'COMM' && o + 8 + 8 <= b.length) return u16be(o + 14) || null;
+      o += 8 + size + (size & 1);
+    }
+  }
+  return null;
+}
+
 // QUICK PREVIEW of a local file WITHOUT the full analysis: decoded
 // directly at 11 kHz (resampled off the main thread by the
 // browser — 4× less memory than a normal decode) then two one-pole
@@ -1241,6 +1286,9 @@ export class Library {
     if (onProgress) onProgress(i18n('reading_file'));
     const raw = await window.api.readFile(track.path);
     stop(); // cancelled while reading the file: don't even decode
+    // hi-res source? (the native engine keeps it in float32) — not saved with the track
+    const bits = sniffBitsPerSample(raw);
+    if (bits) Object.defineProperty(track, 'bitsPerSample', { value: bits, writable: true, configurable: true, enumerable: false });
     if (onProgress) onProgress(i18n('decoding'));
     const buffer = await this.audioCtx.decodeAudioData(raw.buffer.slice(raw.byteOffset, raw.byteOffset + raw.byteLength));
     stop();

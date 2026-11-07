@@ -8,8 +8,12 @@
     "start": "electron .",
     "icon": "electron tools/make-icon.js",
     "build:vst": "node tools/build-vst.js",
+    "build:engine": "node tools/build-engine.js",
+    "engine:snapshot": "node tools/engine-snapshot.js",
     "dist": "electron-builder --win",
-    "dist:portable": "electron-builder --win portable"
+    "dist:portable": "electron-builder --win portable",
+    "build:goldens": "node tools/make-goldens.js",
+    "test:engine": "node tools/build-engine.js --tests"
   },
   "author": "David (blackmagic42)",
   "license": "MIT",
@@ -30,10 +34,14 @@
       "preload.js",
       "src/**/*",
       "package.json",
-      "native/vsthost/build/Release/openmix_vsthost.node"
+      "native/vsthost/build/Release/openmix_vsthost.node",
+      "engine-host.js",
+      "engine-main.js",
+      "native/engine/build/Release/openmix_engine.node"
     ],
     "asarUnpack": [
-      "native/vsthost/build/Release/openmix_vsthost.node"
+      "native/vsthost/build/Release/openmix_vsthost.node",
+      "native/engine/build/Release/openmix_engine.node"
     ],
     "win": {
       "target": [

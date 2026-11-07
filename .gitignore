@@ -22,3 +22,14 @@ android-app/build/
 native/vst3sdk/
 native/vsthost/build/
 native/tpb/
+native/engine/build/
+native/engine/build-tests/
+native/engine/build-tests-*/
+# per-engineer build folders of the native engine (build-<label>, build-verify-<key>, ...)
+native/engine/build*/
+# the integrator's private snapshot and builds (host module)
+native/engine/build-host/
+# Native engine: golden renders (tools/make-goldens.js), per-module patch snapshots, build lock
+native/engine/goldens/
+native/engine/patches/
+native/engine/.build.lock

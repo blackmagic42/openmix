@@ -1,16 +1,29 @@
 // DSP building blocks shared by the mixer and the FX units: biquads with the
 // exact Web Audio (Chromium) coefficient formulas, a parameter smoother that
 // behaves like AudioParam.setTargetAtTime, LFOs, white noise, the WaveShaper
-// "crush" curve and the StereoPannerNode law of engine.js.
+// "crush" curve and the StereoPannerNode law of engine.js, plus the
+// floating-point environment of real-time threads (flush-to-zero, and the
+// guard that restores it around plugin calls).
 //
 // FROZEN FOUNDATION (maintainer: host). Header-only, allocation-free and
 // real-time safe. Matching Chromium matters: the native engine must sound
-// like the Web engine (same EQ, filter, echo and pan curves).
+// like the Web engine (same EQ, filter, echo and pan curves). Portable: the
+// FP-environment code is guarded per architecture (x86/x64: MXCSR; arm64:
+// FPCR; others: no-op).
 #pragma once
 
 #include <cmath>
 #include <cstdint>
+
+#if defined(_M_X64) || defined(_M_IX86) || defined(__x86_64__) || defined(__i386__)
+#define OM_FPENV_X86 1
 #include <xmmintrin.h>
+#elif defined(_M_ARM64) || defined(__aarch64__)
+#define OM_FPENV_ARM64 1
+#if defined(_MSC_VER) && !defined(__clang__)
+#include <intrin.h>
+#endif
+#endif
 
 #include "om/common.h"
 
@@ -34,13 +47,19 @@ inline BiquadCoeffs normalized(double b0, double b1, double b2, double a0, doubl
 }
 }  // namespace detail
 
-// Coefficients exactly as Chromium computes them (third_party/blink/.../biquad.cc):
+// Coefficients exactly as Chromium computes them (third_party/blink/.../biquad.cc,
+// BSD-3; the Web Audio spec formulas):
 //  - frequency in Hz (clamped to [0, Nyquist]),
 //  - q: for LOWPASS / HIGHPASS it is a resonance in DECIBELS (Web Audio spec:
 //    alpha = sin(w0) / (2 * 10^(Q/20))) — e.g. engine.js filter Q 0.9 means
 //    +0.9 dB at the cutoff; for bandpass / peaking / notch / allpass it is a
-//    plain Q; unused by the shelves (slope S = 1),
-//  - gainDb: peaking and shelves only.
+//    plain Q (alpha = sin(w0) / (2Q)); unused by the shelves (slope S = 1),
+//  - gainDb: peaking and shelves only (A = 10^(gain/40)).
+// Chromium recomputes the coefficients once per render quantum when the
+// parameters are static, and PER SAMPLE while an AudioParam automation
+// (setTargetAtTime...) is running: callers that want exact parity update the
+// coefficients per sample while their smoothers move (or per <= 32 samples
+// when a test shows the difference stays below the null-test tolerance).
 inline BiquadCoeffs webAudioBiquad(BiquadType type, double sampleRate, double frequency, double q, double gainDb) noexcept {
   const double nyquist = 0.5 * sampleRate;
   double f = nyquist > 0 ? frequency / nyquist : 0.0;  // normalized cutoff 0..1
@@ -157,8 +176,11 @@ inline double magnitudeDb(const BiquadCoeffs& c, double frequency, double sample
   return 10.0 * std::log10((num > 1e-300 ? num : 1e-300) / (den > 1e-300 ? den : 1e-300));
 }
 
-// Stereo biquad, direct form I with double-precision state (like Chromium,
-// robust when the coefficients are modulated block by block).
+// Stereo biquad, direct form I exactly like Chromium's Biquad::Process():
+// double coefficients and state, the output computed in double then rounded
+// to float, and that FLOAT value fed back as y1 (Chromium writes
+// `float y = b0 * x + ...; y1 = y;`). Bit-for-bit parity matters for the
+// null tests against the Web engine (SPEC.md §10.1).
 class StereoBiquad {
  public:
   void setCoeffs(const BiquadCoeffs& c) noexcept { c_ = c; }
@@ -180,17 +202,20 @@ class StereoBiquad {
     const double b0 = c_.b0, b1 = c_.b1, b2 = c_.b2, a1 = c_.a1, a2 = c_.a2;
     double x1 = s.x1, x2 = s.x2, y1 = s.y1, y2 = s.y2;
     for (int i = 0; i < n; i++) {
-      const double in = x[i];
-      const double y = b0 * in + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2;
+      const float in = x[i];
+      const float y = static_cast<float>(b0 * in + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2);
       x2 = x1;
       x1 = in;
       y2 = y1;
       y1 = y;
-      x[i] = static_cast<float>(y);
+      x[i] = y;
     }
-    // flush denormal-range state (silence after loud input)
-    if (std::fabs(y1) < 1e-25) y1 = 0;
-    if (std::fabs(y2) < 1e-25) y2 = 0;
+    // Chromium: avoid a stream of subnormals when the input went silent
+    if (x1 == 0.0 && x2 == 0.0 && (y1 != 0.0 || y2 != 0.0) && std::fabs(y1) < 1.17549435e-38 &&
+        std::fabs(y2) < 1.17549435e-38) {
+      y1 = 0;
+      y2 = 0;
+    }
     s.x1 = x1;
     s.x2 = x2;
     s.y1 = y1;
@@ -302,20 +327,24 @@ class Lfo {
 // ---------------------------------------------------------------------------
 // engine.js crushCurve(steps) played through a WaveShaperNode (2048 points,
 // oversample 'none'): input clamped to [-1, 1], linear interpolation between
-// curve points, curve[i] = round(x_i * steps) / steps.
+// curve points, curve[i] = round(x_i * steps) / steps. The lookup runs in
+// float like Chromium's vectorized kernel (virtual index (x + 1) * 1023.5,
+// truncation, v1 + f * (v2 - v1)), as fx::shape does (src/fx/fx_dsp.h).
 // ---------------------------------------------------------------------------
 inline float crushShape(float x, int steps) noexcept {
   constexpr int n = 2048;
-  const double v = 0.5 * (n - 1) * (static_cast<double>(x) + 1.0);
   auto curve = [steps](int i) noexcept {
     const double xi = (static_cast<double>(i) / (n - 1)) * 2.0 - 1.0;
     return jsRound(xi * steps) / steps;
   };
-  if (!(v > 0)) return static_cast<float>(curve(0));
-  if (v >= n - 1) return static_cast<float>(curve(n - 1));
+  float v = (x + 1.0f) * 1023.5f;
+  if (!(v > 0.0f)) v = 0.0f;  // (also NaN)
+  if (v > 2047.0f) v = 2047.0f;
   const int k = static_cast<int>(v);
-  const double fr = v - k;
-  return static_cast<float>((1.0 - fr) * curve(k) + fr * curve(k + 1));
+  const int k2 = k + 1 < n ? k + 1 : n - 1;
+  const float fr = v - static_cast<float>(k);
+  const float c1 = static_cast<float>(curve(k)), c2 = static_cast<float>(curve(k2));
+  return c1 + fr * (c2 - c1);
 }
 
 // ---------------------------------------------------------------------------
@@ -335,9 +364,61 @@ inline void stereoPan(float inL, float inR, float pan, float& outL, float& outR)
   }
 }
 
-// Flush-to-zero + denormals-are-zero for the calling thread (call once at the
-// start of every real-time thread: audio, phones, VST processing).
-inline void flushDenormals() noexcept { _mm_setcsr(_mm_getcsr() | 0x8040); }
+// ---------------------------------------------------------------------------
+// Floating-point environment of real-time threads.
+// ---------------------------------------------------------------------------
+// The thread's FP control word: MXCSR on x86/x64, FPCR on arm64, 0 elsewhere.
+inline uint64_t fpControl() noexcept {
+#if defined(OM_FPENV_X86)
+  return _mm_getcsr();
+#elif defined(OM_FPENV_ARM64) && defined(_MSC_VER) && !defined(__clang__)
+  return static_cast<uint64_t>(_ReadStatusReg(0x5A20));  // ARM64_FPCR (S3_3_C4_C4_0)
+#elif defined(OM_FPENV_ARM64)
+  uint64_t v;
+  __asm__ __volatile__("mrs %0, fpcr" : "=r"(v));
+  return v;
+#else
+  return 0;
+#endif
+}
+inline void setFpControl(uint64_t v) noexcept {
+#if defined(OM_FPENV_X86)
+  _mm_setcsr(static_cast<unsigned int>(v));
+#elif defined(OM_FPENV_ARM64) && defined(_MSC_VER) && !defined(__clang__)
+  _WriteStatusReg(0x5A20, static_cast<__int64>(v));
+#elif defined(OM_FPENV_ARM64)
+  __asm__ __volatile__("msr fpcr, %0" : : "r"(v));
+#else
+  (void)v;
+#endif
+}
+
+// Flush-to-zero (+ denormals-are-zero on x86) for the calling thread: call
+// once at the start of every real-time thread (audio, phones, VST deck
+// workers).
+inline void flushDenormals() noexcept {
+#if defined(OM_FPENV_X86)
+  setFpControl(fpControl() | 0x8040u);          // MXCSR FTZ (bit 15) | DAZ (bit 6)
+#elif defined(OM_FPENV_ARM64)
+  setFpControl(fpControl() | (uint64_t(1) << 24));  // FPCR.FZ
+#endif
+}
+
+// Saves the FP control word and restores it when leaving the scope. Every
+// call into plugin code runs inside one: plugins may change FTZ/DAZ or the
+// rounding mode (SPEC.md §13.4).
+class FpEnvGuard {
+ public:
+  FpEnvGuard() noexcept : saved_(fpControl()) {}
+  ~FpEnvGuard() noexcept {
+    if (fpControl() != saved_) setFpControl(saved_);
+  }
+  FpEnvGuard(const FpEnvGuard&) = delete;
+  FpEnvGuard& operator=(const FpEnvGuard&) = delete;
+
+ private:
+  uint64_t saved_;
+};
 
 }  // namespace dsp
 }  // namespace om

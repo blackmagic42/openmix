@@ -1,4 +1,5 @@
-import { AudioEngine } from './engine.js';
+import { createAudioEngine, stopAndSaveRecording, revealRecording, recordingStamp, rememberOutputDevices } from './native-engine.js';
+import { decodeStemSet } from './stems.js';
 import { Library } from './library.js';
 import { GamepadManager } from './gamepad.js';
 import { computeBandPeaks, drawZoom, drawOverview, setWavePalette } from './waveform.js';
@@ -19,7 +20,15 @@ const DECK_COLORS = ['#39c2ff', '#ff9f43', '#5fe08a', '#ff6b9d'];
 // Beyond it, the gesture becomes a real mouse scrub/scratch.
 const DRAG_THRESHOLD_PX = 3;
 
-const engine = new AudioEngine();
+// The Web Audio engine (engine.js), or the native engine (beta) chosen in ⚙ —
+// it falls back to the Web Audio engine by itself (native/engine/SPEC.md §17)
+const engine = createAudioEngine({
+  onFallback: (reason, code) => {
+    flashStatus(t(engine.everNative ? 'engine_native_fallback' : 'engine_native_unavailable', { reason: engineReasonText(reason, code) }));
+    refreshEngineStatus();
+  },
+  onEvent: (ev) => onNativeEngineEvent(ev)
+});
 let activeDeck = 0;
 let deckCount = Number(localStorage.getItem('deckCount')) === 2 ? 2 : 4;
 let dragTrack = null;      // track being dragged & dropped from the library
@@ -1601,84 +1610,9 @@ const stemPending = [null, null, null, null]; // { track, p } per deck
 let stemsEngine = null;
 window.api.stemsInfo?.().then((r) => { stemsEngine = r; }).catch(() => {});
 
-async function decodeStemFile(file) {
-  const raw = await window.api.readFile(file);
-  const ab = raw.buffer.slice(raw.byteOffset, raw.byteOffset + raw.byteLength);
-  return engine.ctx.decodeAudioData(ab);
-}
-
-// ALIGNING THE STEMS TO THE TRACK. Demucs decodes the mp3 with ffmpeg, the
-// app with Chromium's decoder: depending on the encoder, the two
-// timelines differ by a few tens of ms (LAME encoder delay).
-// Without correction, enabling VOX/DRM/INST shifted the sound off the grid and
-// the sync. We measure the offset by cross-correlation (sum of stems ≈ track)
-// and shift the stem buffers to the exact sample.
-function alignStems(orig, bufs) {
-  const sr = orig.sampleRate;
-  const n = Math.min(orig.length, ...bufs.map((b) => b.length));
-  if (n < sr * 12) return 0;
-  // We ONLY work on a window in the middle of the track (4 s + margins):
-  // a few milliseconds of computation, no UI freeze
-  const D = 8;
-  const maxLag = Math.floor(0.12 * sr);
-  const win = Math.floor(4 * sr);
-  const r0 = Math.floor(n / 2) - (win >> 1) - maxLag - 2 * D;
-  const len = win + 2 * maxLag + 4 * D;
-  if (r0 < 0 || r0 + len > n) return 0;
-  const o = orig.getChannelData(0).subarray(r0, r0 + len);
-  const sum = new Float32Array(len);
-  for (const b of bufs) {
-    const c = b.getChannelData(0).subarray(r0, r0 + len);
-    for (let k = 0; k < len; k++) sum[k] += c[k];
-  }
-  const from = maxLag + 2 * D; // start of the useful window within the region
-  const corrAt = (a, b, f, l, lag) => {
-    let acc = 0;
-    for (let k = f; k < f + l; k++) acc += a[k] * b[k + lag];
-    return acc;
-  };
-  // 1) coarse: decimated ×8, ±120 ms
-  const dec = (src) => {
-    const out = new Float32Array(Math.floor(len / D));
-    for (let k = 0; k < out.length; k++) {
-      let s2 = 0;
-      for (let j = 0; j < D; j++) s2 += src[k * D + j];
-      out[k] = s2;
-    }
-    return out;
-  };
-  const oD = dec(o);
-  const sD = dec(sum);
-  let best = 0;
-  let bestV = -Infinity;
-  const mD = Math.floor(maxLag / D);
-  for (let L = -mD; L <= mD; L++) {
-    const v = corrAt(oD, sD, Math.floor(from / D), Math.floor(win / D), L);
-    if (v > bestV) { bestV = v; best = L * D; }
-  }
-  // 2) fine: to the exact sample, ±D around, over 1 s
-  let fine = best;
-  let fineV = -Infinity;
-  for (let L = best - D; L <= best + D; L++) {
-    const v = corrAt(o, sum, from, Math.floor(sr), L);
-    if (v > fineV) { fineV = v; fine = L; }
-  }
-  if (!fine) return 0;
-  // stem[k + fine] ≈ track[k]: shift the stems by "fine" samples
-  for (const b of bufs) {
-    for (let c = 0; c < b.numberOfChannels; c++) {
-      const d = b.getChannelData(c);
-      if (fine > 0) {
-        d.copyWithin(0, fine);
-        d.fill(0, d.length - fine);
-      } else {
-        d.copyWithin(-fine, 0, d.length + fine);
-        d.fill(0, 0, -fine);
-      }
-    }
-  }
-  return fine / sr;
-}
+// Decoding, the INST merge (bass + melodies) and the sample-exact alignment of
+// the stems to the track live in stems.js (alignStems, decodeStemSet), shared
+// with the native engine's fallback (it rebuilds the stems from the cache).
 
 function ensureStems(i, silent) {
   const deck = engine.decks[i];
@@ -1710,20 +1644,15 @@ function ensureStems(i, silent) {
       if (engine.decks[i].track !== track) return false;
       // INST = bass + melodies: both are always muted/restored
       // TOGETHER, so they're merged into a single buffer (−25 % memory:
-      // 4 decoded stems weigh ~500 MB per 6-min track)
-      const [vocals, drums, bass, other] = await Promise.all(
-        ['vocals', 'drums', 'bass', 'other'].map((k) => decodeStemFile(res.stems[k])));
-      for (let c = 0; c < bass.numberOfChannels; c++) {
-        const a = bass.getChannelData(c);
-        const b = other.getChannelData(Math.min(c, other.numberOfChannels - 1));
-        const n = Math.min(a.length, b.length);
-        for (let k = 0; k < n; k++) a[k] += b[k];
-      }
-      // The track may have changed during the separation
-      if (engine.decks[i].track !== track) return false;
-      const lag = alignStems(deck.buffer, [vocals, drums, bass]);
-      if (lag) console.log(`[midi] stems deck ${i + 1}: realigned by ${(lag * 1000).toFixed(1)} ms to the track`);
-      deck.stems = { vocals, drums, bass, other: null };
+      // 4 decoded stems weigh ~500 MB per 6-min track), then aligned to the
+      // track (stems.js). The track may have changed during the separation.
+      const set = await decodeStemSet(res.stems, engine.ctx, {
+        orig: deck.buffer,
+        isCancelled: () => engine.decks[i].track !== track
+      });
+      if (!set) return false;
+      if (set.lag) console.log(`[midi] stems deck ${i + 1}: realigned by ${(set.lag * 1000).toFixed(1)} ms to the track`);
+      deck.stems = set.stems;
       ui.stemBtns.forEach((b) => b.classList.add('ready'));
       flashStatus(t('stems_ready', { n: i + 1 }));
       return true;
@@ -1945,6 +1874,7 @@ async function samplerLoadSlot(idx, path) {
     const raw = await window.api.readFile(path);
     const ab = raw.buffer.slice(raw.byteOffset, raw.byteOffset + raw.byteLength);
     const buffer = await engine.ctx.decodeAudioData(ab);
+    engine.preloadSample?.(buffer); // native engine: the sound is handed off now (instant first hit)
     const name = String(path).replace(/^.*[\\/]/, '').replace(/\.[^.]+$/, '');
     samplerBank[idx] = { path, name, buffer };
     return true;
@@ -2796,6 +2726,20 @@ function flashStatus(msg) {
   statusTimer = setTimeout(() => {
     libStatus.textContent = libLastMsg || (library ? t('lib_tracks_count', { n: library.tracks.length }) : '');
   }, 4000);
+}
+
+// Status line with an action button, kept longer (a recording kept on disk:
+// "Show in folder")
+function flashStatusAction(msg, label, action) {
+  libStatus.textContent = '';
+  const btn = document.createElement('button');
+  btn.textContent = label;
+  btn.addEventListener('click', () => action());
+  libStatus.append(document.createTextNode(`${msg} `), btn);
+  clearTimeout(statusTimer);
+  statusTimer = setTimeout(() => {
+    libStatus.textContent = libLastMsg || (library ? t('lib_tracks_count', { n: library.tracks.length }) : '');
+  }, 20000);
 }
 
 const library = new Library(engine.ctx, {
@@ -6322,6 +6266,14 @@ let recStart = 0;
 
 btnRec.addEventListener('click', async () => {
   engine.resume();
+  // NATIVE engine: the engine writes the master to a 24-bit WAV on disk
+  // itself (never deleted by the app); MediaRecorder stays for the Web engine
+  // (while it falls back, engine.recDest may not exist yet: the native path
+  // answers "native engine not active" instead of throwing)
+  if ((!recorder && (engine.isNative || engine.status === 'falling-back')) || (recorder && recorder.native)) {
+    nativeRecToggle();
+    return;
+  }
   if (!recorder) {
     const chunks = [];
     recorder = new MediaRecorder(engine.recDest.stream, {
@@ -6349,6 +6301,77 @@ btnRec.addEventListener('click', async () => {
     recTime.classList.add('hidden');
   }
 });
+
+// Native REC: rec.start / rec.stop in the engine, then the Save dialog; a
+// cancelled or failed save keeps the file in the recordings folder and the
+// status line shows it with "Show in folder"
+let nativeRecBusy = false;
+function nativeRecStopped() {
+  recorder = null;
+  btnRec.classList.remove('on');
+  recTime.classList.add('hidden');
+}
+async function nativeRecToggle() {
+  if (nativeRecBusy) return;
+  nativeRecBusy = true;
+  try {
+    if (!recorder) {
+      const stamp = recordingStamp();
+      const r = await engine.startRecording({ name: `OpenMix ${stamp}` });
+      if (!r || !r.ok) {
+        flashStatus(t('recording_error', { error: (r && r.error) || '?' }));
+        return;
+      }
+      recorder = { native: true, path: r.path, stamp };
+      recStart = performance.now();
+      btnRec.classList.add('on');
+      recTime.classList.remove('hidden');
+      flashStatus(t('rec_mix_recording_status'));
+    } else {
+      const { stamp } = recorder;
+      nativeRecStopped();
+      showNativeRecording(await stopAndSaveRecording(engine, window.omEngine, stamp));
+    }
+  } finally {
+    nativeRecBusy = false;
+  }
+}
+function showNativeRecording(res) {
+  if (res.kind === 'saved') flashStatus(t('recording_saved_wav', { path: res.path }));
+  else if (res.kind === 'kept') {
+    flashStatusAction(t('recording_kept', { path: res.path }), t('show_in_folder'),
+      () => revealRecording(window.omEngine, res.path));
+  } else flashStatus(t('recording_error', { error: res.error }));
+}
+
+// Events of the native engine: recording errors, unsaved recordings found at
+// startup, output device lost / back
+function onNativeEngineEvent(ev) {
+  if (!ev) return;
+  if (ev.type === 'rec.status' && (ev.error || !ev.active)) {
+    if (recorder && recorder.native) nativeRecStopped();
+    if (ev.error) {
+      const msg = t('recording_error', { error: ev.error });
+      if (ev.path) {
+        flashStatusAction(`${msg} — ${t('recording_kept', { path: ev.path })}`, t('show_in_folder'),
+          () => revealRecording(window.omEngine, ev.path));
+      } else flashStatus(msg);
+    }
+  } else if (ev.type === 'recordings-unsaved' && ev.files && ev.files.length) {
+    const last = ev.files[ev.files.length - 1];
+    flashStatusAction(t('recordings_unsaved', { n: ev.files.length, path: last.path }), t('show_in_folder'),
+      () => revealRecording(window.omEngine, last.path));
+  } else if (ev.type === 'device') {
+    if (ev.reason === 'lost') flashStatus(t('device_lost'));
+    else if (ev.reason === 'restored') flashStatus(t('device_restored'));
+    refreshEngineStatus();
+  } else if (ev.type === 'native-active') {
+    refreshEngineStatus();
+  } else if (ev.type === 'pcm-memory') {
+    // the engine's PCM memory limit refused stems or a sampler sound
+    flashStatus(t(ev.kind === 'stems' ? 'engine_memory_stems' : 'engine_memory_sample'));
+  }
+}
 
 const wzScratch = document.getElementById('wz-scratch');
 function refreshScratchBtn() {
@@ -6629,6 +6652,43 @@ document.getElementById('set-output').addEventListener('change', async (e) => {
   }
 });
 
+// --- AUDIO ENGINE: Standard (Web Audio) or Native (beta); applies at the next launch ---
+const setEngineSel = document.getElementById('set-engine');
+if (setEngineSel) {
+  let pref = 'web';
+  try { pref = localStorage.getItem('audioEngine') || 'web'; } catch { /* storage unavailable */ }
+  setEngineSel.value = ['web', 'native', 'native-exclusive'].includes(pref) ? pref : 'web';
+  setEngineSel.addEventListener('change', () => {
+    try { localStorage.setItem('audioEngine', setEngineSel.value); } catch { /* storage unavailable */ }
+    // device names are known here (Settings has the media permission): the native engine
+    // finds the chosen outputs at its next start even before labels are available
+    rememberOutputDevices().catch(() => {});
+    flashStatus(t('engine_restart_hint'));
+  });
+}
+// Why the native engine stopped, for the user: a known cause in their
+// language, otherwise the engine's own (technical) reason
+function engineReasonText(reason, code) {
+  if (code === 'memory') return t('engine_reason_memory');
+  return reason;
+}
+// Settings status of the engine in use: device mode, period, latency
+function refreshEngineStatus() {
+  const span = document.getElementById('set-engine-status');
+  if (!span) return;
+  if (engine.isNative && engine.status === 'native') {
+    const i = engine.nativeInfo();
+    const f = (v) => (v != null && isFinite(v) ? v.toFixed(1) : '?');
+    span.textContent = `${t('engine_native_active', { device: i.device || '' })} — `
+      + t('engine_period', { mode: i.mode || '', period: i.period || '?', ms: f(i.periodMs), latency: f(i.latencyMs) });
+  } else if (engine.fallbackReason) {
+    span.textContent = t(engine.everNative ? 'engine_native_fallback' : 'engine_native_unavailable',
+      { reason: engineReasonText(engine.fallbackReason, engine.fallbackCode) });
+  } else {
+    span.textContent = engine.status === 'connecting' ? '…' : '';
+  }
+}
+
 // --- HEADPHONE OUTPUT ---
 // Preference: 'auto' (default) = the connected DJ controller (FLX6…) receives
 // the cue preview on its channels 3/4, even if the master goes out on another card.
@@ -6741,6 +6801,7 @@ document.getElementById('btn-settings').addEventListener('click', () => {
   settingsOverlay.classList.remove('hidden');
   refreshDevices();
   renderMidiTable();
+  refreshEngineStatus();
 });
 document.getElementById('btn-close-settings').addEventListener('click', () => {
   midi.cancelLearn();
@@ -8298,7 +8359,8 @@ requestAnimationFrame(frame);
 // VST3 PLUGINS on the mixer channels (see vst.js). The VST button under each
 // fader opens a menu: choose a plugin, open its editor, bypass, remove.
 // ---------------------------------------------------------------------------
-const vstHost = new VstHost(engine);
+// (native engine: the plugins run inside the engine, same API as vst.js)
+const vstHost = engine.createVstHost ? engine.createVstHost() : new VstHost(engine);
 
 function vstShortName(name) {
   const n = String(name || 'VST').trim();

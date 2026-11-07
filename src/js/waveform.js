@@ -242,8 +242,14 @@ export function drawZoom(canvas, deck, windowSec = 8, timeOverride) {
   // ~100× less work per frame. Raw samples are now only used
   // for extreme zooms (window < ~0.2 s), where they are cheap.
   const finePps = peaks.finePps || 0;
-  const useFine = finePps && spx * pps < 1 && spx * finePps >= 1;
-  const useSamples = !useFine && spx * (finePps || pps) < 1 && deck.buffer;
+  // Native engine, RAM phase 3 (native/engine/SPEC.md §17.8): the renderer
+  // will no longer keep the track's samples (the engine holds them), so
+  // deck.buffer may carry no getChannelData — the extreme zoom then shows the
+  // fine envelope (0.25 ms slices) instead of the raw samples. Today (phase 2)
+  // the buffer is still there and the drawing is unchanged.
+  const hasSamples = !!(deck.buffer && typeof deck.buffer.getChannelData === 'function');
+  const useFine = finePps && spx * pps < 1 && (spx * finePps >= 1 || !hasSamples);
+  const useSamples = !useFine && spx * (finePps || pps) < 1 && hasSamples;
 
   // ====================================================================
   // PRE-RENDERED STRIP: the wave SCROLLS, its content does not change. We

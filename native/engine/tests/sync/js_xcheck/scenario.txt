@@ -1,0 +1,38 @@
+# Scenario of the engine.js cross-check (owner: sync): read by xcheck.mjs and test_sync_js_xcheck.cpp.
+# tracks: track <idx> <trueBpm> <t0> <dur> <bpmField> <noise> <seed> <barAnchor> <fixed 0/1>
+track 0 127.93 0.081 400 128.0 0.0003 11 0 0
+track 1 126.21 0.043 400 126.2 0.0003 12 1 0
+track 2 124.0 0.2 400 124.0 0 0 0 1
+track 3 128.42 0.118 400 128.4 0.0003 14 0 0
+track 4 125.07 0.025 60 125.1 0.0003 15 0 0
+# events: ev <tick> <kind> <deck> <a> <b>   (60 ticks per second, applied before the tick)
+# kinds: load(a=track,b=pos) play pause sync tempomul(a=factor) master(a=idx) eqlow(a=v) jog(a=0/1) reanchor snap(a=maxErr) nudge(a=dpos) offset(a=sec)
+ev 0 load 0 0 0
+ev 0 play 0
+ev 120 load 1 1 31.0
+ev 120 play 1
+ev 150 sync 1
+ev 1200 ramp 0 1.02 240
+ev 1800 load 2 2 5.3
+ev 1800 play 2
+ev 1800 sync 2
+ev 2400 eqlow 1 -1
+ev 3000 pause 0
+ev 3300 load 0 3 12.0
+ev 3300 play 0
+ev 3330 sync 0
+ev 3600 master 2
+ev 3900 jog 1
+ev 3900 nudge 1 0.012
+ev 3960 jog 0
+ev 3960 reanchorall
+ev 4500 load 3 4 50.0
+ev 4500 play 3
+ev 4500 sync 3
+ev 4800 ramp 2 0.985 120
+ev 5100 master -1
+ev 5400 offset 0.004
+ev 5700 nudge 1 0.03
+ev 5760 snap 1 0.06
+ev 6000 pause 2
+ev 6300 end

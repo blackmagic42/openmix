@@ -1,0 +1,49 @@
+# Scenario of the engine.js cross-check (owner: sync): the auto-master rules. Read by xcheck.mjs and test_sync_js_xcheck.cpp.
+# Covers: a deck without BPM never becomes master; first started = master; a cut shorter than the 1.2 s grace keeps the
+# crown and freezes the lock; a longer cut hands over by the bass rule (killed bass, volume, crossfader side gains); a
+# manual master's natural end hands over at once; back to automatic; the auto master's natural end hands over at once;
+# no deck with a BPM playing = no master; a paused manual master hands over after 1.2 s; a manual master without BPM;
+# a manual master stopped while no other deck with a BPM plays keeps the crown.
+# tracks: track <idx> <trueBpm> <t0> <dur> <bpmField> <noise> <seed> <barAnchor> <fixed 0/1>
+track 0 127.93 0.081 400 128.0 0.0003 21 0 0
+track 1 126.21 0.043 400 126.2 0.0003 22 0 0
+track 3 125.07 0.025 40 125.1 0.0003 23 0 0
+track 4 120.0 0.0 400 0 0 0 0 1
+# events: ev <tick> <kind> <deck> <a> <b>   (60 ticks per second, applied before the tick)
+# kinds: load(a=track,b=pos) play pause sync tempomul(a=factor) master(a=idx) eqlow(a=v) volume(a=v) xf(a=x) side(a=0 A/1 B)
+#        arm(a=0/1) jog(a=0/1) reanchorall snap(a=maxErr) nudge(a=dpos) offset(deck field=sec) ramp(a=factor,b=ticks) end
+ev 0 load 3 4 0
+ev 0 play 3
+ev 0 load 1 1 0
+ev 0 load 0 0 0
+ev 60 play 1
+ev 120 play 0
+ev 150 sync 0
+ev 600 pause 1
+ev 630 play 1
+ev 1200 volume 1 0.3
+ev 1200 eqlow 0 -1
+ev 1500 pause 1
+ev 1800 play 1
+ev 1830 sync 1
+ev 2100 xf 0 0.9
+ev 2100 eqlow 0 0
+ev 2400 load 2 3 0
+ev 2400 play 2
+ev 2430 sync 2
+ev 2700 master 2
+ev 5000 master -1
+ev 5100 nudge 1 315
+ev 5700 xf 0 0.5
+ev 5700 pause 0
+ev 6000 play 0
+ev 6060 nudge 1 -300
+ev 6060 play 1
+ev 6090 sync 1
+ev 6300 master 1
+ev 6600 pause 1
+ev 6900 master 3
+ev 7200 master -1
+ev 7300 master 0
+ev 7400 pause 0
+ev 7600 end

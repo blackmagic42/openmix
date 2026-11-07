@@ -236,6 +236,26 @@ const DICTIONARIES = {
     guest_no_requests_yet: 'Aucune demande pour l’instant — fais scanner le QR code à tes potes, ou envoie-leur le lien ci-dessus.',
     recording_saved: 'Mix enregistré : {path}',
     recording_canceled: 'Enregistrement annulé',
+    // Native audio engine (native/engine/SPEC.md §17.9)
+    settings_audio_engine: 'Moteur audio',
+    engine_web: 'Standard (Web Audio)',
+    engine_native: 'Natif (bêta)',
+    engine_native_exclusive: 'Natif (bêta, mode exclusif)',
+    engine_restart_hint: 'Le moteur audio choisi s’appliquera au prochain lancement d’OpenMix',
+    engine_native_active: 'Moteur natif actif : {device}',
+    engine_native_unavailable: 'Moteur natif indisponible ({reason}) : moteur standard utilisé',
+    engine_native_fallback: 'Moteur natif arrêté ({reason}) : retour au moteur standard',
+    engine_reason_memory: 'la mémoire réservée au moteur natif est pleine',
+    engine_memory_stems: 'Mémoire du moteur natif pleine : les stems de ce morceau ne sont pas chargés (décharge un deck pour libérer de la place)',
+    engine_memory_sample: 'Mémoire du moteur natif pleine : ce son du sampler n’est pas chargé (décharge un deck pour libérer de la place)',
+    recording_saved_wav: 'Mix enregistré (WAV 24 bits) : {path}',
+    recording_kept: 'Enregistrement conservé ici : {path}',
+    recordings_unsaved: '{n} enregistrement(s) non sauvegardé(s) — le dernier : {path}',
+    show_in_folder: 'Afficher dans le dossier',
+    recording_error: 'Erreur d’enregistrement : {error}',
+    device_lost: 'Sortie audio débranchée : silence jusqu’à son retour, la lecture continue',
+    device_restored: 'Sortie audio de retour',
+    engine_period: '{mode} · tampon {period} échantillons ({ms} ms) · latence {latency} ms',
     bpmrange_changed: 'Plage BPM changée — clique « Tout ré-analyser » ou recharge les morceaux pour appliquer',
     reanalyze_started: 'Ré-analyse lancée ({n} morceaux) — elle tourne en arrière-plan',
     grid_offset_changed: 'Décalage global de grille : {ms} ms',
@@ -844,6 +864,26 @@ const DICTIONARIES = {
     guest_no_requests_yet: 'No requests yet — have your friends scan the QR code, or send them the link above.',
     recording_saved: 'Mix recorded: {path}',
     recording_canceled: 'Recording canceled',
+    // Native audio engine (native/engine/SPEC.md §17.9)
+    settings_audio_engine: 'Audio engine',
+    engine_web: 'Standard (Web Audio)',
+    engine_native: 'Native (beta)',
+    engine_native_exclusive: 'Native (beta, exclusive mode)',
+    engine_restart_hint: 'The chosen audio engine applies at the next launch of OpenMix',
+    engine_native_active: 'Native engine active: {device}',
+    engine_native_unavailable: 'Native engine unavailable ({reason}): standard engine in use',
+    engine_native_fallback: 'Native engine stopped ({reason}): back to the standard engine',
+    engine_reason_memory: 'the memory set aside for the native engine is full',
+    engine_memory_stems: 'Native engine memory full: this track’s stems are not loaded (unload a deck to make room)',
+    engine_memory_sample: 'Native engine memory full: this sampler sound is not loaded (unload a deck to make room)',
+    recording_saved_wav: 'Mix recorded (24-bit WAV): {path}',
+    recording_kept: 'Recording kept here: {path}',
+    recordings_unsaved: '{n} unsaved recording(s) — the latest: {path}',
+    show_in_folder: 'Show in folder',
+    recording_error: 'Recording error: {error}',
+    device_lost: 'Audio output unplugged: silent until it comes back, playback goes on',
+    device_restored: 'Audio output back',
+    engine_period: '{mode} · buffer {period} samples ({ms} ms) · latency {latency} ms',
     bpmrange_changed: 'BPM range changed — click “Re-analyze all” or reload the tracks to apply it',
     reanalyze_started: 'Re-analysis started ({n} tracks) — running in the background',
     grid_offset_changed: 'Global grid offset: {ms} ms',
@@ -1252,6 +1292,12 @@ export function setLang(lang) {
   localStorage.setItem(STORAGE_KEY, currentLang);
   document.documentElement.lang = currentLang;
   applyStaticTranslations();
+}
+
+// Does `lang` define `key` itself (no fallback to the default language)? (tests)
+export function hasTranslation(lang, key) {
+  const dict = DICTIONARIES[lang];
+  return !!dict && Object.prototype.hasOwnProperty.call(dict, key) && typeof dict[key] === 'string' && dict[key] !== '';
 }
 
 // t('some_key') -> translation, or t('some_key', {n: 3}) when the sentence contains {n}

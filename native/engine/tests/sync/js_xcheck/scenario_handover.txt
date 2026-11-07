@@ -1,0 +1,38 @@
+# Scenario of the engine.js cross-check (owner: sync): master handovers. Read by xcheck.mjs and test_sync_js_xcheck.cpp.
+# Covers: SYNC armed on the first master (no base); SYNC pressed on the auto master (getMasterDeck excludes it: it syncs to
+# another playing deck); manual handovers and back to automatic with followers handed over at their current speed; a
+# manual master's tempo ramp; the auto master cut for good (bass rule: an exact tie, then the most heard deck); jogHold
+# and re-anchoring; an auto master's ramp. The rounded BPM fields make engine.js's handover rescaling visible.
+# tracks: track <idx> <trueBpm> <t0> <dur> <bpmField> <noise> <seed> <barAnchor> <fixed 0/1>
+track 0 127.93 0.081 400 128.0 0.0003 31 0 0
+track 1 126.21 0.043 400 126.2 0.0003 32 1 0
+track 2 128.42 0.118 400 128.4 0.0003 33 0 0
+track 3 125.07 0.025 400 125.1 0.0003 34 2 0
+# events: ev <tick> <kind> <deck> <a> <b>   (60 ticks per second, applied before the tick)
+ev 0 load 0 0 0
+ev 0 load 1 1 20
+ev 0 load 2 2 40
+ev 0 load 3 3 60
+ev 0 play 0
+ev 0 arm 0 1
+ev 60 play 1
+ev 60 sync 1
+ev 120 play 2
+ev 120 sync 2
+ev 600 master 1
+ev 900 ramp 1 1.03 240
+ev 1200 master 2
+ev 1500 master -1
+ev 1560 sync 0
+ev 1800 play 3
+ev 1800 sync 3
+ev 2100 pause 0
+ev 2400 eqlow 1 -1
+ev 2400 volume 3 1.0
+ev 2700 pause 1
+ev 3000 jog 1
+ev 3000 nudge 2 0.02
+ev 3030 jog 0
+ev 3030 reanchorall
+ev 3300 ramp 3 0.98 120
+ev 3600 end

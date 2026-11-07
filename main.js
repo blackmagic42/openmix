@@ -11,6 +11,10 @@ let win = null;
 // the cues or the SoundCloud session)
 app.setPath('userData', path.join(app.getPath('appData'), 'Turbo Mix'));
 
+// OpenMix native engine (native/engine/SPEC.md §6.5): all its wiring lives in engine-main.js
+const engineMain = require('./engine-main');
+engineMain.install({ getWindow: () => win, app, ipcMain });
+
 // VST3 inserts (src/js/vst.js): the audio is exchanged with the native
 // plugin host through SharedArrayBuffers, which Chromium only enables for
 // cross-origin-isolated pages — or with this switch (local app pages only)

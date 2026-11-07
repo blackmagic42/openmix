@@ -66,3 +66,17 @@ contextBridge.exposeInMainWorld('api', {
   dlPlace: (file, destDir) => ipcRenderer.invoke('dl-place', file, destDir),
   onYtdlpProgress: (cb) => ipcRenderer.on('ytdlp-progress', (_e, d) => cb(d))
 });
+
+// --- OpenMix native engine (native/engine/SPEC.md §6.5): additive block, keep it last ---
+contextBridge.exposeInMainWorld('omEngine', {
+  info: () => ipcRenderer.invoke('engine-info'),
+  connect: () => ipcRenderer.invoke('engine-connect'),
+  kill: () => ipcRenderer.invoke('engine-kill'),
+  onExit: (cb) => ipcRenderer.on('engine-exit', (_e, d) => cb(d)),
+  vstScan: (files) => ipcRenderer.invoke('engine-vst-scan', files),
+  saveRecording: (path, name) => ipcRenderer.invoke('engine-save-recording', path, name),
+  revealFile: (path) => ipcRenderer.invoke('engine-reveal-file', path),
+  shadowDecode: (job) => ipcRenderer.invoke('engine-shadow-decode', job),
+  memoryInfo: () => process.getProcessMemoryInfo()   // renderer RAM KPI (§17.8)
+});
+ipcRenderer.on('engine-ports', (e) => window.postMessage('openmix-engine-ports', '*', e.ports));

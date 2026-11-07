@@ -183,6 +183,17 @@
           <select id="set-output"><option value="" data-i18n="default_output">Default output</option></select>
         </div>
         <div class="set-row">
+          <label data-i18n="settings_audio_engine">Audio engine</label>
+          <div class="set-inline">
+            <select id="set-engine">
+              <option value="web" data-i18n="engine_web">Standard (Web Audio)</option>
+              <option value="native" data-i18n="engine_native">Native (beta)</option>
+              <option value="native-exclusive" data-i18n="engine_native_exclusive">Native (beta, exclusive mode)</option>
+            </select>
+            <span id="set-engine-status" class="set-info"></span>
+          </div>
+        </div>
+        <div class="set-row">
           <label data-i18n="phones_output">Headphone output (CUE pre-listen)</label>
           <select id="set-phones"><option value="auto" data-i18n="phones_auto">Auto — DJ controller (none detected)</option></select>
         </div>

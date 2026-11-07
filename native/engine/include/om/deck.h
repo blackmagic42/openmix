@@ -1,15 +1,32 @@
 // One DJ deck of the native engine (owner: deck). Everything engine.js does
-// BEFORE the channel strip (before TRIM): sample-accurate transport over an
-// immutable int16 TrackBuffer, varispeed with high-quality interpolation,
-// pre-roll, loops, seeks with latency compensation, CDJ cue, scratch
-// (position-following, audible), V.BRAKE / BACKSPIN, ROLL and slip, stems
-// with per-stem gains, KEY and KEYLOCK through the WSOLA transposer with the
-// gapless route switch of engine.js _switchRoute. SPEC.md §8.
+// BEFORE the channel strip (before TRIM): a sample-exact read pointer over
+// the PCM handed off by the renderer (int16 with per-chunk scales or float32
+// TrackBuffer, any sample rate), varispeed with LINEAR interpolation exactly
+// like Chromium's AudioBufferSourceNode (Hermite / sinc later, behind an
+// A/B), armed starts that wait for their data, pre-roll, loops, seeks and
+// hot cues with latency compensation and no scheduling lead, scratch as a
+// continuous read pointer that plays real reverse audio, V.BRAKE / BACKSPIN,
+// ROLL, stems with per-stem gains, KEY and KEYLOCK through the WSOLA port of
+// pitch-worklet.js read straight from the track (primed, so PLAY and hot
+// cues start at once; fed on the deck's own 128-frame quantum grid), the
+// heard-position bookkeeping with its segments, and the sticky end latch.
+// SPEC.md §4.4, §9.
 //
-// Threading: prepare() on the control thread while the audio is stopped;
-// everything else on the audio thread (RT-safe, noexcept, no allocation).
-// Pointers passed to attach*() are borrowed; the previous pointer is returned
-// so the core can retire it (media.h ownership rule).
+// Threading: the constructor and prepare() on the control thread while the
+// audio is stopped; everything else on the audio thread (RT-safe, noexcept,
+// no allocation, no free). Pointers passed to attach*() are borrowed; the
+// previous pointer is returned so the core can retire it (media.h ownership
+// rule): the deck never reads a returned buffer again (a fade-out that needs
+// it is rendered before it is returned). Re-attaching the same TrackBuffer
+// returns it (the core holds one PCM user per attachment).
+//
+// Parity (proved against Chromium's own renders, tests/deck goldens): the
+// read pointer is bit-exact with AudioBufferSourceNode (rates != 1, buffer
+// rate != device rate, loop seams, end of buffer), the WSOLA output with
+// pitch-worklet.js, the ratio smoothing with the k-rate AudioParam. Native
+// differences (SPEC.md §20): no scheduling lead, primed WSOLA (PLAY / hot
+// cue audio on the first frame of the block), 2 / 5 / 6 ms raised-cosine
+// fades and crossfades, armed starts, signed scratch pointer.
 #pragma once
 
 #include <cstdint>
@@ -17,38 +34,16 @@
 
 #include "om/common.h"
 #include "om/deck_control.h"
+#include "om/interpolator.h"
 #include "om/media.h"
+#include "om/om_state.h"
 
 namespace om {
 
-// Deck fields published in every state snapshot (SPEC.md §15.4 "state.decks[i]").
-struct DeckSnapshot {
-  bool loaded = false;
-  uint64_t gen = 0;              // load generation of the attached track
-  double duration = 0;
-  double pos = 0;                // HEARD position (s) at `at`
-  EngineTime at = 0;             // presentTime of the block the position belongs to
-  double rate = 0;               // d(pos)/d(engine time): tempo when playing, scratch speed, 0 when still
-  bool playing = false;
-  bool scratching = false;
-  bool spinning = false;
-  bool settled = true;           // IDeckControl::transportSettled
-  double tempo = 1.0;
-  bool looping = false;
-  double loopStart = 0, loopEnd = 0;
-  double loopBeats = kNaN;       // engine.js _loopBeats (NaN = null)
-  double cuePoint = 0;
-  int keyShift = 0;
-  bool keylock = false;
-  bool routedWsola = false;
-  double procLat = 0;            // seconds of read-ahead (WSOLA + insert latency)
-  bool stemsReady = false;
-  bool stemsOn = false;
-  float stemGains[kNumStems] = {1, 1, 1, 1};
-  bool rolling = false;
-  double rollBeats = 0;
-  bool slip = false;
-  EngineTime endedAt = kNaN;
+// Source of the WSOLA ratio under keylock (dev A/B, SPEC.md §9.4).
+enum class KeylockRatioSource : uint8_t {
+  Worklet = 0,     // pitch-worklet.js: the current 1/tempo (parity, default)
+  InputTempo = 1,  // the tempo that produced the input each grain reads (no pitch blip on tempo steps)
 };
 
 class Deck final : public IDeckControl {
@@ -61,75 +56,109 @@ class Deck final : public IDeckControl {
   int index() const noexcept { return index_; }
 
   // ---- setup (control thread, audio stopped) ----------------------------------
-  // Allocates every real-time buffer (WSOLA rings, position history, scratch
-  // and roll state) for this device rate and maximum block size.
+  // The constructor allocates the rate-independent buffers (the two WSOLA
+  // instances of the A/B crossfades, the per-voice input histories that
+  // cover the WSOLA lag, the prime history); prepare() the ones that depend
+  // on the device rate (the heard-position history sized for
+  // kMaxInsertLatencySec of plugin latency). Keeps the transport state: a
+  // playing deck restarts at its position on the new device (new segment).
   void prepare(double deviceRate, int maxBlockFrames);
 
   // ---- media (audio thread) ------------------------------------------------------
-  // engine.js loadTrack() state reset (stop, position 0, cue 0, tempo 1, loop
-  // off, roll off, stems off and dropped, key 0; KEYLOCK is kept).
-  void reset() noexcept;
-  const TrackBuffer* attachTrack(const TrackBuffer* tb, uint64_t gen) noexcept;  // nullptr = unload
+  // engine.js loadTrack() reset: stop (2 ms fade), position 0, cue 0, tempo 1,
+  // loop off, _loopBeats null, roll off, stems off and dropped, key 0, new
+  // segment. KEYLOCK is kept, and so is the natural-end timestamp (engine.js
+  // _endedAt: only play() clears it; the auto-master's "ended < 2 s" rule).
+  // Sent by the core right before attachTrack().
+  void resetForLoad() noexcept;
+  // No loop and loopStart = loopEnd = 0, as on a new engine.js page: the
+  // core's hello {reset} (resetForLoad keeps the bounds like engine.js
+  // loadTrack, and app.js's RELOOP reuses them).
+  void clearLoopBounds() noexcept;
+  // No natural end on record (endedAt / endedAtSample NaN), as on a new
+  // engine.js page: the core's hello {reset}. ended_count is kept (sticky).
+  void clearEnded() noexcept;
+  // nullptr = unload. Returns the previous buffer (to retire).
+  const TrackBuffer* attachTrack(const TrackBuffer* tb) noexcept;
+  // nullptr = no grid. Returns the previous grid (to retire).
   const BeatGrid* attachGrid(const BeatGrid* g) noexcept;
-  const StemSet* attachStems(const StemSet* s) noexcept;  // stems become READY (not on)
-  void setGlobalGridOffset(double sec) noexcept;
-  void setInsertLatency(int frames) noexcept;              // VST plugin latency (joins procLat)
+  // Stems become READY (not on). Returns the previous set (to retire).
+  const StemSet* attachStems(const StemSet* s) noexcept;
+  void setGlobalGridOffset(double sec) noexcept;        // engine.js GLOBAL_GRID_OFFSET (roll slices)
+  void setInsertLatency(int frames) noexcept;           // VST plugin latency (<= kMaxInsertLatencySec): joins the read-ahead
+  void setInterpolation(InterpQuality q) noexcept;      // Linear (default, Chromium parity) / later A/B
+  void setKeylockRatioSource(KeylockRatioSource s) noexcept;  // dev A/B, Worklet by default
 
-  // ---- transport (audio thread). `at` = UI issue time (engine clock, 0 = now) ----
-  void play(EngineTime at, const BlockClock& clk) noexcept;
-  void pause(EngineTime at, const BlockClock& clk) noexcept;
-  // Heard position t at time `at`: while playing the target is advanced by
-  // (presentTime - at) * tempo so a jump computed from currentTime() is exact.
-  void seek(double t, EngineTime at, const BlockClock& clk) noexcept;
-  void cueButton(EngineTime at, const BlockClock& clk) noexcept;  // engine.js Deck.cue()
-  void setCuePoint(double t) noexcept;
-  void setKey(int semitones) noexcept;     // -7..+7
-  void setKeylock(bool on) noexcept;
-  void setLoop(double start, double end) noexcept;
-  void exitLoop() noexcept;
-  void setLoopBeats(double beats) noexcept;  // NaN = null
-  void setSlip(bool on) noexcept;
+  // ---- transport (audio thread) ----------------------------------------------------
+  // `at` = engine time when the UI issued the command (0 = unknown): a
+  // position computed by the UI from currentTime() at `at` is made exact at
+  // the block's presentTime (target advanced by (presentTime - at) * tempo
+  // while playing), the way engine.js compensated its 30 ms scheduling lead.
+  // play() from stop is ARMED: it starts at the first block where the chunk
+  // under the position (and the WSOLA prime history when routed) is ready,
+  // at most kArmedStartMaxSec later on the sample clock (SPEC.md §9.1).
+  void play(EngineTime at, const BlockClock& clk) noexcept;    // engine.js play(): restarts at 0 when at the end
+  void pause(EngineTime at, const BlockClock& clk) noexcept;   // engine.js pause() (+ roll stopped)
+  void seek(double t, EngineTime at, const BlockClock& clk) noexcept;  // engine.js seek() incl. loop exit rule
+  void setCuePoint(double t) noexcept;                  // stored for the snapshot (the JS proxy decides cue())
+  void setKey(int semitones) noexcept;                  // -7..+7 (engine.js setKey)
+  void setKeylock(bool on) noexcept;                    // engine.js setKeylock
+  void setLoop(double start, double end) noexcept;      // engine.js setLoop (ignored when shorter than 10 ms)
+  void exitLoop() noexcept;                             // engine.js exitLoop
+  void setLoopBeats(double beats) noexcept;             // engine.js _loopBeats (NaN = null)
+  // Scratch (engine.js scrubStart / scrubMove / scrubEnd): Move gives the
+  // target position t at UI time `at`; the read pointer follows the target
+  // path continuously (signed speed: real reverse audio), bypassing the
+  // WSOLA transposer like engine.js scrubIn. Still = silence.
   void scratch(ScratchPhase phase, double t, EngineTime at, const BlockClock& clk) noexcept;
-  void spin(SpinKind kind, const BlockClock& clk) noexcept;  // None = stopSpinSound()
-  void setStemsOn(bool on) noexcept;                         // engine.js loadStems (gains back to 1)
-  void setStemGain(Stem s, float gain, float tauSec) noexcept;
+  // V.BRAKE / BACKSPIN sound (engine.js spinSound / stopSpinSound with
+  // SpinKind::None). The transport is not moved (app.js resumes it).
+  void spin(SpinKind kind, const BlockClock& clk) noexcept;
+  void setStemsOn(bool on) noexcept;                    // engine.js loadStems (gains back to 1) / stems off
+  void setStemGain(Stem s, float gain, float tauSec) noexcept;  // stemGains[s].gain.setTargetAtTime(gain, now, tau)
 
   // ---- render (audio thread) ---------------------------------------------------
-  // Writes the deck's pre-TRIM stereo output for this block.
+  // Writes the deck's pre-TRIM stereo output for this (sub-)block. Any
+  // frame count: the WSOLA ratio still changes only on the deck's own
+  // 128-frame quantum grid (the remainder is carried over).
   void render(float* l, float* r, int frames, const BlockClock& clk) noexcept;
-  // True once after a natural end of track (engine.js onended), with its time.
-  bool takeEnded(EngineTime& at) noexcept;
 
   // ---- queries (audio thread) ----------------------------------------------------
-  void snapshot(DeckSnapshot& s) const noexcept;
-  double heardPositionAt(EngineTime t) const noexcept;
+  // Fills the deck part of the state: positions at `t`, segment, end latch,
+  // armed flag (the mixer adds peak / rms / dry, the core the insert state).
+  void snapshot(om_deck_state& s, EngineTime t) const noexcept;
+  // Track position heard at engine time `when` within the current block
+  // (exact mapping: tempo changes, WSOLA lag, read-ahead, loops). The core
+  // uses it for the plugin transport at the insert input position (§13.3).
+  double positionAt(EngineTime when) const noexcept;
   double procLatencySec() const noexcept;
   int keyShift() const noexcept;
   bool keylock() const noexcept;
   double cuePoint() const noexcept;
   bool looping() const noexcept;
-  uint64_t gen() const noexcept;
+  bool armed() const noexcept;
+  uint32_t loadId() const noexcept;
+  uint32_t endedCount() const noexcept;                 // sticky end latch (om_deck_state.ended_count)
 
-  // ---- IDeckControl ----------------------------------------------------------------
+  // ---- IDeckControl (sync engine) ----------------------------------------------------
   bool loaded() const noexcept override;
   bool playing() const noexcept override;
   double duration() const noexcept override;
   double heardPosition() const noexcept override;
   bool transportSettled() const noexcept override;
   double tempo() const noexcept override;
-  void setTempo(double r) noexcept override;
+  void setTempo(double r) noexcept override;            // also the UI "deck.tempo" command (core adds followMaster)
   void seekHeard(double t) noexcept override;
   bool routedThroughWsola() const noexcept override;
   const BeatGrid* grid() const noexcept override;
-  EngineTime endedAt() const noexcept override;
+  SampleTime endedAtSample() const noexcept override;
   bool startRoll(double beats, double mix) noexcept override;
   void setRollMix(double mix) noexcept override;
   void stopRoll(bool immediate) noexcept override;
   bool rolling(double* beats) const noexcept override;
 
  private:
-  // Private layout belongs to the deck owner (pimpl keeps this header stable).
-  struct Impl;
+  struct Impl;  // private layout belongs to the deck owner (pimpl keeps this header stable)
   int index_;
   std::unique_ptr<Impl> impl_;
 };

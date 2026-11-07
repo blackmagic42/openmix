@@ -4,7 +4,8 @@
 //
 // FROZEN FOUNDATION (maintainer: host). Wait-free push/pop, no allocation
 // after construction, safe to use from a real-time thread. Exactly ONE thread
-// may push and exactly ONE thread may pop.
+// may push and exactly ONE thread may pop (several producers are fine when
+// they serialize on a mutex the consumer never touches, as the core does).
 #pragma once
 
 #include <atomic>
@@ -80,6 +81,15 @@ class SpscQueue {
     return (t - h) & mask_;
   }
   bool emptyApprox() const noexcept { return sizeApprox() == 0; }
+
+  // Producer thread only: a LOWER bound of the free slots (the consumer can
+  // only free more meanwhile). Used to reserve room for a whole batch before
+  // pushing any of it (SPEC.md §3.3).
+  size_t freeApprox() const noexcept {
+    const size_t t = tail_.load(std::memory_order_relaxed);
+    const size_t h = head_.load(std::memory_order_acquire);
+    return mask_ - ((t - h) & mask_);
+  }
 
  private:
   alignas(64) std::atomic<size_t> head_{0};  // next slot to read (written by the consumer)
