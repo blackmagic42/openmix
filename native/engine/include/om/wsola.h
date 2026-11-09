@@ -30,6 +30,23 @@
 // sums: exact, not approximate). Frame counters are rebased by 2^27 (a
 // multiple of RING and ACC) past 2^28 so every position stays exact in double.
 //
+// Opt-in fine alignment (setFineAlign, OFF by default; the engine's
+// keylock.precision command, owner decision of 2026-11-09): the worklet
+// aligns each grain on a whole input sample (fine search step 1), so every
+// hop carries a rounding of up to half a sample with a constant bias for a
+// given ratio (up to ~1.5 cents of average pitch error, SPEC.md §9.4). When
+// on, the worklet's fine window (best - 3 .. best + 3 around the coarse
+// best) is scored on EXACT positions (reference and candidates linearly
+// interpolated, like the grains, instead of truncated) and its peak refined
+// to a fraction of a sample by a parabola through the best score and its two
+// neighbours (offset clamped to +-0.5 sample, none at the edge of the window
+// or when the three scores do not bend down); the grain then reads from that
+// fractional position with the same linear interpolation. Measured: the 45
+// keylock cases of the deck campaign within 0.5 cent (tests/deck). Off, the
+// worklet's arithmetic is unchanged (bit parity, every golden). It may be
+// switched at any time: the next grain uses the new alignment, overlapped as
+// usual.
+//
 // Real-time safe after construction: no allocation in process() / prime().
 #pragma once
 
@@ -71,6 +88,10 @@ class Wsola {
   // Silence, forget the previous grain (state of a freshly constructed worklet).
   void reset() noexcept;
   void setPenalty(double pen) noexcept;  // alignment penalty (pitch-worklet `pen`)
+  // Sub-sample alignment of the grains (see above). Kept by reset() and
+  // prime(): it is a setting, not stream state.
+  void setFineAlign(bool on) noexcept;
+  bool fineAlign() const noexcept;
 
   // pitch-worklet.js process(): consumes n input frames, produces n output
   // frames, with ONE ratio for the call: the caller (the deck) calls it with

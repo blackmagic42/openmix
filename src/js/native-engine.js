@@ -6,8 +6,9 @@
 // src/js/native-engine/ (same owner); this module is the public entry point.
 // Importable in Node (no browser global touched at import time).
 
-export { createAudioEngine, NativeEngine, ENGINE_KEY, rememberOutputDevices } from './native-engine/core.js';
+export { createAudioEngine, NativeEngine, ENGINE_KEY, KEYLOCK_PRECISION_KEY, rememberOutputDevices } from './native-engine/core.js';
 export { NativeVstHost, SUSPECTS_KEY } from './native-engine/vst-host.js';
 export { NativeDeck } from './native-engine/deck.js';
 export { NativeFxUnit } from './native-engine/fx.js';
 export { recordingStamp, stopAndSaveRecording, revealRecording } from './native-engine/recording.js';
+export { LateBadge, LATE_MIN_RISES, LATE_SHOW_WINDOW_MS, LATE_HIDE_AFTER_MS } from './native-engine/late-badge.js';

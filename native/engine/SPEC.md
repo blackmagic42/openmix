@@ -1199,6 +1199,25 @@ tempo (below).
   (a ~55 ms pitch blip at each tempo or servo step, inherited from the Web
   engine); in `input` mode the deck feeds each grain the ratio of the tempo
   that produced the input it reads (the deck keeps that tempo history).
+- **Keylock precision** (owner decision of 2026-11-09; `keylock.precision
+  {on}`, engine-wide, **off by default**; Settings > Audio engine > "Precise
+  keylock", saved in `localStorage.keylockPrecision`, sent by the proxy at
+  connect and on every change; kept by `hello {reset}` like
+  `sync.precision`): pitch-worklet.js aligns each grain on a whole input
+  sample, so each hop carries a rounding of up to half a sample with a
+  constant bias for a given ratio (4 of the 45 campaign cases 1.25-1.54
+  cents off, the Web engine alike). When on, `Wsola` keeps the worklet's
+  coarse search, scores the same fine window (best ± 3, every other overlap
+  point, no penalty) with the reference and the candidates read at their
+  exact positions (linear interpolation, like the grains; truncated reads
+  bias the peak by up to a sixth of a sample when 2r is close to a simple
+  fraction) and adds the vertex of the parabola through the best score and
+  its neighbours (±0.5 sample; none at the window edge or when the scores do
+  not bend down): the grain starts at a fractional input position. Off, the
+  worklet's arithmetic is untouched (every WSOLA golden bit-exact). Measured:
+  all 45 cases within 0.5 cent and no new artefact
+  (`tests/deck/test_deck_campaign.cpp` `campaign_keylock_precision_*`,
+  `tests/core/test_core_keylock_precision.cpp`; numbers in Appendix E.9).
 
 ### 9.5 Scratch (`deck.scratch`)
 
@@ -1688,11 +1707,14 @@ Met by the native precision mode (`sync.precision {on}`): 10-minute replay
 p99 0.46-0.61 ms over 100 seeds; end to end on rendered click tracks p99
 0.14-0.28 ms at 75-174 BPM with ±0.3 ms grids (worst 0.53 ms over 33 seed
 runs). The engine.js parity mode reproduces engine.js (replay p99
-0.94-1.74 ms; end to end 1.10 ms at 90 BPM, 1.29 ms at 75 BPM). Parity is
-the default until David decides (Appendix E).
+0.94-1.74 ms; end to end 1.10 ms at 90 BPM, 1.29 ms at 75 BPM). Precision
+is the default since the owner's decision of 2026-11-09 (Appendix E.9);
+`sync.precision {on:false}` still selects the parity mode (A/B with the Web
+engine). The proxy never sends `sync.precision`.
 
-- **Precision mode** (`sync.precision`, off by default; survives `hello
-  {reset}`; refinements 1-7 in `sync.h`, `setNativePrecision`): the holding
+- **Precision mode** (`sync.precision`, ON by default since 2026-11-09;
+  the chosen mode survives `hello {reset}`; refinements 1-7 in `sync.h`,
+  `setNativePrecision`): the holding
   servo is proportional + integral (integral time 30 s, errors above
   0.01 beat not integrated, integral clamped at the servo limit and kept in
   `pllCorr` only, so the base and the BPM shown do not move; restarted from
@@ -1707,7 +1729,11 @@ the default until David decides (Appendix E).
 - End-to-end proof on the real decks: `tests/core/test_core_sync_e2e.cpp`
   (two click tracks through the C API, 60 s, phase measured on the rendered
   audio: exact grids p99 < 0.05 ms in both modes, realistic grids p99
-  < 1.0 ms in parity and < 0.4 ms in precision).
+  < 1.0 ms in parity and < 0.4 ms in precision; a run that sends no
+  `sync.precision` at all is the precision run). The tests that assert
+  engine.js behaviour (`tests/sync/sync_sim.h` rig, the engine.js replay,
+  the cross-check against the real engine.js) select the parity mode
+  explicitly.
 
 ---
 
@@ -1774,6 +1800,15 @@ violations. So:
     skipped it at the next start). A crash reported by a block that came
     back late still disables the slot (and the SDK side never calls a
     faulted plugin again).
+- The UI shows a lateness, it never acts on it (owner decision of
+  2026-11-09): app.js polls each channel's late counter every 250 ms
+  (`NativeVstHost.underruns()` = the snapshot's `insert.late`; with the Web
+  engine, vst.js `VstHost.underruns()` = the worklet's underrun counter)
+  through `LateBadge` (`src/js/native-engine/late-badge.js`): a small amber
+  dot on the channel's VST button, with a translated tooltip
+  (`vst_late_title`), once the counter rose in 2 polls within 2 s, hidden
+  3 s after the last late block; a new plugin or an empty slot starts from a
+  fresh baseline. Nothing is disabled or bypassed because of lateness.
 - The insert state of the snapshot (`insert.state` / `insert.late`, §15.5)
   comes from `VstHost::insertState()`, a const, lock-free accessor the core
   calls on the audio thread every block (it reads only the slot's atomics);
@@ -1967,7 +2002,7 @@ Control side:
 
 | cmd | Route | Fields | Reply / event |
 |---|---|---|---|
-| `hello` | inline | `protocol`, `client`, `reset` (bool) | reply: `engine`, `protocol`, `sampleRate`, `channels`, `chunkFrames`, `epoch`. `reset`: an `EngineReset` audio command (every deck unloaded, loop bounds back to 0 / 0, no natural end on record, scheduled `when` commands dropped, samples cleared, mixer / FX / sync back to engine.js defaults, `ack` = 0, new `epoch` in the state), new PCM epoch, unattached streams aborted, plugins unloaded (vst-ops), a running recording finalized (ops thread, `rec.status` event) |
+| `hello` | inline | `protocol`, `client`, `reset` (bool) | reply: `engine`, `protocol`, `sampleRate`, `channels`, `chunkFrames`, `epoch`. `reset`: an `EngineReset` audio command (every deck unloaded, loop bounds back to 0 / 0, no natural end on record, scheduled `when` commands dropped, samples cleared, mixer / FX / sync back to engine.js defaults (the engine settings `sync.precision` and `keylock.precision` are kept), `ack` = 0, new `epoch` in the state), new PCM epoch, unattached streams aborted, plugins unloaded (vst-ops), a running recording finalized (ops thread, `rec.status` event) |
 | `engine.config` | inline | `stateHz`?, `vstDeadline`? (0.1-0.6) | reply |
 | `clock.ping` | inline | `t0` | event `clock.pong {t0, te}` |
 | `device.list` | ops | — | reply: `devices` [{id, name, nameIndex, channels, channelMask, sampleRate, isDefault, isDefaultComms, sharedMinPeriodFrames, sharedFundamentalFrames}] |
@@ -2027,6 +2062,7 @@ Audio thread (applied at the next block, or at `when`):
 | `deck.stemGain` | `deck`, `stem`, `v`, `tau` (0.01) | stemGains[x].gain.setTargetAtTime |
 | `deck.interp` | `deck`, `quality` (linear/hermite/sinc) | (dev A/B) |
 | `deck.keylockRatio` | `deck`, `mode` (worklet/input) | (dev A/B, §9.4) |
+| `keylock.precision` | `on` | every deck: sub-sample WSOLA grain alignment (off by default = pitch-worklet.js; survives `hello {reset}`; §9.4) |
 | `grid.offset` | `sec` | setGlobalGridOffset |
 | `sync.master` | `deck` (null = automatic) | masterIdx = x |
 | `sync.jogHold` | `on` | jogHold = x |
@@ -2034,7 +2070,7 @@ Audio thread (applied at the next block, or at `when`):
 | `sync.reanchor` | `deck` | reanchorSync(i) |
 | `sync.arm` | `deck`, `on` | deck.synced = x |
 | `sync.base` | `deck`, `base`? (null), `ref`? (null), `pllCorr`? | `_syncBase` / `_syncRef` / `_pllCorr` writes |
-| `sync.precision` | `on` | native precision refinements (off = engine.js parity; survives `hello {reset}`) |
+| `sync.precision` | `on` | native precision refinements (on by default since 2026-11-09; off = engine.js parity; survives `hello {reset}`) |
 
 ### 15.4 Events (engine → renderer)
 
@@ -2431,6 +2467,17 @@ Web engine's decoded audio at the end of Phase 3.
    of 2026-11-07 also `engine_reason_memory`, `engine_memory_stems`,
    `engine_memory_sample` (§17.8). app.js's `onFallback(reason, code)` and
    the Settings status show `engine_reason_memory` for the code `memory`.
+9. Owner decisions of 2026-11-09: in the "Audio engine" row (index.html), a
+   checkbox `#set-keylock-precision` ("Precise keylock (native engine)",
+   off by default, `localStorage.keylockPrecision` = '1' / '0') and a hint
+   span `#set-keylock-precision-hint` (`keylock_precision_web_hint` while
+   the Web engine plays; the box is greyed out while the Web engine is also
+   the one chosen); app.js calls `engine.setKeylockPrecision(on)` when it is
+   toggled, the facade sends it at connect. The VST button of each channel
+   gets the class `late` (a small amber dot, styles.css `.strip-vst.late`)
+   from `LateBadge` (§13.2), its tooltip adding `vst_late_title`. i18n.js,
+   fr and en: `keylock_precision_label`, `keylock_precision_title`,
+   `keylock_precision_web_hint`, `vst_late_title`.
 
 ---
 ## 18. Build and tests
@@ -2726,6 +2773,10 @@ add private headers inside their `src/<module>/` folder.
   jump, and no stale audio: jumps are immediate with a 5 ms crossfade.
 - Keylock / key: no 55-60 ms delay at PLAY or hot cues (primed transposer);
   same WSOLA sound otherwise (the tempo-history ratio is an A/B option).
+- Keylock precision (`keylock.precision`, opt-in, off by default): grains
+  aligned to a fraction of a sample, pitch within 0.5 cent where the
+  worklet (and the Web engine) is up to 1.54 cents off (§9.4). Off, the
+  keylock is the Web engine's, bit for bit.
 - Click-free pause/stop (2 ms fades).
 - Armed starts: a play from stop waits (≤ 250 ms) for its audio data instead
   of starting over silence; a sampler pad hit waits (≤ 250 ms) for its first
@@ -2734,8 +2785,9 @@ add private headers inside their `src/<module>/` folder.
 - Sync servo every block on exact positions instead of every animation frame
   on a clock moving in ~3 ms steps (the error low-pass is converted so the
   dynamics stay the same); every duration on the audio sample clock.
-- Sync, native precision mode (`sync.precision`, off by default until David
-  decides): proportional + integral holding servo (integral time 30 s,
+- Sync, native precision mode (`sync.precision`, the default since the
+  owner's decision of 2026-11-09; off = the engine.js algorithm, for an
+  A/B): proportional + integral holding servo (integral time 30 s,
   integral kept out of the base so the BPM shown does not move),
   calibration certified by a fine pass only, coarse corrections under 0.1 %
   ignored, no follow-master rescaling inside a handover, follow-master
@@ -3192,22 +3244,31 @@ Electron round trip green with it. Per executable and variant:
 
 ### E.7 Open decisions for David
 
-1. **Sync precision by default** (`sync.precision`): still OFF (engine.js
-   parity). The sync-phase campaign recommends ON: 3-5× smaller phase
-   errors, the 1 ms target met down to 75 BPM, clean handovers and keylock
-   master moves, no measurable CPU, the BPM shown still. Costs: no longer
-   the engine.js algorithm (A/B with the Web engine differs slightly), a
-   tempo nudge every block (rms 0.004-0.03 %, max 0.07 %, below 0.2 cent),
-   a fixed-grid calibration of 14.5 s instead of 6.5 s. If yes:
-   `SyncEngine::Impl::precision = true` and §15.3's row.
-2. **Keylock fine alignment**: not added. 4 of 45 cases are 1.25-1.54 cents
-   off (as in the Web engine). Option: an opt-in A/B (parabolic
-   interpolation of the fine correlation peak in `Wsola`, breaking bit
-   parity with the worklet) after a listening test.
+Items 1 and 2, the VST late display and the PCM memory share were decided
+by the owner on 2026-11-09 (E.9).
+
+1. **Sync precision by default** (`sync.precision`): DECIDED 2026-11-09,
+   precision is ON by default (`SyncEngine::Impl::precision = true`; the
+   parity mode stays available through `sync.precision {on:false}`). The
+   evidence: 3-5× smaller phase errors, the 1 ms target met down to 75 BPM,
+   clean handovers and keylock master moves, no measurable CPU, the BPM
+   shown still; the costs accepted: no longer the engine.js algorithm (A/B
+   with the Web engine differs slightly), a tempo nudge every block (rms
+   0.004-0.03 %, max 0.07 %, below 0.2 cent), a fixed-grid calibration of
+   14.5 s instead of 6.5 s.
+2. **Keylock fine alignment**: DECIDED 2026-11-09, added as an option, OFF
+   by default (`keylock.precision`, Settings > Audio engine > "Precise
+   keylock", native engine only; §9.4). Off, the keylock stays bit-exact
+   with pitch-worklet.js.
 3. **V25**: a plugin's latency delays the deck after play and hot cues
    (Kotelnikov: 3.83 ms): accept, or decide otherwise.
 4. **Scratch feel** on the FLX6: the follower constants (omega 60, coast of
    two UI intervals) need his A/B.
+5. **A plugin that is always late**: DECIDED 2026-11-09, a discreet badge on
+   the channel's VST button while late blocks keep coming; the plugin is
+   never disabled or bypassed for lateness (§13.2).
+6. **PCM memory share**: DECIDED 2026-11-09, 40 % of the RAM stays
+   (`engine-host.js` `PCM_RAM_SHARE`, §17.8); no change.
 
 Still not tested anywhere: the real app page and the FLX6, exclusive mode,
 a second (phones) card, device loss on hardware, plugin editors and dialog
@@ -3284,3 +3345,69 @@ rebuilt and the Electron round trip passed with it (41 / 41 steps); the
 the same round trip with no `diag rt-alloc` / `rt-free` and
 `health.rtAllocs` = `rtFrees` = 0 (NULL device). Per executable and
 variant: `review-fixes.json`.
+
+### E.9 Owner decisions of 2026-11-09
+
+David's answers to E.7 (9 Nov 2026): "Précision de la synchro : oui,
+activée par défaut. Keylock : oui, ajoute une option de précision, mais
+laisse-la désactivée par défaut. Plugins VST : oui, affiche un badge discret
+lorsqu'un plugin est en retard, sans le désactiver. Limite mémoire : 40 % me
+convient." Applied the same day (report `verify-reports/decisions.json`,
+backup `verify-backups/decisions/`).
+
+1. **Sync precision ON by default** (§12, §15.3, §20): `SyncEngine::Impl::
+   precision = true`; `sync.precision {on:false}` still selects the engine.js
+   parity mode, and the chosen mode survives `hello {reset}`. The proxy and
+   app.js never send `sync.precision` (a proxy test checks it). The tests
+   that assert engine.js behaviour now select parity explicitly
+   (`tests/sync/sync_sim.h` rig, the engine.js replay and its "window
+   hidden" run, the cross-check against the real engine.js); new
+   `sync_precision_is_the_default_and_survives_reset`; the core end-to-end
+   test got a fifth run that sends no `sync.precision`: bit-identical to the
+   precision run (realistic grids p99 0.257 ms, parity 0.814 ms; limits
+   unchanged: exact grids 0.05 ms, realistic parity 1.0 ms, precision and
+   default 0.4 ms).
+2. **Keylock precision option, OFF by default** (§9.4, §15.3, §17.9, §20):
+   `keylock.precision {on}` (engine-wide, kept by `hello {reset}`),
+   `Wsola::setFineAlign`, `Deck::setKeylockPrecision`; Settings > Audio
+   engine > "Precise keylock (native engine)", saved in
+   `localStorage.keylockPrecision`, sent by the facade at connect and on
+   every change, greyed out / with a hint while the Web engine plays. Off,
+   every WSOLA golden is unchanged (bit-exact with pitch-worklet.js). On
+   (Debug run, 440 Hz sine, 48 kHz): the 45 cases (tempo 0.92 / 1.00 / 1.08
+   × key −7..+7) at 0.000 cents worst (the worklet's alignment: 1.537);
+   44.1 kHz device and key without keylock 0.000 cents; the transposer alone
+   0.000 cents. No new artefact: bit-identical where no grain is searched
+   (ratio 1); sine-fit residual (10 ms windows) median −74.5 dB vs −45.9 dB,
+   worst window −71.5 dB vs −39.7 dB, never worse case by case; music
+   (6 tempo / key cases): energy within 0.137 dB of the worklet's
+   alignment, median deviation from the track's energy envelope at most
+   +0.02 dB above it, peaks at most +0.035 dB; curvature excess of a
+   keylocked sine equal (−78.7 / −71.0 / −69.6 dBFS vs −78.4 / −71.0 /
+   −69.2). Through the whole engine (C API, NULL device, key −5 at tempo 1):
+   default −1.538 cents, on +0.000, after `hello {reset}` +0.000, off again
+   −1.538. The first version (parabola on the worklet's truncated scores)
+   left 0.511 cents at tempo 1.08 key +4 (2r ≈ 2 + 1/3): the fine window is
+   now scored on interpolated positions.
+3. **VST late badge** (§13.2, §17.9): a small amber dot on the channel's
+   VST button (`.strip-vst.late`) with the tooltip `vst_late_title`, from
+   `LateBadge` (`src/js/native-engine/late-badge.js`): app.js polls the late
+   counter every 250 ms (native: the snapshot's `insert.late` through
+   `NativeVstHost.underruns()`; Web engine: vst.js `underruns()`, the
+   worklet's underrun counter, so both engines show it), shows the dot once
+   the counter rose in 2 polls within 2 s, hides it 3 s after the last late
+   block; a new plugin or an empty slot restarts from a fresh baseline. The
+   plugin is never disabled or bypassed for lateness (a proxy test checks
+   that no command follows the late blocks).
+4. **PCM memory limit**: 40 % of the RAM stays (`engine-host.js`
+   `PCM_RAM_SHARE`, §17.8); no code change.
+
+Final runs (strict, goldens, fault plugins, no editor, `--jobs 6`): Debug
+309 passed, 0 failed, 4 skipped (opt-in only); `--portable` and
+`--clang-cl` 279 passed, 0 failed, 34 skipped; `--sanitize address` 284
+passed, 0 failed, 29 skipped, no ASan report; each variant 4 tests more
+than E.8's; 0 compiler warnings, RT lint OK. Proxy unit tests 126 / 126
+with `OM_PROTO_CHECK` (om_proto_check rebuilt from the new protocol.cpp in
+`native/engine/build-verify-decisions/protocheck`); i18n fr / en parity
+607 / 607. The Release `.node` was rebuilt and the Electron round trip
+passed with it (41 / 41 steps, no audio-thread allocation).

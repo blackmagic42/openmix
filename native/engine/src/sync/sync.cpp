@@ -22,8 +22,9 @@
 //    non-positive ratio (engine.js would loop forever on Infinity).
 // Proven against engine.js itself: tests/sync/js_xcheck/xcheck.mjs runs the
 // Web engine's own sync code and test_sync_js_xcheck.cpp compares every
-// decision tick by tick. The native precision refinements (sync.h,
-// setNativePrecision, off by default) are marked "native precision" below.
+// decision tick by tick (parity mode). The native precision refinements
+// (sync.h, setNativePrecision, ON by default since the owner's decision of
+// 2026-11-09; off = engine.js parity) are marked "native precision" below.
 #include "om/sync.h"
 
 #include <cmath>
@@ -68,7 +69,7 @@ constexpr float kRollLevelMin = 0.02f;       // fxTick: panel / master ROLL unit
 constexpr double kRollBeatsEps = 1e-6;       // fxTick: a roll of other beats is restarted
 constexpr double kBeatDurFallback = 0.5;     // app.js: masterBeat || 0.5
 constexpr double kBoundaryEps = 1e-6;        // nextBoundaryAt: ceil((f - anchor) / G + 1e-6)
-// Native precision refinements (setNativePrecision, off = engine.js parity)
+// Native precision refinements (setNativePrecision, on by default; off = engine.js parity)
 constexpr double kCoarseNoise = 0.001;       // the 1 s window's noise floor (engine.js: +-0.13 BPM ~ 0.1 %)
 constexpr double kIntegralSec = 30.0;        // integral time of the holding servo (damping >= 0.85 from 75 BPM up)
 constexpr double kIntegralMaxErr = 0.01;     // beat: larger (transient) errors are not integrated
@@ -170,7 +171,7 @@ struct SyncEngine::Impl {
   SampleTime amStopAt = kNaN;   // engine.js _amStopAt
   int lastMi = kLastMiUnset;    // engine.js _lastMi
   bool following = false;       // engine.js _following
-  bool precision = false;       // native precision refinements (off = engine.js parity)
+  bool precision = true;        // native precision refinements (default ON, owner 2026-11-09; off = engine.js parity)
   double gridOffset = 0.0;      // engine.js GLOBAL_GRID_OFFSET
   SampleTime blockNow = 0.0;    // sample time of the block being prepared (commands: the next one)
   // views of the last tick

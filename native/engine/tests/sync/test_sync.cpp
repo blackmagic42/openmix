@@ -99,6 +99,29 @@ OM_TEST(sync_flags_and_master_fields) {
   OM_CHECK(st.master_idx == -1 && st.synced[1] == 0);
 }
 
+// The owner's decision of 2026-11-09 (SPEC.md §12, Appendix E.9): the native
+// precision mode is the default; sync.precision {on:false} still selects the
+// engine.js parity mode, and hello {reset} (resetToDefaults) keeps whichever
+// mode is set.
+OM_TEST(sync_precision_is_the_default_and_survives_reset) {
+  FakeDeck fakes[kNumDecks];
+  IDeckControl* ptrs[kNumDecks] = {&fakes[0], &fakes[1], &fakes[2], &fakes[3]};
+  SyncEngine s;
+  s.attachDecks(ptrs);
+  OM_CHECK(s.nativePrecision());  // default ON
+  s.resetToDefaults();
+  OM_CHECK(s.nativePrecision());  // the default survives hello {reset}
+  s.setNativePrecision(false);    // engine.js parity on request
+  OM_CHECK(!s.nativePrecision());
+  s.resetToDefaults();
+  OM_CHECK(!s.nativePrecision());  // ... and so does the parity choice
+  s.setNativePrecision(true);
+  OM_CHECK(s.nativePrecision());
+  // the test rig of this file runs parity explicitly (sync_sim.h)
+  Rig r;
+  OM_CHECK(!r.sync.nativePrecision());
+}
+
 OM_TEST(sync_tick_is_allocation_free) {
   FakeDeck fakes[kNumDecks];
   IDeckControl* ptrs[kNumDecks] = {&fakes[0], &fakes[1], &fakes[2], &fakes[3]};
@@ -1239,9 +1262,10 @@ OM_TEST(sync_track_load_and_reset_defaults) {
 }
 
 // ---------------------------------------------------------------------------
-// Native precision refinements (setNativePrecision; OFF by default = the
-// engine.js behaviour every test above checks). Each one against its
-// verbatim counterpart.
+// Native precision refinements (setNativePrecision; ON by default in the
+// engine since 2026-11-09, while the rig of this file runs the engine.js
+// parity mode every test above checks). Each one against its verbatim
+// counterpart.
 // ---------------------------------------------------------------------------
 namespace {
 // Fixed grids 128 / 125 BPM, follower synced (stage 1 first), optional base error.

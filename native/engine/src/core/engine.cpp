@@ -1762,6 +1762,9 @@ struct Engine::Impl {
       case Cmd::DeckKeylockRatio:
         dk->setKeylockRatioSource(c.u.keylockRatio.mode ? KeylockRatioSource::InputTempo : KeylockRatioSource::Worklet);
         break;
+      case Cmd::KeylockPrecision:  // engine-wide setting: every deck (kept by hello {reset}, like sync.precision)
+        for (auto& x : decks) x->setKeylockPrecision(c.u.flag.on != 0);
+        break;
       case Cmd::GridOffset:
         for (auto& x : decks) x->setGlobalGridOffset(c.u.gridOffset.sec);
         sync.setGlobalGridOffset(c.u.gridOffset.sec);
@@ -1817,7 +1820,7 @@ struct Engine::Impl {
         }
         for (int s = 0; s < kMaxSamplerSlots; s++) retire(Retired::Sample, mixer.sampler().attach(s, nullptr));
         mixer.resetToDefaults();
-        sync.resetToDefaults();
+        sync.resetToDefaults();  // keeps sync.precision (an engine setting, like keylock.precision on the decks)
         sync.setGlobalGridOffset(0);
         ack = 0;
         epochAudio = c.u.reset.epoch;

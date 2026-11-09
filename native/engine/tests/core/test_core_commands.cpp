@@ -148,6 +148,7 @@ OM_TEST(core_every_command_reaches_its_route_and_module) {
       {"deck.stemGain", Route::Audio, R"({"cmd":"deck.stemGain","deck":0,"stem":"drums","v":0.5,"tau":0.02)"},
       {"deck.interp", Route::Audio, R"({"cmd":"deck.interp","deck":0,"quality":"hermite")"},
       {"deck.keylockRatio", Route::Audio, R"({"cmd":"deck.keylockRatio","deck":0,"mode":"input")"},
+      {"keylock.precision", Route::Audio, R"({"cmd":"keylock.precision","on":true)"},
       {"grid.offset", Route::Audio, R"({"cmd":"grid.offset","sec":0.004)"},
       // ---- audio thread: sync ----
       {"sync.master", Route::Audio, R"({"cmd":"sync.master","deck":2)"},
@@ -231,6 +232,8 @@ OM_TEST(core_every_command_reaches_its_route_and_module) {
   OM_CHECK(c && c->u.attach.ptr != nullptr);  // deck.stems -> an attach command
   c = trace->last(Cmd::AttachSample);
   OM_CHECK(c != nullptr);
+  c = trace->last(Cmd::KeylockPrecision);  // engine-wide (no deck), owner decision of 2026-11-09
+  OM_CHECK(c && c->deck == -1 && c->u.flag.on == 1);
   c = trace->last(Cmd::SetVstDeadline);
   OM_CHECK(c && std::fabs(c->u.deadline.fraction - 0.35f) < 1e-6);
   // The state the deck and sync modules keep for the proxy (engine.js fields).

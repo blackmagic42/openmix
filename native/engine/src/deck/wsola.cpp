@@ -16,6 +16,19 @@
 // conditions (a freshly reset instance reading negative positions during its
 // first 85 ms, a ratio clamped to the double 1.8) the search runs the
 // worklet's own per-point arithmetic.
+//
+// Fine alignment (setFineAlign, opt-in, off by default): the only native
+// addition to the worklet's algorithm. When on, the coarse search is the
+// worklet's, then fineInterp() scores the same fine window (best - 3 ..
+// best + 3, every other overlap point, no penalty) with the reference and the
+// candidates read at their EXACT positions (linear interpolation, like the
+// grains) instead of truncated ones, and adds the vertex of the parabola
+// through the best score and its two neighbours (subSample()): a grain may
+// start at a fractional input position. The exact positions matter: with
+// truncated reads the rounding errors of the reference and of the candidates
+// do not average out when 2r is close to a simple fraction (e.g. r = 1.1666,
+// 2r ~ 2 + 1/3), which biased the peak by up to a sixth of a sample. When off,
+// search() runs exactly the worklet's arithmetic.
 #include "om/wsola.h"
 
 #include <cmath>
@@ -69,6 +82,22 @@ inline double workletRatio(double ratio) noexcept {
 
 inline bool isFloatValue(double r) noexcept { return static_cast<double>(static_cast<float>(r)) == r; }
 
+constexpr int kFineCands = 7;  // fine search: best - 3 .. best + 3, step 1
+
+// Fine alignment: vertex of the parabola through the fine scores around the
+// best candidate c, as an offset in samples from it, within +-0.5; 0 at the
+// edge of the fine window or when the scores do not bend down (flat or
+// non-finite: a silent or degenerate overlap).
+inline double subSample(const double* sc, int c) noexcept {
+  if (c <= 0 || c >= kFineCands - 1) return 0.0;
+  const double y0 = sc[c - 1], y1 = sc[c], y2 = sc[c + 1];
+  const double den = y0 - 2.0 * y1 + y2;
+  if (!(den < 0.0)) return 0.0;  // also rejects NaN
+  const double off = 0.5 * (y0 - y2) / den;
+  if (!(off == off)) return 0.0;
+  return off < -0.5 ? -0.5 : (off > 0.5 ? 0.5 : off);
+}
+
 // JavaScript "x | 0" for the range used here (|x| < 2^31): truncation toward zero.
 inline int64_t jsTrunc(double x) noexcept { return static_cast<int64_t>(x); }
 
@@ -88,6 +117,7 @@ struct Wsola::Impl {
   double prevS = 0;
   double prevR = 1;
   double pen = kDefaultPenalty;
+  bool fineAlign = false;  // opt-in sub-sample alignment (off = the worklet, bit for bit)
   // search scratch (no allocation in process / prime)
   double ref4[kCoarsePts];
   double ref2[kFinePts];
@@ -302,6 +332,7 @@ struct Wsola::Impl {
     const bool fast = isFloatValue(r) && S0 - SEARCH - 4 >= 0;
     if (fast) {
       const int best = coarseFast(S0, r, cont);
+      if (fineAlign) return fineInterp(S0, r, cont, best);
       const int fine = fineFast(S0, r, cont, best);
       return S0 + fine;
     }
@@ -314,6 +345,7 @@ struct Wsola::Impl {
         best = d;
       }
     }
+    if (fineAlign) return fineInterp(S0, r, cont, best);
     int fine = best;
     double fineS = -std::numeric_limits<double>::infinity();
     for (int d = best - 3; d <= best + 3; d++) {
@@ -324,6 +356,42 @@ struct Wsola::Impl {
       }
     }
     return S0 + fine;
+  }
+
+  // ---- fine alignment (opt-in, not in the worklet) ---------------------------------
+  // The mono search signal at position p, linearly interpolated (p may be
+  // negative during the first 85 ms of a fresh instance: the ring index wraps).
+  double monoAt(double p) const noexcept {
+    const double f0 = std::floor(p);
+    const int64_t i0 = static_cast<int64_t>(f0);
+    const double a = mono[i0 & RM];
+    return a + (mono[(i0 + 1) & RM] - a) * (p - f0);
+  }
+
+  // The worklet's fine window around the coarse best, scored on exact
+  // positions, refined to a fraction of a sample. Returns the grain start S.
+  double fineInterp(double S0, double r, double cont, int best) noexcept {
+    double er = 1e-9;
+    for (int j = 0; j < kFinePts; j++) {
+      const double v = monoAt(cont + (2 * j) * r);
+      ref2[j] = v;
+      er += v * v;
+    }
+    double sc[kFineCands];
+    int c0 = 0;
+    for (int c = 0; c < kFineCands; c++) {
+      const double s0 = S0 + (best - 3 + c);
+      double dot = 0;
+      double en = 1e-9;
+      for (int j = 0; j < kFinePts; j++) {
+        const double v = monoAt(s0 + (2 * j) * r);
+        dot += v * ref2[j];
+        en += v * v;
+      }
+      sc[c] = dot / std::sqrt(en * er);
+      if (sc[c] > sc[c0]) c0 = c;
+    }
+    return S0 + (best - 3 + c0) + subSample(sc, c0);
   }
 
   // _grain(G, r), writing only grain samples k in [kFrom, N).
@@ -364,6 +432,9 @@ Wsola::~Wsola() = default;
 void Wsola::reset() noexcept { impl_->clearAll(); }
 
 void Wsola::setPenalty(double pen) noexcept { impl_->pen = pen; }
+
+void Wsola::setFineAlign(bool on) noexcept { impl_->fineAlign = on; }
+bool Wsola::fineAlign() const noexcept { return impl_->fineAlign; }
 
 void Wsola::process(const float* inL, const float* inR, float* outL, float* outR, int n, double ratio) noexcept {
   Impl& w = *impl_;

@@ -53,6 +53,8 @@ async function session() {
   engine.masterIdx = 0; engine.setMaster(0); engine.jogHold = true; engine.jogHold = false;
   b.bpm = 126; b.synced = true; b._syncBase = 1.01; b._syncRef = null; b._pllCorr = 0.0005;
   engine.sync(1); engine.snapToRef(1, 0.06); engine.reanchorSync(1);
+  // engine settings (owner decisions of 2026-11-09)
+  engine.setKeylockPrecision(true); engine.setKeylockPrecision(false);
   // stems, sampler
   a.stems = { vocals: buf(150), drums: buf(150), bass: buf(150), other: null };
   a.loadStems(a.stems); a.stemGains.vocals.gain.setTargetAtTime(0, 0, 0.01); a.stemGains.other.gain.value = 0.5;
@@ -90,6 +92,7 @@ const EXPECTED = ['hello', 'clock.ping', 'device.open', 'device.phones', 'master
   'deck.seek', 'deck.cuePoint', 'deck.tempo', 'deck.key', 'deck.keylock', 'deck.loop', 'deck.loopExit', 'deck.loopBeats',
   'deck.roll', 'deck.rollMix', 'deck.rollStop', 'deck.padRoll', 'deck.scratch', 'deck.spin', 'deck.stemsOn', 'deck.stemGain',
   'grid.offset', 'sync.master', 'sync.jogHold', 'sync.do', 'sync.snap', 'sync.reanchor', 'sync.arm', 'sync.base',
+  'keylock.precision',
   'pcm.begin', 'pcm.abort', 'deck.load', 'deck.stems', 'deck.grid', 'sampler.load', 'rec.start', 'rec.stop', 'rec.list',
   'vst.load', 'vst.unload', 'vst.editor', 'vst.getState', 'vst.status'];
 

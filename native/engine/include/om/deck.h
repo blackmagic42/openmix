@@ -88,6 +88,12 @@ class Deck final : public IDeckControl {
   void setInsertLatency(int frames) noexcept;           // VST plugin latency (<= kMaxInsertLatencySec): joins the read-ahead
   void setInterpolation(InterpQuality q) noexcept;      // Linear (default, Chromium parity) / later A/B
   void setKeylockRatioSource(KeylockRatioSource s) noexcept;  // dev A/B, Worklet by default
+  // Keylock precision (the engine's keylock.precision, OFF by default): the
+  // WSOLA grains are aligned to a fraction of a sample (Wsola::setFineAlign)
+  // in both instances of the deck. Off = pitch-worklet.js bit for bit. Kept
+  // by resetForLoad() (a setting, not transport state); SPEC.md §9.4.
+  void setKeylockPrecision(bool on) noexcept;
+  bool keylockPrecision() const noexcept;
 
   // ---- transport (audio thread) ----------------------------------------------------
   // `at` = engine time when the UI issued the command (0 = unknown): a

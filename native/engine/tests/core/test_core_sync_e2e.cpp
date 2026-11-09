@@ -12,9 +12,12 @@
 // nearest deck A click time, measured on the RENDERED AUDIO from SYNC + 30 s
 // to the end. Grids: exact (fixed grid, exact BPM) and realistic (true tempi
 // not round, BPM field rounded to 0.1, dynamic beats with +-0.3 ms noise);
-// both modes of sync.precision (off = engine.js parity, the default).
+// both modes of sync.precision (on = the native precision mode, the default
+// since the owner's decision of 2026-11-09; off = engine.js parity), plus a
+// run that sends no sync.precision at all (the engine's default).
 // Targets (SPEC.md §12): exact grids p99 < 0.05 ms in both modes; realistic
-// grids p99 < 1.0 ms (parity) and < 0.4 ms (precision).
+// grids p99 < 1.0 ms (parity) and < 0.4 ms (precision); the default run is
+// the precision run, bit for bit (same clicks, same errors).
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -203,9 +206,13 @@ struct Result {
   std::string firstError;
 };
 
+// sync.precision sent at the start of a run: off (engine.js parity), on, or
+// nothing (the engine's default mode).
+enum class Mode { Parity, Precision, Default };
+
 // The harness's "steady" scenario, pair "128 vs 123.4" (exact: "128 vs 123"),
 // seed 1: deck A is the master (first started), deck B follows (SYNC).
-Result runSteady(bool exact, bool precision, double seconds) {
+Result runSteady(bool exact, Mode mode, double seconds) {
   const double trueA = exact ? 128.0 : 127.93, fieldA = 128.0;
   const double trueB = exact ? 123.0 : 123.37, fieldB = exact ? 123.0 : 123.4;
   TrackSpec a, b;
@@ -251,13 +258,13 @@ Result runSteady(bool exact, bool precision, double seconds) {
     double t;
     std::string json;
   };
-  const std::vector<Timed> cmds = {
-      {0.0, std::string("{\"cmd\":\"sync.precision\",\"on\":") + (precision ? "true" : "false") + "}"},
-      {0.0, R"({"cmd":"deck.play","deck":0})"},
-      {5.0, R"({"cmd":"deck.seek","deck":1,"t":31.0})"},
-      {5.0, R"({"cmd":"deck.play","deck":1})"},
-      {5.5, R"({"cmd":"sync.do","deck":1})"},
-  };
+  std::vector<Timed> cmds;
+  if (mode != Mode::Default)
+    cmds.push_back({0.0, std::string("{\"cmd\":\"sync.precision\",\"on\":") + (mode == Mode::Precision ? "true" : "false") + "}"});
+  cmds.push_back({0.0, R"({"cmd":"deck.play","deck":0})"});
+  cmds.push_back({5.0, R"({"cmd":"deck.seek","deck":1,"t":31.0})"});
+  cmds.push_back({5.0, R"({"cmd":"deck.play","deck":1})"});
+  cmds.push_back({5.5, R"({"cmd":"sync.do","deck":1})"});
   const double total = 5.5 + seconds + 0.5;
   const int64_t nBlocks = static_cast<int64_t>(std::ceil(total * kFs / kBlockFrames));
   std::vector<float> buf(static_cast<size_t>(kBlockFrames) * 4);
@@ -318,17 +325,34 @@ void report(const char* what, const Result& r) {
 OM_TEST(core_sync_e2e_two_click_tracks_phase_on_the_rendered_audio) {
   constexpr double kSeconds = 60.0;
   struct Case {
-    bool exact, precision;
+    bool exact;
+    Mode mode;
     const char* what;
     double maxP99Ms;
   };
-  const Case cases[] = {{true, false, "exact grids, parity", 0.05},
-                        {true, true, "exact grids, precision", 0.05},
-                        {false, false, "realistic grids, parity", 1.0},
-                        {false, true, "realistic grids, precision", 0.4}};
+  const Case cases[] = {{true, Mode::Parity, "exact grids, parity", 0.05},
+                        {true, Mode::Precision, "exact grids, precision", 0.05},
+                        {false, Mode::Parity, "realistic grids, parity", 1.0},
+                        {false, Mode::Precision, "realistic grids, precision", 0.4},
+                        {false, Mode::Default, "realistic grids, default", 0.4}};
+  Result precisionRealistic, parityRealistic;
   for (const Case& c : cases) {
-    const Result r = runSteady(c.exact, c.precision, kSeconds);
+    const Result r = runSteady(c.exact, c.mode, kSeconds);
     report(c.what, r);
+    if (!c.exact && c.mode == Mode::Precision) precisionRealistic = r;
+    if (!c.exact && c.mode == Mode::Parity) parityRealistic = r;
+    if (c.mode == Mode::Default) {
+      // no sync.precision sent: the engine runs the precision mode (the
+      // owner's decision of 2026-11-09), so this run is the precision run
+      // (identical in practice: the render is deterministic; the check
+      // leaves 10 us for safety, far below the parity / precision gap)
+      const bool identical = r.p99Ms == precisionRealistic.p99Ms && r.maxMs == precisionRealistic.maxMs &&
+                             r.meanMs == precisionRealistic.meanMs && r.n == precisionRealistic.n;
+      std::printf("  [info] sync e2e default mode vs precision: %s; parity p99 %.3f ms\n",
+                  identical ? "bit-identical results" : "different results", parityRealistic.p99Ms);
+      OM_CHECK(std::fabs(r.p99Ms - precisionRealistic.p99Ms) < 0.01 && std::fabs(r.meanMs - precisionRealistic.meanMs) < 0.01);
+      OM_CHECK(r.p99Ms < 0.6 * parityRealistic.p99Ms);
+    }
     // ~2 clicks per second per deck; ~60 follower clicks in the 30 s locked window
     OM_CHECK(r.clicksA > 100 && r.clicksB > 100 && r.n > 50);
     OM_CHECK(r.errors == 0 && r.syncFail == 0);

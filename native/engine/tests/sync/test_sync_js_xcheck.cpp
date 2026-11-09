@@ -185,6 +185,7 @@ XResult runOne(const std::string& scenarioPath, const std::string& tracePath) {
   IDeckControl* ptrs[kNumDecks] = {&dk[0], &dk[1], &dk[2], &dk[3]};
   SyncEngine s;
   s.attachDecks(ptrs);
+  s.setNativePrecision(false);  // the cross-check is against engine.js itself: parity mode (not the default)
   MixView mv;
   FxRackView fv;
   float crossfader = 0.5f;

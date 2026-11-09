@@ -90,6 +90,7 @@ enum class Cmd : uint16_t {
   DeckStemGain,    // deck.stemGain  (stemGains[x].gain.setTargetAtTime)
   DeckInterp,      // deck.interp    (A/B of the interpolation quality, dev only)
   DeckKeylockRatio,  // deck.keylockRatio (A/B of the WSOLA ratio source, dev only)
+  KeylockPrecision,  // keylock.precision (every deck: sub-sample WSOLA grain alignment; off by default; survives resetToDefaults)
   GridOffset,      // grid.offset    (setGlobalGridOffset)
 
   // ---- audio thread: sync --------------------------------------------------------
@@ -100,7 +101,7 @@ enum class Cmd : uint16_t {
   SyncSnap,        // sync.snap      (engine.snapToRef(i, maxErr))
   SyncArm,         // sync.arm       (deck.synced = x)
   SyncBase,        // sync.base      (deck._syncBase / _syncRef / _pllCorr writes)
-  SyncPrecision,   // sync.precision (native precision refinements; survives resetToDefaults)
+  SyncPrecision,   // sync.precision (native precision refinements, on by default; survives resetToDefaults)
   DeckPadRoll,     // deck.padRoll   (deck._padRoll = {beats, mix} | null)
 
   // ---- internal (no JSON name) -----------------------------------------------------
@@ -137,7 +138,7 @@ struct RtCommand {
     struct { double t; } seek;                       // DeckSeek, DeckCuePoint (heard position, s)
     struct { double r; } tempo;                      // DeckTempo
     struct { int32_t semi; } key;                    // DeckKey
-    struct { uint8_t on; } flag;                     // DeckKeylock, DeckPfl, ColorEnabled, SyncJogHold, SyncArm, SyncPrecision, DeckStemsOn
+    struct { uint8_t on; } flag;                     // DeckKeylock, DeckPfl, ColorEnabled, SyncJogHold, SyncArm, SyncPrecision, KeylockPrecision, DeckStemsOn
     struct { double start, end; } loop;              // DeckLoop (track seconds)
     struct { double beats; } loopBeats;              // DeckLoopBeats (NaN = null)
     struct { double beats, mix; uint8_t immediate; } roll;  // DeckRoll, DeckRollMix, DeckRollStop, DeckPadRoll (beats <= 0 = null)

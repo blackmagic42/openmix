@@ -1,4 +1,5 @@
-import { createAudioEngine, stopAndSaveRecording, revealRecording, recordingStamp, rememberOutputDevices } from './native-engine.js';
+import { createAudioEngine, stopAndSaveRecording, revealRecording, recordingStamp, rememberOutputDevices,
+  KEYLOCK_PRECISION_KEY, LateBadge } from './native-engine.js';
 import { decodeStemSet } from './stems.js';
 import { Library } from './library.js';
 import { GamepadManager } from './gamepad.js';
@@ -6664,7 +6665,33 @@ if (setEngineSel) {
     // finds the chosen outputs at its next start even before labels are available
     rememberOutputDevices().catch(() => {});
     flashStatus(t('engine_restart_hint'));
+    refreshKeylockPrecision();
   });
+}
+// --- PRECISE KEYLOCK (native engine only, off by default): the keylock grains aligned to a
+// fraction of a sample (pitch within half a cent). Off = exactly the Web engine's keylock.
+// Saved like the engine choice; the native engine gets it at connect and at every change.
+const setKeylockPrecisionBox = document.getElementById('set-keylock-precision');
+if (setKeylockPrecisionBox) {
+  let on = false;
+  try { on = localStorage.getItem(KEYLOCK_PRECISION_KEY) === '1'; } catch { /* storage unavailable */ }
+  setKeylockPrecisionBox.checked = on;
+  setKeylockPrecisionBox.addEventListener('change', () => {
+    const v = setKeylockPrecisionBox.checked;
+    try { localStorage.setItem(KEYLOCK_PRECISION_KEY, v ? '1' : '0'); } catch { /* storage unavailable */ }
+    if (typeof engine.setKeylockPrecision === 'function') engine.setKeylockPrecision(v);
+    refreshKeylockPrecision();
+  });
+}
+// Only effective with the native engine: a hint while the Web engine plays, and the box
+// greyed out while the Web engine is also the one chosen (nothing to prepare for a restart)
+function refreshKeylockPrecision() {
+  const box = document.getElementById('set-keylock-precision');
+  const hint = document.getElementById('set-keylock-precision-hint');
+  const sel = document.getElementById('set-engine');
+  const nativeActive = !!engine.isNative && engine.status === 'native';
+  if (box) box.disabled = !nativeActive && (!sel || sel.value === 'web');
+  if (hint) hint.textContent = nativeActive ? '' : t('keylock_precision_web_hint');
 }
 // Why the native engine stopped, for the user: a known cause in their
 // language, otherwise the engine's own (technical) reason
@@ -6674,6 +6701,7 @@ function engineReasonText(reason, code) {
 }
 // Settings status of the engine in use: device mode, period, latency
 function refreshEngineStatus() {
+  refreshKeylockPrecision();
   const span = document.getElementById('set-engine-status');
   if (!span) return;
   if (engine.isNative && engine.status === 'native') {
@@ -8361,10 +8389,20 @@ requestAnimationFrame(frame);
 // ---------------------------------------------------------------------------
 // (native engine: the plugins run inside the engine, same API as vst.js)
 const vstHost = engine.createVstHost ? engine.createVstHost() : new VstHost(engine);
+// "late" badge state of each channel's insert (LateBadge, see the poll below)
+const vstLate = [];
 
 function vstShortName(name) {
   const n = String(name || 'VST').trim();
   return n.length > 9 ? `${n.slice(0, 8)}…` : n;
+}
+
+function vstButtonTitle(i) {
+  const slot = vstHost.slots[i];
+  if (!vstHost.available) return t('vst_unavailable', { reason: vstHost.error || '…' });
+  if (!slot) return t('vst_btn_title');
+  const title = t('vst_btn_loaded_title', { name: slot.plugin.name });
+  return vstLate[i] && vstLate[i].visible ? `${title}\n${t('vst_late_title')}` : title;
 }
 
 function updateVstButtons() {
@@ -8375,9 +8413,7 @@ function updateVstButtons() {
     b.textContent = slot ? vstShortName(slot.plugin.name) : 'VST';
     b.classList.toggle('on', !!slot && slot.mix > 0);
     b.classList.toggle('bypass', !!slot && slot.mix === 0);
-    b.title = !vstHost.available
-      ? t('vst_unavailable', { reason: vstHost.error || '…' })
-      : slot ? t('vst_btn_loaded_title', { name: slot.plugin.name }) : t('vst_btn_title');
+    b.title = vstButtonTitle(i);
   });
   const st = document.getElementById('set-vst-status');
   if (st) {
@@ -8386,6 +8422,28 @@ function updateVstButtons() {
       : t('vst_unavailable', { reason: vstHost.error || '…' });
   }
 }
+
+// A plugin running LATE (it missed its deadline: that block played its dry sound) keeps
+// running: it is never disabled or bypassed for being slow. Its VST button shows a
+// discreet badge while late blocks keep coming (debounced by LateBadge: no flicker),
+// for both engines (the native snapshot's late counter, or the Web bridge's underruns).
+setInterval(() => {
+  stripUI.forEach((s, i) => {
+    const b = s.vstBtn;
+    if (!b) return;
+    if (!vstLate[i]) vstLate[i] = new LateBadge();
+    const slot = vstHost.slots[i];
+    let count = NaN;
+    if (slot) {
+      try { count = vstHost.underruns(i); } catch { /* no counter on this host */ }
+    }
+    const late = vstLate[i].update(performance.now(), count, !!slot);
+    if (b.classList.contains('late') !== late) {
+      b.classList.toggle('late', late);
+      b.title = vstButtonTitle(i);
+    }
+  });
+}, 250);
 
 async function vstScan() {
   flashStatus(t('vst_scanning'));

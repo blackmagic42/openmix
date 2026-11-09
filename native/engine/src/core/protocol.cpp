@@ -90,6 +90,7 @@ const CommandSpec kSpecs[] = {
     {"deck.stemGain", Cmd::DeckStemGain, A, true, false},
     {"deck.interp", Cmd::DeckInterp, A, true, false},
     {"deck.keylockRatio", Cmd::DeckKeylockRatio, A, true, false},
+    {"keylock.precision", Cmd::KeylockPrecision, A, false, false},  // every deck: sub-sample WSOLA alignment (off = pitch-worklet.js)
     {"grid.offset", Cmd::GridOffset, A, false, false},
     // ---- audio thread: sync ----
     {"sync.master", Cmd::SyncMaster, A, false, false},
@@ -99,7 +100,7 @@ const CommandSpec kSpecs[] = {
     {"sync.snap", Cmd::SyncSnap, A, true, false},  // answers with "sync.result"
     {"sync.arm", Cmd::SyncArm, A, true, false},
     {"sync.base", Cmd::SyncBase, A, true, false},
-    {"sync.precision", Cmd::SyncPrecision, A, false, false},  // native precision refinements (off = engine.js parity)
+    {"sync.precision", Cmd::SyncPrecision, A, false, false},  // native precision refinements (on by default; off = engine.js parity)
     {"deck.padRoll", Cmd::DeckPadRoll, A, true, false},
 };
 
@@ -220,6 +221,7 @@ bool fillPayload(ParsedCommand& pc, std::string* err) {
     case Cmd::SyncJogHold:
     case Cmd::SyncArm:
     case Cmd::SyncPrecision:
+    case Cmd::KeylockPrecision:
       if (!c.flag("on", on)) return false;
       rt.u.flag.on = on ? 1 : 0;
       return true;

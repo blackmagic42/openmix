@@ -105,9 +105,11 @@ class SyncEngine {
   // servo or a handover changes the master's tempo.
   void onTempoCommand(int d) noexcept;
   void resetToDefaults() noexcept;          // hello {reset}: masterIdx null, jogHold off, every deck unsynced
-  // Native precision refinements (A/B switch, OFF by default = engine.js
-  // parity; kept across resetToDefaults). Every engine.js constant is
-  // unchanged; when on, these engine.js artifacts are removed:
+  // Native precision refinements (ON by default since the owner's decision
+  // of 2026-11-09; off = engine.js parity, still available through
+  // sync.precision {on:false}; the mode is kept across resetToDefaults).
+  // Every engine.js constant is unchanged; when on, these engine.js
+  // artifacts are removed:
   //  1. a calibration ends on a "negligible" correction only after a fine
   //     (8 s) pass, never on the 1 s pass alone (engine.js rates that window
   //     +-0.13 BPM: it cannot certify 0.02 %);
@@ -139,8 +141,8 @@ class SyncEngine {
   // Measured on the 10-minute replay (tests/sync/test_sync_replay.cpp, 100
   // seeds) and end to end on the real engine (rendered click tracks): see
   // HANDOFF/refs/native/verify-reports/sync-phase.json.
-  // SPEC.md §12 (acceptance, precision mode), §20; the default waits for
-  // David's decision (Appendix E).
+  // SPEC.md §12 (acceptance, precision mode), §20, Appendix E.9 (the
+  // owner's decision of 2026-11-09: precision by default).
   void setNativePrecision(bool on) noexcept;
   bool nativePrecision() const noexcept;
 

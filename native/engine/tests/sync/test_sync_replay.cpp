@@ -218,6 +218,7 @@ struct JsRig {
       ptrs[d] = &deck[d];
     }
     sync.attachDecks(ptrs);
+    sync.setNativePrecision(false);  // the engine.js replay: parity mode (the engine's default is precision)
     clk.sampleRate = kRate;
     clk.frames = 800;  // one call = 1/60 s: keep = 0.85, engine.js's per-frame low-pass
   }
@@ -417,6 +418,7 @@ OM_TEST(sync_lock_without_ui_10_minutes) {
   }
   SyncEngine js;
   js.attachDecks(ptrs);
+  js.setNativePrecision(false);  // the Web engine's lock: parity mode (the engine's default is precision)
   MixView mv;
   FxRackView fv;
   BlockClock clk;

@@ -5,6 +5,11 @@
 //    pitch of a 440 Hz sine, case by case against the 1-cent target, with the
 //    transposer alone for comparison (pitch-worklet.js aligns its grains on
 //    whole samples: the bound asserted is its own, 2 cents);
+//  - the same 45 cases with the keylock precision option (owner decision of
+//    2026-11-09: sub-sample grain alignment, off by default): every case
+//    within 0.5 cent, and no new artefact (bit-identical at ratio 1, sine-fit
+//    residual, curvature excess, energy and peaks on music against the
+//    worklet's own alignment);
 //  - where the "keylock toggles at tempo 1.06" figure of
 //    todo_deck_wsola_priming_and_cost comes from;
 //  - PLAY / hot cue / seek / sync jump to the first target sample, keylock on
@@ -113,10 +118,12 @@ namespace {
 struct PitchResult {
   double hz = 0, cents = 0, localCents = 0;
 };
-PitchResult keylockPitch(const TrackBuffer& tb, double fs, double tempo, int key, bool keylock, int block) {
+PitchResult keylockPitch(const TrackBuffer& tb, double fs, double tempo, int key, bool keylock, int block,
+                         bool precision = false, std::vector<float>* outL = nullptr) {
   Deck d(0);
   d.prepare(fs, kMaxBlockFrames);
   d.attachTrack(&tb);
+  d.setKeylockPrecision(precision);
   d.setKeylock(keylock);
   d.setTempo(tempo);
   d.setKey(key);
@@ -132,6 +139,7 @@ PitchResult keylockPitch(const TrackBuffer& tb, double fs, double tempo, int key
   r.hz = meanFreq(t, fs);
   r.cents = cents(r.hz, want);
   r.localCents = worstLocalCents(t, fs, want, 20);
+  if (outL) *outL = rig.outL;
   return r;
 }
 }  // namespace
@@ -210,6 +218,242 @@ OM_TEST(campaign_keylock_pitch_440hz_within_1_cent) {
   // first (SPEC.md §1, §9.4), so the bound asserted here is the worklet's own, 2 cents; the 1-cent target of
   // the campaign is reported above, case by case.
   OM_CHECK(worstAvg < 2.0 && worst441 < 2.0 && worstOff < 2.0);
+}
+
+// ---------------------------------------------------------------------------
+// 1b. Keylock precision (owner decision of 2026-11-09, SPEC.md §9.4): the
+//     grains aligned to a fraction of a sample (Deck::setKeylockPrecision,
+//     the engine's keylock.precision; off by default). Every one of the 45
+//     cases within 0.5 cent, and nothing new heard: bit-identical where no
+//     grain is searched (ratio 1), a sine-fit residual and a curvature excess
+//     no worse than with the worklet's own alignment, and on music the same
+//     energy, the same fidelity to the track's energy envelope and the same
+//     peaks.
+// ---------------------------------------------------------------------------
+namespace {
+// Residual of a 3-parameter sine fit (a sin + b cos + c at f) over 10 ms
+// windows of x[a, end), in dB relative to the window's energy: median and
+// worst window. Amplitude modulation, discontinuities and interpolation
+// noise all show up here; a constant frequency offset does not (f is the
+// measured frequency of x).
+void sineFitResidual(const std::vector<float>& x, size_t a, double f, double fs, double& medDb, double& maxDb) {
+  constexpr int W = 480;
+  std::vector<double> r;
+  for (size_t s0 = a; s0 + W <= x.size(); s0 += W) {
+    double A[3][3] = {}, b[3] = {};
+    for (int n = 0; n < W; n++) {
+      const double ph = 2 * kPi * f * static_cast<double>(s0 + n) / fs;
+      const double v[3] = {std::sin(ph), std::cos(ph), 1.0};
+      for (int i = 0; i < 3; i++) {
+        b[i] += v[i] * x[s0 + n];
+        for (int j = 0; j < 3; j++) A[i][j] += v[i] * v[j];
+      }
+    }
+    auto det = [](double m[3][3]) {
+      return m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1]) - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0]) +
+             m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
+    };
+    const double D = det(A);
+    double c[3];
+    for (int k = 0; k < 3; k++) {
+      double M[3][3];
+      for (int i = 0; i < 3; i++)
+        for (int j = 0; j < 3; j++) M[i][j] = j == k ? b[i] : A[i][j];
+      c[k] = det(M) / D;
+    }
+    double e = 0, sg = 1e-30;
+    for (int n = 0; n < W; n++) {
+      const double ph = 2 * kPi * f * static_cast<double>(s0 + n) / fs;
+      const double y = c[0] * std::sin(ph) + c[1] * std::cos(ph) + c[2];
+      const double v = x[s0 + n];
+      e += (v - y) * (v - y);
+      sg += v * v;
+    }
+    r.push_back(10.0 * std::log10(e / sg + 1e-30));
+  }
+  std::sort(r.begin(), r.end());
+  medDb = r.empty() ? -400 : r[r.size() / 2];
+  maxDb = r.empty() ? -400 : r.back();
+}
+// Second difference beyond the curvature bound of a sine of amplitude amp at
+// hz (the metric of campaign_keylock_toggle_discontinuity_source), in dBFS.
+double curvatureExcessDb(const std::vector<float>& x, size_t a, double amp, double hz, double fs) {
+  const double limit = amp * std::pow(2 * kPi * hz / fs, 2);
+  double e = 0;
+  for (size_t i = std::max<size_t>(a, 2); i < x.size(); i++)
+    e = std::max(e, std::fabs(static_cast<double>(x[i]) - 2.0 * x[i - 1] + x[i - 2]) - limit);
+  return decktest::toDb(e);
+}
+// A deck rendering the track from 1.0 s with keylock / tempo / key and the precision option.
+std::vector<float> renderKeylock(const TrackBuffer& tb, double tempo, int key, bool precision, int64_t frames, int block = 480) {
+  Deck d(0);
+  d.prepare(48000, kMaxBlockFrames);
+  d.attachTrack(&tb);
+  d.setKeylockPrecision(precision);
+  d.setKeylock(true);
+  d.setTempo(tempo);
+  d.setKey(key);
+  Rig rig;
+  d.seek(1.0, 0, rig.now());
+  d.play(0, rig.clock(block));
+  rig.render(d, frames, block);
+  return rig.outL;
+}
+}  // namespace
+
+OM_TEST(campaign_keylock_precision_within_half_a_cent) {
+  // the option itself: off by default, a setting kept by a track load / a reset
+  {
+    Deck d(0);
+    OM_CHECK(!d.keylockPrecision());
+    d.setKeylockPrecision(true);
+    OM_CHECK(d.keylockPrecision());
+    d.resetForLoad();
+    OM_CHECK(d.keylockPrecision());
+    Wsola w;
+    OM_CHECK(!w.fineAlign());
+    w.setFineAlign(true);
+    w.reset();
+    OM_CHECK(w.fineAlign());
+  }
+  auto sine = decktest::sineTrack(8.0, 48000, 440.0, 0.5);
+  const double fs = 48000;
+  const double tempos[] = {0.92, 1.0, 1.08};
+  double worstOn = 0, worstOff = 0, worstLocalOn = 0;
+  double worstResOn = -400, worstResOff = -400, worstResDelta = -400, medResOn = -400, medResOff = -400;
+  int over = 0;
+  std::printf("    keylock precision ON, 440 Hz sine, 48 kHz, blocks of 480: average pitch error in cents over 4 s "
+              "(the worklet's own alignment in parentheses), keys -7 .. +7\n");
+  for (double tempo : tempos) {
+    std::printf("      %.2f ", tempo);
+    for (int key = kKeyMin; key <= kKeyMax; key++) {
+      std::vector<float> on, off;
+      const PitchResult a = keylockPitch(*sine, fs, tempo, key, true, 480, true, &on);
+      const PitchResult b = keylockPitch(*sine, fs, tempo, key, true, 480, false, &off);
+      worstOn = std::max(worstOn, std::fabs(a.cents));
+      worstOff = std::max(worstOff, std::fabs(b.cents));
+      worstLocalOn = std::max(worstLocalOn, a.localCents);
+      if (!(std::fabs(a.cents) < 0.5)) over++;
+      std::printf(" %+.3f(%+.2f)", a.cents, b.cents);
+      // artefacts: residual of a sine fit at each output's own frequency, from 0.5 s on
+      double mOn, xOn, mOff, xOff;
+      sineFitResidual(on, static_cast<size_t>(0.5 * fs), a.hz, fs, mOn, xOn);
+      sineFitResidual(off, static_cast<size_t>(0.5 * fs), b.hz, fs, mOff, xOff);
+      worstResOn = std::max(worstResOn, xOn);
+      worstResOff = std::max(worstResOff, xOff);
+      medResOn = std::max(medResOn, mOn);
+      medResOff = std::max(medResOff, mOff);
+      worstResDelta = std::max(worstResDelta, xOn - xOff);
+      // no new artefact: the worst 10 ms window no worse than with the worklet's
+      // alignment (+3 dB of slack), and far below hearing
+      OM_CHECK(xOn <= xOff + 3.0 && xOn < -50.0);
+    }
+    std::printf("\n");
+  }
+  // a 48 kHz file on a 44.1 kHz device, and a key without keylock (varispeed x key)
+  double worst441 = 0, worstNoLock = 0;
+  for (double tempo : {0.92, 1.08})
+    for (int key : {-7, 0, 7}) worst441 = std::max(worst441, std::fabs(keylockPitch(*sine, 44100, tempo, key, true, 441, true).cents));
+  for (double tempo : tempos)
+    for (int key : {-7, -3, 2, 7}) worstNoLock = std::max(worstNoLock, std::fabs(keylockPitch(*sine, fs, tempo, key, false, 480, true).cents));
+  // the transposer alone, ratio 2^(key/12) (the deck-independent figure)
+  double worstWs = 0;
+  {
+    std::vector<float> in(static_cast<size_t>(4.5 * fs));
+    for (size_t i = 0; i < in.size(); i++) in[i] = static_cast<float>(0.5 * std::sin(2 * kPi * 440.0 * static_cast<double>(i) / fs));
+    auto ws = std::make_unique<Wsola>();
+    for (int key = kKeyMin; key <= kKeyMax; key++) {
+      ws->reset();
+      ws->setFineAlign(true);
+      std::vector<float> out(in.size());
+      const double ratio = static_cast<double>(static_cast<float>(std::pow(2.0, key / 12.0)));
+      for (size_t i = 0; i < in.size(); i += kRenderQuantum) {
+        const int n = static_cast<int>(std::min<size_t>(kRenderQuantum, in.size() - i));
+        ws->process(&in[i], &in[i], &out[i], nullptr, n, ratio);
+      }
+      const std::vector<double> t = upCrossings(out, static_cast<size_t>(0.5 * fs) + Wsola::kLatency, out.size());
+      worstWs = std::max(worstWs, std::fabs(cents(meanFreq(t, fs), 440.0 * std::pow(2.0, key / 12.0))));
+    }
+  }
+  std::printf("    precision ON: worst average error %.3f cents over the 45 cases (%d at or above 0.5; worklet alignment "
+              "%.3f); worst 20-period window %.2f cents; 44.1 kHz device (6 cases) %.3f cents; key without keylock "
+              "(12 cases) %.3f cents; Wsola alone (15 keys) %.3f cents\n",
+              worstOn, over, worstOff, worstLocalOn, worst441, worstNoLock, worstWs);
+  std::printf("    sine-fit residual (10 ms windows, dB re signal, worst case of 45): median ON %.1f / worklet %.1f, worst "
+              "window ON %.1f / worklet %.1f, largest ON - worklet %+.1f dB\n",
+              medResOn, medResOff, worstResOn, worstResOff, worstResDelta);
+  OM_CHECK(worstOn < 0.5 && over == 0);
+  OM_CHECK(worstWs < 0.5);
+  OM_CHECK(worst441 < 1.0 && worstNoLock < 1.0);  // reported above; the target of the decision is the 45 cases
+}
+
+OM_TEST(campaign_keylock_precision_no_new_artefacts) {
+  const double fs = 48000;
+  auto music = decktest::musicTrack(12.0);
+  // 1) Where no grain is searched (ratio 1: keylock at tempo 1, no key) the
+  //    option changes nothing, bit for bit.
+  {
+    const std::vector<float> on = renderKeylock(*music, 1.0, 0, true, 96000, 128);
+    const std::vector<float> off = renderKeylock(*music, 1.0, 0, false, 96000, 128);
+    OM_CHECK(on.size() == off.size() && decktest::maxAbsDiff(on.data(), off.data(), on.size()) == 0.0);
+    OM_CHECK(decktest::rms(on.data(), on.size()) > 0.05);
+  }
+  // 2) Music through the transposer: the same energy as with the worklet's
+  //    alignment, the same fidelity to the track's own energy envelope (50 ms
+  //    windows of the output against the track span they play), the same peaks.
+  struct Case {
+    double tempo;
+    int key;
+  };
+  const Case cases[] = {{0.92, -5}, {1.0, -5}, {1.08, 4}, {1.06, 0}, {0.94, 7}, {1.0, 3}};
+  double worstTotal = 0, worstMedDelta = -400, worstPeak = -400;
+  for (const Case& c : cases) {
+    const int64_t frames = static_cast<int64_t>(4.0 * fs);
+    const std::vector<float> on = renderKeylock(*music, c.tempo, c.key, true, frames);
+    const std::vector<float> off = renderKeylock(*music, c.tempo, c.key, false, frames);
+    const size_t a = static_cast<size_t>(0.5 * fs), n = on.size() - a;
+    const double total = decktest::toDb(decktest::rms(&on[a], n) / decktest::rms(&off[a], n));
+    constexpr size_t W = 2400;
+    std::vector<double> devOn, devOff;
+    for (size_t s0 = a; s0 + W <= on.size(); s0 += W) {
+      // output frame i plays the track at 1.0 s + i x tempo (the heard position)
+      const int64_t p0 = static_cast<int64_t>(fs + static_cast<double>(s0) * c.tempo);
+      const int64_t p1 = static_cast<int64_t>(fs + static_cast<double>(s0 + W) * c.tempo);
+      double ref = 0;
+      for (int64_t p = p0; p < p1; p++) ref += static_cast<double>(decktest::trackL(*music, p)) * decktest::trackL(*music, p);
+      const double refRms = std::sqrt(ref / static_cast<double>(p1 - p0));
+      devOn.push_back(std::fabs(decktest::toDb(decktest::rms(&on[s0], W) / refRms)));
+      devOff.push_back(std::fabs(decktest::toDb(decktest::rms(&off[s0], W) / refRms)));
+    }
+    const double medOn = percentile(devOn, 0.5), medOff = percentile(devOff, 0.5);
+    const double peakDb = decktest::toDb(decktest::peak(&on[a], n) / decktest::peak(&off[a], n));
+    std::printf("    music, keylock tempo %.2f key %+d: energy ON vs worklet %+.3f dB; deviation from the track's envelope "
+                "(50 ms) median ON %.2f / worklet %.2f dB, p99 ON %.2f / worklet %.2f dB; peak ON vs worklet %+.3f dB\n",
+                c.tempo, c.key, total, medOn, medOff, percentile(devOn, 0.99), percentile(devOff, 0.99), peakDb);
+    worstTotal = std::max(worstTotal, std::fabs(total));
+    worstMedDelta = std::max(worstMedDelta, medOn - medOff);
+    worstPeak = std::max(worstPeak, peakDb);
+    OM_CHECK(std::fabs(total) < 0.25 && peakDb < 0.5);
+    OM_CHECK(medOn <= medOff + 0.1 && medOn < 0.5);
+  }
+  // 3) The curvature excess of a keylocked sine (clicks between grains) no
+  //    worse than with the worklet's alignment.
+  auto sine = decktest::sineTrack(10.0, 48000, 440.0, 0.5);
+  double worstCurv = -400;
+  for (const Case& c : {Case{1.06, 0}, Case{0.92, -5}, Case{1.08, 4}}) {
+    const std::vector<float> on = renderKeylock(*sine, c.tempo, c.key, true, static_cast<int64_t>(3.0 * fs));
+    const std::vector<float> off = renderKeylock(*sine, c.tempo, c.key, false, static_cast<int64_t>(3.0 * fs));
+    const double hz = 440.0 * std::pow(2.0, c.key / 12.0) * 1.01;  // the output frequency + 1 % for the bound
+    const double eOn = curvatureExcessDb(on, static_cast<size_t>(0.25 * fs), 0.5, hz, fs);
+    const double eOff = curvatureExcessDb(off, static_cast<size_t>(0.25 * fs), 0.5, hz, fs);
+    std::printf("    sine, keylock tempo %.2f key %+d: curvature excess ON %.1f dBFS, worklet %.1f dBFS\n", c.tempo, c.key, eOn, eOff);
+    worstCurv = std::max(worstCurv, eOn - std::max(eOff, -90.0));
+    OM_CHECK(eOn <= std::max(eOff, -90.0) + 1.0);
+  }
+  std::printf("    precision ON vs the worklet's alignment: worst energy difference %.3f dB, worst median envelope "
+              "deviation above the worklet's %+.2f dB, worst peak %+.3f dB, worst curvature excess above the worklet's "
+              "(floor -90 dBFS) %+.1f dB\n",
+              worstTotal, worstMedDelta, worstPeak, worstCurv);
 }
 
 // ---------------------------------------------------------------------------

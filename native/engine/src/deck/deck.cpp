@@ -1224,6 +1224,11 @@ void Deck::setInsertLatency(int frames) noexcept {
 
 void Deck::setInterpolation(InterpQuality q) noexcept { impl_->interp = q; }
 void Deck::setKeylockRatioSource(KeylockRatioSource s) noexcept { impl_->ratioSource = s; }
+void Deck::setKeylockPrecision(bool on) noexcept {
+  impl_->ws[0]->setFineAlign(on);
+  impl_->ws[1]->setFineAlign(on);
+}
+bool Deck::keylockPrecision() const noexcept { return impl_->ws[0]->fineAlign(); }
 
 // ---- transport --------------------------------------------------------------------------
 

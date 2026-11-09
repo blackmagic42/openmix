@@ -26,6 +26,8 @@ import { runFallback } from './fallback.js';
 import { describeOutputDevice, deviceFields, MASTER_DEVICE_KEY, PHONES_DEVICE_KEY } from './devices.js';
 
 export const ENGINE_KEY = 'audioEngine';
+// Settings > Audio engine > precise keylock ('1' = on; off by default, native engine only)
+export const KEYLOCK_PRECISION_KEY = 'keylockPrecision';
 export const PROTOCOL = 2;
 export const HELLO_TIMEOUT_MS = 10000;
 export const DEVICE_OPEN_TIMEOUT_MS = 10000;
@@ -128,6 +130,8 @@ export class NativeEngine {
     this._gridOffsetSent = null;
     this._fxAssign = [0, 1, 2, 3].map((u) => [0, 1, 2, 3].map((i) => i === u));
     this._fxAssignSent = null;
+    // engine settings (not engine.js state): sent at connect, kept by the engine across hello {reset}
+    this._keylockPrecision = this.env.storage.get(KEYLOCK_PRECISION_KEY) === '1';
     // objects app.js keeps for the whole session
     this.decks = [0, 1, 2, 3].map((i) => new NativeDeck(this, i));
     this.fx = [0, 1, 2, 3].map((u) => new NativeFxUnit(this, `fx${u}`));
@@ -489,6 +493,23 @@ export class NativeEngine {
     };
   }
 
+  // ---- engine settings ---------------------------------------------------------------
+
+  /**
+   * Precise keylock (owner decision of 2026-11-09, native engine only): the
+   * engine aligns the WSOLA grains to a fraction of a sample (`keylock.precision`,
+   * SPEC.md §9.4); off (the default) = pitch-worklet.js bit for bit, the Web
+   * engine's sound. app.js stores the setting (localStorage.keylockPrecision);
+   * the facade sends it at connect (_resync) and on every change. Nothing to
+   * do on the Web engine (after a fallback the value is only kept).
+   */
+  setKeylockPrecision(on) {
+    this._keylockPrecision = !!on;
+    return this._send({ cmd: 'keylock.precision', on: this._keylockPrecision });
+  }
+
+  get keylockPrecision() { return this._keylockPrecision; }
+
   // ---- sending ---------------------------------------------------------------------
 
   _send(cmd) {
@@ -529,6 +550,8 @@ export class NativeEngine {
     this._sent.clear();
     this._fxAssignSent = null;
     this._gridOffsetSent = null;
+    // the engine settings first (never sync.precision: the engine's own default, precision ON, stays)
+    this._send({ cmd: 'keylock.precision', on: this._keylockPrecision });
     this.setMasterVolume(this._masterVolume);
     this.setMasterFilter(this._masterFilterVal);
     this.setCrossfader(this._crossfader);

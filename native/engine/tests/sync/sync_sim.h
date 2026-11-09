@@ -239,6 +239,10 @@ inline Track makeFixedTrack(double bpm, double beatOffset, double dur) {
 
 // Four SimDecks + a SyncEngine + the views, driven block by block like the
 // core's render callback (commands first, then tick, then the decks render).
+// The rig runs the engine.js PARITY mode explicitly: the engine's default is
+// the native precision mode since the owner's decision of 2026-11-09, and the
+// tests built on this rig assert engine.js behaviour unless they choose a
+// mode themselves (r.sync.setNativePrecision(precision)).
 struct Rig {
   SimDeck deck[kNumDecks];
   IDeckControl* ptrs[kNumDecks];
@@ -257,6 +261,7 @@ struct Rig {
       deck[i].isLoaded = false;
     }
     sync.attachDecks(ptrs);
+    sync.setNativePrecision(false);  // engine.js parity, explicitly (see above)
     clk.sampleRate = kRate;
     clk.frames = blockFrames;
   }

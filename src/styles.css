@@ -2923,6 +2923,7 @@ tr.drm .col-name, tr.drm td:nth-child(3) { text-decoration: line-through; text-d
 
 /* VST3 plugin button under each channel fader */
 .strip-vst {
+  position: relative;
   margin-top: 4px;
   width: 100%;
   min-height: 20px;
@@ -2944,6 +2945,20 @@ tr.drm .col-name, tr.drm td:nth-child(3) { text-decoration: line-through; text-d
   color: var(--deck-color);
   border-color: var(--deck-color);
   border-style: dashed;
+}
+/* The plugin is running late (some blocks played its dry sound; it stays on): a small
+   amber dot in the corner, the explanation in the button's tooltip */
+.strip-vst.late::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #ffb547;
+  box-shadow: 0 0 0 1px rgba(11, 13, 18, 0.85), 0 0 4px rgba(255, 181, 71, 0.7);
+  pointer-events: none;
 }
 .ctx-item.ctx-info {
   cursor: default;

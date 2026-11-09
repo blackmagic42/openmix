@@ -52,3 +52,14 @@ test('the keys of the review round of 2026-11-07 (PCM memory limit) exist in fr 
     assert.ok(app.includes(`'${key}'`), `${key} is used by app.js`);
   }
 });
+
+test('the keys of the owner decisions of 2026-11-09 (precise keylock, VST late badge) exist in fr and en and are used', () => {
+  const app = readFileSync(new URL('../../src/js/app.js', import.meta.url), 'utf8');
+  const html = readFileSync(new URL('../../src/index.html', import.meta.url), 'utf8');
+  for (const key of ['keylock_precision_label', 'keylock_precision_title', 'keylock_precision_web_hint', 'vst_late_title']) {
+    assert.ok(hasTranslation('fr', key), `fr: ${key}`);
+    assert.ok(hasTranslation('en', key), `en: ${key}`);
+    assert.notEqual(t(key), key);
+    assert.ok(app.includes(`'${key}'`) || html.includes(`"${key}"`), `${key} is used by app.js or index.html`);
+  }
+});
